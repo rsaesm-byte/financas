@@ -181,6 +181,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   td.num{white-space:normal}
   td.acts{justify-content:flex-end;border-top:1px dashed var(--border);margin-top:4px;padding-top:8px;flex-wrap:wrap}
   td.acts::before{display:none}
+  td.acts .icon-btn{border:1px solid var(--border);border-radius:10px;color:var(--text);background:var(--panel);font-size:14px;font-weight:600;padding:8px 12px}
   td input[type=number]{max-width:140px}
   td .bar{flex:1}
   td>div{flex:1}
@@ -964,14 +965,14 @@ function vBudget(){
       items.forEach(b=>{
         const r=cmap[b.tipo+'|'+norm(b.cat)]||{plan:+b.valor,real:0,diff:-b.valor,diffPct:-100,usePct:0,tipo:b.tipo};
         const st=status(r),bad=isS?r.diff<0:r.diff>0;
-        h+=`<tr><td>${esc(b.cat)}</td>
+        h+=`<tr><td data-act="editBudget" data-id="${b.id}" style="cursor:pointer" title="Editar categoria">${esc(b.cat)} <span class="muted" style="font-size:12px;font-weight:400">✎</span></td>
          <td class="num"><input type="number" min="0" step="0.01" value="${+b.valor||''}" placeholder="0,00" data-bval="${b.id}" style="text-align:right;padding:6px 8px"></td>
          <td class="num"><b>${brl(r.real)}</b></td>
          <td class="num ${bad?'neg':r.diff===0?'':'pos'}">${signBrl(r.diff)}</td>
          <td class="num ${bad?'neg':''}">${r.plan?signPct(r.diffPct):'—'}</td>
          <td>${bar(r.usePct,st.cls)}<div class="muted" style="font-size:11px;margin-top:3px">${r.plan?pctf(r.usePct,0)+' usado':''}</div></td>
          <td>${r.real||r.plan?`<span class="badge ${st.cls}">${r.real?st.t:'Sem gastos'}</span>`:''}</td>
-         <td class="num"><button class="icon-btn" title="Lançar gasto nesta categoria" data-act="addExpenseCat" data-id="${b.id}">＋</button><button class="icon-btn" data-act="editBudget" data-id="${b.id}">✎</button><button class="icon-btn" data-act="delBudget" data-id="${b.id}">🗑</button></td></tr>`;
+         <td class="num"><button class="icon-btn" title="Lançar gasto nesta categoria" data-act="addExpenseCat" data-id="${b.id}">＋<span class="m-only"> Lançar</span></button><button class="icon-btn" title="Editar" data-act="editBudget" data-id="${b.id}">✎<span class="m-only"> Editar</span></button><button class="icon-btn" title="Apagar" data-act="delBudget" data-id="${b.id}">🗑<span class="m-only"> Apagar</span></button></td></tr>`;
       });
       extra.forEach(r=>{h+=`<tr><td>${esc(r.cat)} <span class="pill">não orçado</span></td><td class="num muted">—</td><td class="num"><b>${brl(r.real)}</b></td><td class="num ${isS?'pos':'neg'}">${signBrl(r.real)}</td><td class="num">—</td><td>${bar(100,isS?'ok':'bad')}</td><td><span class="badge ${isS?'ok':'bad'}">${isS?'Extra poupado':'Não orçado'}</span></td><td class="num"><button class="btn sm" data-act="orcar" data-id="${esc(r.tipo+'::'+r.cat)}">Orçar</button></td></tr>`});
     });
@@ -1540,12 +1541,30 @@ function incomeForm(i){
   ],onSave:d=>{const m=month(curMonth,true);if(isNew)m.income.push({id:uid(),...d});else Object.assign(i,d);toast('Renda salva')}});
 }
 function budgetForm(b,preset){
-  const isNew=!b;b=b||Object.assign({tipo:'needs'},preset);
+  const isNew=!b;b=b||Object.assign({tipo:'needs'},preset);const old={cat:b.cat,tipo:b.tipo};
   openForm({title:isNew?'Nova categoria do orçamento':'Editar categoria',fields:[
     {name:'cat',label:'Categoria',value:b.cat,list:categoriesList(),required:true,full:true,placeholder:'Ex.: Telefone celular'},
     {name:'tipo',label:'Grupo',type:'select',options:tipoOpts,value:b.tipo},
-    {name:'valor',label:'Valor planejado (R$)',type:'number',step:'0.01',min:0,value:b.valor,required:true}
-  ],onSave:d=>{const m=month(curMonth,true);if(isNew&&m.budget.some(x=>x.tipo===d.tipo&&norm(x.cat)===norm(d.cat))){toast('Essa categoria já existe neste grupo','err');return false}if(isNew)m.budget.push({id:uid(),...d});else Object.assign(b,d);toast('Categoria salva')}});
+    {name:'valor',label:'Valor planejado (R$) — neste mês',type:'number',step:'0.01',min:0,value:b.valor,required:true},
+    ...(isNew?[]:[{name:'tudo',type:'checkbox',value:true,label:'Se mudar o nome ou o grupo, aplicar também nos gastos já lançados, nos outros meses, nas contas fixas, cartões e vale (recomendado)'}])
+  ],extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelBudget" data-id="${b.id}" title="Apagar">🗑 Apagar</button>`,
+  onSave:d=>{const m=month(curMonth,true);
+    if(isNew){if(m.budget.some(x=>x.tipo===d.tipo&&norm(x.cat)===norm(d.cat))){toast('Essa categoria já existe neste grupo','err');return false}m.budget.push({id:uid(),cat:d.cat,tipo:d.tipo,valor:d.valor});toast('Categoria salva');return}
+    const mudou=norm(d.cat)!==norm(old.cat)||d.tipo!==old.tipo;b.valor=d.valor;
+    if(!mudou){b.cat=d.cat;toast('Categoria salva');return}
+    if(!d.tudo){const dup=m.budget.find(x=>x!==b&&x.tipo===d.tipo&&norm(x.cat)===norm(d.cat));if(dup){toast('Já existe "'+d.cat+'" nesse grupo neste mês','err');return false}b.cat=d.cat;b.tipo=d.tipo;toast('Categoria renomeada só neste mês');return}
+    const n=renomearCategoria(old,{cat:d.cat,tipo:d.tipo});toast(`"${old.cat}" agora é "${d.cat}" — ${n} item(ns) atualizado(s)`)}});
+}
+/* troca nome/grupo de uma categoria em todo o banco; se o nome novo já existir num mês, junta os valores */
+function renomearCategoria(o,n){
+  const is=(c,t)=>norm(c)===norm(o.cat)&&(t===undefined||t===o.tipo);let cnt=0;
+  Object.values(state.months).forEach(m=>{m.budget.filter(x=>is(x.cat,x.tipo)).forEach(it=>{
+    const tgt=m.budget.find(x=>x!==it&&x.tipo===n.tipo&&norm(x.cat)===norm(n.cat));
+    if(tgt){tgt.valor=Math.round(((+tgt.valor)+(+it.valor))*100)/100;tomb(it.id);m.budget=m.budget.filter(x=>x!==it)}else{it.cat=n.cat;it.tipo=n.tipo}cnt++})});
+  [...state.expenses,...state.cardPurchases,...state.bills].forEach(x=>{if(is(x.cat,x.tipo)){x.cat=n.cat;x.tipo=n.tipo;cnt++}});
+  state.benefits.forEach(x=>{if(is(x.cat,x.grupo)){x.cat=n.cat;x.grupo=n.tipo;cnt++}});
+  state.debts.forEach(x=>{if(is(x.cat)){x.cat=n.cat;cnt++}});
+  return cnt;
 }
 function debtForm(d){
   const isNew=!d;d=d||{tipo:DEBT_TYPES[0],parcelasPagas:0,cat:'Dívidas e financiamentos',inicio:curMonth};
@@ -1610,7 +1629,7 @@ const ACT={
   closeModal,
   addExpense:()=>isMobile()?quickAdd():expenseForm(),
   quickAdd:()=>quickAdd(),quickMore:()=>quickMore(),more:()=>openMore(),
-  mDelExpense:id=>{closeModal();ACT.delExpense(id)},mDelPurchase:id=>{closeModal();ACT.delPurchase(id)},
+  mDelExpense:id=>{closeModal();ACT.delExpense(id)},mDelBudget:id=>{closeModal();ACT.delBudget(id)},mDelPurchase:id=>{closeModal();ACT.delPurchase(id)},
   shareBackup:()=>{closeModal();compartilharBackup()},installApp:()=>{closeModal();instalarApp()},
   addBenefit:()=>benefitForm(),editBenefit:id=>benefitForm(find(state.benefits,id)),
   delBenefit:id=>confirmBox('Excluir este benefício? Os gastos já lançados continuam (como gastos normais).',()=>{tomb(id);state.benefits=state.benefits.filter(x=>x.id!==id);state.expenses.forEach(e=>{if(e.benefitId===id)e.benefitId=undefined})}),
@@ -1645,7 +1664,13 @@ const ACT={
       onSave:d=>{const m=month(curMonth,true);let n=0;P.forEach(([c,t],i)=>{if(d['c'+i]&&!m.budget.some(x=>x.tipo===t&&norm(x.cat)===norm(c))){m.budget.push({id:uid(),cat:c,tipo:t,valor:0});n++}});toast(n+' categoria(s) criada(s) — agora digite os valores')}})},
   orcar:id=>{const[t,...c]=id.split('::');budgetForm(null,{cat:c.join('::'),tipo:t})},
   addExpenseCat:id=>{const b=find(month().budget,id);isMobile()?quickAdd({cat:b.cat,tipo:b.tipo}):expenseForm(null,{cat:b.cat,tipo:b.tipo})},editBudget:id=>budgetForm(find(month().budget,id)),
-  delBudget:id=>delUndo('Categoria excluída do budget (os gastos continuam)',()=>{tomb(id);const m=month(curMonth,true);m.budget=m.budget.filter(x=>x.id!==id)}),
+  delBudget:id=>{const b=find(month(curMonth,true).budget,id);if(!b)return;
+    openForm({title:'Apagar "'+b.cat+'"',saveLabel:'Apagar',danger:true,fields:[
+      {type:'html',html:'<p class="muted" style="margin:0">Os gastos já lançados <b>não</b> são apagados — eles continuam no histórico e passam a aparecer como "não orçado" (dá para reorçar ou renomear depois).</p>'},
+      {name:'onde',label:'Apagar a categoria do orçamento de…',type:'select',options:[['mes','Só '+mLabel(curMonth,true)],['futuro',mLabel(curMonth,true)+' e meses seguintes'],['todos','Todos os meses']],value:'futuro'}],
+      onSave:x=>{let n=0;Object.entries(state.months).forEach(([ym,m])=>{if(x.onde==='mes'&&ym!==curMonth)return;if(x.onde==='futuro'&&ym<curMonth)return;
+        m.budget.filter(it=>it.tipo===b.tipo&&norm(it.cat)===norm(b.cat)).forEach(it=>{tomb(it.id);n++});m.budget=m.budget.filter(it=>!(it.tipo===b.tipo&&norm(it.cat)===norm(b.cat)))});
+        toast('"'+b.cat+'" apagada de '+n+' mês(es)')}})},
   copyPrev:()=>{const p=state.months[addM(curMonth,-1)];if(!p)return;const m=month(curMonth,true);
     const nb=p.budget.filter(b=>!m.budget.some(x=>x.tipo===b.tipo&&norm(x.cat)===norm(b.cat))).map(b=>({...b,id:uid()}));m.budget.push(...nb);
     const ni=p.income.filter(i=>i.natureza!=='variavel').map(i=>({...i,id:uid(),date:i.date?isoOf(curMonth,+i.date.slice(8)):''}));if(!m.income.length)m.income.push(...ni);
