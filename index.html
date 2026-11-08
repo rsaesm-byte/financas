@@ -207,6 +207,10 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   .bnav .fab{position:relative}
   .bnav .fab i{width:54px;height:54px;margin-top:-26px;border-radius:18px;background:linear-gradient(135deg,var(--accent),var(--wants));color:#fff;display:grid;place-items:center;font-style:normal;font-size:30px;font-weight:400;box-shadow:0 8px 20px color-mix(in srgb,var(--accent) 45%,transparent)}
 }
+.coach{position:fixed;right:18px;bottom:18px;width:min(400px,calc(100% - 24px));z-index:58;background:var(--panel);border:1px solid var(--border);border-left:5px solid var(--ok);border-radius:16px;padding:14px;box-shadow:0 14px 40px rgba(0,0,0,.45);animation:up .22s ease-out;font-size:14px}
+.coach.warn{border-left-color:var(--warn)}.coach.bad{border-left-color:var(--bad)}
+.coach .bar{margin:10px 0 8px}.coach-lines{display:grid;gap:6px;line-height:1.45}
+@media(max-width:820px){.coach{left:10px;right:10px;width:auto;bottom:calc(80px + env(safe-area-inset-bottom))}}
 @keyframes up{from{transform:translateY(40px);opacity:.4}to{transform:none;opacity:1}}
 @media print{.bnav,.sidebar,.topbar,.no-print,#toasts{display:none!important}.app{display:block}body,html{background:#fff;color:#111}.card{box-shadow:none;break-inside:avoid;border-color:#ddd;background:#fff}#view{padding:0}}
 </style>
@@ -253,7 +257,7 @@ const MN=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez
 const MNF=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const PALETTE=['#4f8cff','#a970ff','#22c58b','#f5a524','#f2555a','#2ec4d6','#ff7ab6','#9bd04b','#ff9f43','#7f8cff'];
 
-function defaultState(){return{settings:{theme:'dark',pct:{needs:50,wants:30,savings:20}},months:{},expenses:[],debts:[],cards:[],cardPurchases:[],goals:[],bills:[],benefits:[],deleted:{}}}
+function defaultState(){return{settings:{theme:'dark',pct:{needs:50,wants:30,savings:20}},months:{},expenses:[],debts:[],cards:[],cardPurchases:[],goals:[],bills:[],benefits:[],deleted:{},profile:{},learn:{done:{}}}}
 let state=defaultState();
 let curMonth=todayYM();
 let view='dashboard';
@@ -597,6 +601,8 @@ const IC={
  vale:'<path d="M5 8h14l-1.5 11a2 2 0 0 1-2 1.7H8.5a2 2 0 0 1-2-1.7z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>',
  bills:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 15l2 2 4-4"/>',
  report:'<path d="M6 2h9l5 5v15H6zM14 2v6h6M9 13h6M9 17h6"/>',
+ learn:'<path d="M2 7l10-4 10 4-10 4z"/><path d="M6 9v5c0 1.7 2.7 3 6 3s6-1.3 6-3V9"/><path d="M22 7v6"/>',
+ profile:'<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>',
  settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'
 };
 const ico=n=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${IC[n]}</svg>`;
@@ -604,6 +610,7 @@ const NAV=[
  ['sep','Visão geral'],['home','Início'],['dashboard','Dashboard'],['review','Revisão do período'],['report','Relatório do mês'],
  ['sep','Planejamento'],['budget','Renda & Orçamento'],['compare','Planejado × Real'],['expenses','Gastos'],['bills','Contas fixas'],['vale','Vale-alimentação'],
  ['sep','Compromissos'],['debts','Dívidas & Financiamentos'],['cards','Cartões de crédito'],['goals','Metas & Poupança'],
+ ['sep','Coach'],['learn','Aprender'],['profile','Meu perfil'],
  ['sep','Sistema'],['settings','Configurações']
 ];
 const TITLES=Object.fromEntries(NAV.filter(n=>n[0]!=='sep'));
@@ -624,6 +631,7 @@ function openMore(){
   const it=(k,l,icon,act='nav')=>`<button type="button" class="more-item ${view===k?'on':''}" data-act="${act}" data-id="${k}">${ico(icon||k)}${l}</button>`;
   const sec=(t,h)=>`<div class="q-label" style="margin-top:12px">${t}</div><div class="more-grid">${h}</div>`;
   f.innerHTML=`<header>Mais</header><div class="body"><div class="full">
+   ${sec('Coach financeiro',it('learn','Aprender')+it('profile','Meu perfil')+`<button type="button" class="more-item ${state.settings.coach!==false?'on':''}" data-act="toggleCoach">🤖<span>Coach nos gastos: ${state.settings.coach!==false?'ligado':'desligado'}</span></button>`)}
    ${sec('Visão geral',it('dashboard','Dashboard')+it('review','Revisão do período')+it('report','Relatório do mês'))}
    ${sec('Planejamento',it('budget','Renda & Orçamento')+it('compare','Planejado × Real')+it('bills','Contas fixas'))}
    ${sec('Compromissos',it('debts','Dívidas')+it('cards','Cartões')+it('goals','Metas & Reservas'))}
@@ -1087,6 +1095,9 @@ function vHome(){
   // últimos lançamentos
   const last=actualEntries(curMonth,true).filter(e=>e.src==='exp').sort((a,b)=>b.date.localeCompare(a.date)||0).slice(0,6);
   h+=`<div class="card"><div class="card-head"><div><h3>🕑 Últimos lançamentos</h3></div><button class="btn sm" data-act="nav" data-id="expenses">Ver todos</button></div>${last.length?expList(last):'<div class="empty">Nada lançado neste mês ainda.</div>'}</div>`;
+  try{const P=profileCalc(),[aic,anome]=arquetipo(P),nx=nextLesson();
+    h+=`<div class="card"><div class="row" style="flex-wrap:nowrap"><div class="ring" style="--p:${P.total};width:64px;height:64px"><b style="width:50px;height:50px;font-size:15px">${Math.round(P.total)}</b></div><div style="flex:1;min-width:0" data-act="nav" data-id="profile"><div class="muted" style="font-size:12px">Seu perfil financeiro</div><b>${aic} ${anome}</b><div class="muted" style="font-size:12px">Ver pilares e evolução ›</div></div></div>
+     ${nx?`<div class="mrow" data-act="openLesson" data-id="${nx.id}" style="border:0;padding-bottom:0"><div class="ic" style="background:var(--panel2)">${nx.ic}</div><div class="tx"><b>${nx.t}</b><small>🎓 Aula recomendada · ${nx.min} min</small></div><div class="vl">›</div></div>`:''}</div>`}catch(e){console.warn(e)}
   const al=alertsHTML(comparison(curMonth).filter(r=>r.tipo!=='savings'&&r.diff>0.005).sort((a,b)=>b.diff-a.diff));
   h+=`<div class="card"><h3>🔔 Alertas</h3><div class="sub">O que merece atenção agora</div>${al}</div>`;
   return h;
@@ -1133,7 +1144,9 @@ function quickAdd(preset={}){
       state.expenses.push(x);undo=()=>{tomb(x.id);state.expenses=state.expenses.filter(y=>y!==x)}}
     meta.lastPay=d.pay;saveMeta();closeModal();save();render();
     if(d.date.slice(0,7)!==curMonth&&!d.pay.startsWith('card:'))toast('Lançado em '+mLabel(d.date.slice(0,7),true));
-    toast(brl(d.valor)+' em '+d.cat+(d.pay.startsWith('card:')?' (cartão'+(d.parcelas>1?', '+d.parcelas+'x':'')+')':''),'',{label:'Desfazer',fn:()=>{undo();save();render();toast('Lançamento desfeito')}})};
+    const isCard=d.pay.startsWith('card:'),pf=isCard?faturaDe(d.pay.slice(5),d.date):null;
+    coachShow({cat:d.cat,tipo:d.tipo,valor:d.valor,date:d.date,ym:pf||undefined,valorMes:isCard?d.valor/d.parcelas:d.valor,parcelas:isCard?d.parcelas:undefined,benefitId:d.pay.startsWith('ben:')?d.pay.slice(4):undefined},
+      ()=>{undo();save();render();toast('Lançamento desfeito')},brl(d.valor)+' lançado');};
   $('#modal').classList.remove('hidden');
   setTimeout(()=>f.elements.valor.focus(),60);
 }
@@ -1463,6 +1476,292 @@ function useFundForm(g,itemId){
 function goalMonthly(g){if(!g.prazo)return 0;const mm=Math.max(1,mDiff(curMonth,g.prazo));return Math.max(0,g.alvo-g.guardado)/mm}
 
 /* ============================================================
+   COACH FINANCEIRO — aulas, insight a cada gasto e perfil
+   (conteúdo educativo; não é recomendação de investimento)
+   ============================================================ */
+const clamp=(v,a=0,b=100)=>Math.max(a,Math.min(b,isFinite(v)?v:a));
+function reservaInfo(){const r=sum(state.goals.filter(g=>/emerg|reserva/i.test(g.nome)&&g.kind!=='fundo'),g=>+g.guardado);const ms=[1,2,3].map(i=>addM(curMonth,-i)).filter(x=>actualEntries(x).length);const needs=ms.length?sum(ms,x=>bucketSummary(x).needs.real)/ms.length:bucketSummary(curMonth).needs.plan;return{valor:r,needs,meses:needs?r/needs:0}}
+function incRef(ym){return month(ym).income.length?incomeTotal(ym):(incomeTotal(todayYM())||incomeTotal(curMonth)||incomeTotal(ym))}
+function horasTrab(valor,ym=curMonth){const inc=incRef(ym),h=+(state.profile||{}).horas||176;return inc?valor/(inc/h):0}
+
+/* ---------------- AULAS ---------------- */
+const LESSONS=[
+ {id:'orcamento',ic:'🧭',t:'O que é um orçamento — e por que ele funciona',min:3,pilar:'plan',
+  p:['Orçamento não é cortar tudo: é decidir <b>antes</b> para onde vai cada real, em vez de descobrir depois para onde ele foi.',
+     'Dinheiro sem destino o cérebro trata como "livre" — e ele some em gastos pequenos que ninguém lembra.',
+     '<b>Base zero:</b> renda − tudo o que foi planejado = R$ 0. Até a sobra recebe um destino (poupança, meta, reserva).',
+     'Orçamento bom é <b>realista</b>: parte do que você gastou nos últimos meses, não do que gostaria de gastar.'],
+  me:()=>{const inc=incomeTotal(curMonth),pl=sum(month().budget,b=>b.valor);return inc?`Renda de ${mLabel(curMonth,true)}: <b>${brl(inc)}</b> · planejado: <b>${brl(pl)}</b> → ${Math.abs(inc-pl)<1?'✅ cada real tem destino.':inc>pl?'falta dar destino a <b>'+brl(inc-pl)+'</b>.':'o plano passa da renda em <b>'+brl(pl-inc)+'</b>.'}`:'Você ainda não cadastrou renda neste mês.'},
+  go:['budget','Abrir Renda & Orçamento'],
+  q:['No orçamento base zero, quanto deve ficar "sem destino"?',['R$ 0 — até a sobra ganha um destino','Uns 10% da renda, para imprevistos','O que sobrar no fim do mês'],0]},
+ {id:'503020',ic:'🥧',t:'A regra 50/30/20 (Needs, Wants, Savings)',min:3,pilar:'gastar',
+  p:['<b>50% Necessidades</b>: o que você não consegue cortar sem prejuízo — moradia, mercado, contas, transporte, parcelas.',
+     '<b>30% Desejos</b>: o que deixa a vida boa, mas é opcional — restaurante, lazer, streaming, compras.',
+     '<b>20% Poupança</b>: reserva, metas, investimentos e pagamento extra de dívidas.',
+     'É um ponto de partida, não uma lei. Aluguel caro? Talvez 60/20/20. O importante é <b>escolher</b> as porcentagens e acompanhar.'],
+  me:()=>{const inc=incomeTotal(curMonth),b=bucketSummary(curMonth);return inc?`Neste mês, até agora: Necessidades <b>${pctf(b.needs.real/inc*100,0)}</b> · Desejos <b>${pctf(b.wants.real/inc*100,0)}</b> · Poupança <b>${pctf(b.savings.real/inc*100,0)}</b> da renda (metas: ${b.needs.pct}/${b.wants.pct}/${b.savings.pct}).`:'Cadastre a renda do mês para ver sua divisão.'},
+  go:['compare','Ver Planejado × Real'],
+  q:['Assinatura de streaming entra em qual grupo?',['Desejos (Wants)','Necessidades (Needs)','Poupança (Savings)'],0]},
+ {id:'necdes',ic:'⚖️',t:'Necessidade ou desejo? O teste das 3 perguntas',min:2,pilar:'gastar',
+  p:['1) <b>Se eu não comprar, algo importante para?</b> (trabalho, saúde, moradia) → necessidade.',
+     '2) <b>Existe versão mais barata que resolve?</b> A diferença entre a básica e a "melhor" é desejo.',
+     '3) <b>Eu compraria isso se tivesse que pagar à vista, hoje?</b> Se a resposta é não, é desejo — e talvez nem isso.',
+     'Mercado é necessidade; o vinho e os importados no carrinho são desejo. Classificar com honestidade deixa o budget verdadeiro.'],
+  me:()=>{const r=comparison(curMonth).filter(r=>r.tipo==='wants').sort((a,b)=>b.real-a.real).slice(0,3);return r.length?'Seus maiores Desejos do mês: '+r.map(x=>`<b>${esc(x.cat)}</b> (${brl(x.real)})`).join(', ')+'.':'Ainda não há gastos em Desejos neste mês.'},
+  q:['Você precisa de um tênis para trabalhar e escolhe um de R$ 600 em vez de um de R$ 200. Como classificar?',['R$ 200 necessidade + R$ 400 desejo','Tudo necessidade','Tudo desejo'],0]},
+ {id:'pagueprimeiro',ic:'💰',t:'Pague-se primeiro',min:2,pilar:'poupar',
+  p:['Quem poupa "o que sobrar" quase nunca poupa: o gasto se expande até ocupar a renda inteira.',
+     'Inverta a ordem: <b>no dia do salário</b>, transfira primeiro o valor da poupança/metas; viva com o resto.',
+     'Automatize: agende a transferência. Decisão tomada uma vez vale mais que força de vontade todo mês.',
+     'Recebeu aumento ou freela extra? Aumente a poupança <b>antes</b> de aumentar o padrão de vida.'],
+  me:()=>{const b=bucketSummary(curMonth),inc=incomeTotal(curMonth);return inc?`Taxa de poupança de ${mLabel(curMonth,true)}: <b>${pctf(b.savings.real/inc*100)}</b> (${brl(b.savings.real)}). Meta: ${b.savings.pct}% = ${brl(b.savings.target)}.`:'Cadastre a renda para ver sua taxa de poupança.'},
+  go:['goals','Abrir Metas & Reservas'],
+  q:['Qual o melhor momento para separar o dinheiro da poupança?',['Logo que o salário cai','No fim do mês, com o que sobrar','Quando aparecer um dinheiro extra'],0]},
+ {id:'reserva',ic:'🛟',t:'Reserva de emergência',min:3,pilar:'protecao',
+  p:['É o dinheiro que transforma um imprevisto (demissão, conserto do carro, saúde) em um <b>problema</b>, e não em uma <b>dívida</b>.',
+     'Tamanho: de <b>3 a 6 meses das suas Necessidades</b>. Renda variável ou dependentes? Mire em 6 a 12.',
+     'Onde guardar: algo seguro e com resgate no mesmo dia (liquidez diária). Rentabilidade aqui é o menos importante.',
+     'Usou? Reponha antes de voltar às outras metas.'],
+  me:()=>{const r=reservaInfo();return r.needs?`Você tem <b>${brl(r.valor)}</b> em reserva = <b>${num(r.meses,1)} mês(es)</b> das suas Necessidades (${brl(r.needs)}/mês). Meta de 6 meses: ${brl(r.needs*6)}.`:'Cadastre uma meta chamada "Reserva de emergência" em Metas.'},
+  go:['goals','Abrir Metas & Reservas'],
+  q:['Para que serve a reserva de emergência?',['Pagar imprevistos sem fazer dívida','Comprar à vista com desconto','Investir em ações'],0]},
+ {id:'dividas',ic:'⛓',t:'Dívidas: os juros jogam contra você',min:4,pilar:'dividas',
+  p:['Juros compostos crescem sobre os próprios juros. No rotativo do cartão e no cheque especial, a dívida pode <b>dobrar em poucos meses</b>.',
+     'Ordem de ataque: liste as dívidas pela <b>taxa de juros</b> e quite primeiro a mais cara (método avalanche).',
+     'Precisa de motivação? Quite primeiro a menor (bola de neve) — cada dívida eliminada dá energia para a próxima.',
+     'Trocar dívida cara por barata (portabilidade, consignado) ajuda — desde que você <b>não volte</b> a usar a cara.',
+     'Ideal: parcelas de dívidas até <b>30% da renda</b> (melhor ainda abaixo de 15%).'],
+  me:()=>{const inc=incomeTotal(curMonth),dp=monthlyDebtPayments(curMonth),d=[...state.debts].sort((a,b)=>(+b.juros||0)-(+a.juros||0));return(inc?`Parcelas de dívidas: <b>${brl(dp)}/mês = ${pctf(dp/inc*100,0)}</b> da renda. `:'')+(d.length?'Ordem avalanche: '+d.map(x=>`<b>${esc(x.nome)}</b> (${num(+x.juros||0,2)}% a.m.)`).join(' → '):'Nenhuma dívida cadastrada 🎉')},
+  go:['debts','Abrir Dívidas'],
+  q:['Pelo método avalanche, qual dívida você quita primeiro?',['A de maior taxa de juros','A de menor saldo','A mais antiga'],0]},
+ {id:'cartao',ic:'💳',t:'Cartão de crédito sem armadilhas',min:3,pilar:'dividas',
+  p:['Limite <b>não é renda</b>. É um empréstimo de curto prazo que o banco deixa disponível.',
+     'Pague <b>sempre a fatura total</b>. O pagamento mínimo joga o resto no rotativo — um dos juros mais altos do país.',
+     'Parcelado "sem juros" ainda é dinheiro dos meses seguintes: cada parcela já é orçamento gasto.',
+     'Lance as compras no cartão na hora (aqui no app) para a fatura não ser surpresa.'],
+  me:()=>{const f=sum(state.cards,c=>cardFatura(c.id,curMonth)),nx=sum(state.cards,c=>cardFatura(c.id,addM(curMonth,1))),inc=incomeTotal(curMonth);return state.cards.length?`Faturas de ${mLabel(curMonth)}: <b>${brl(f)}</b>${inc?' ('+pctf(f/inc*100,0)+' da renda)':''} · já comprometido para ${mLabel(addM(curMonth,1))}: <b>${brl(nx)}</b>.`:'Nenhum cartão cadastrado.'},
+  go:['cards','Abrir Cartões'],
+  q:['O que acontece quando você paga só o mínimo da fatura?',['O restante entra no rotativo, com juros altos','Nada, é só um parcelamento','O banco perdoa o restante'],0]},
+ {id:'cafezinho',ic:'☕',t:'O efeito cafezinho: gastos pequenos e frequentes',min:2,pilar:'gastar',
+  p:['R$ 15 por dia parecem nada — mas são cerca de <b>R$ 450 por mês</b> e R$ 5.400 por ano.',
+     'O problema não é o café: é o gasto <b>automático</b>, que você não escolheu de verdade.',
+     'Defina um teto semanal para essas categorias (delivery, lanche, app de transporte) e acompanhe.',
+     'Corte o que não te faz falta e mantenha o que realmente te faz feliz — sem culpa.'],
+  me:()=>{const m={};actualEntries(curMonth).filter(e=>e.src==='exp'&&e.tipo!=='savings').forEach(e=>{m[e.cat]=m[e.cat]||{n:0,v:0};m[e.cat].n++;m[e.cat].v+=e.valor});const L=Object.entries(m).filter(([,x])=>x.n>=3).sort((a,b)=>b[1].n-a[1].n).slice(0,3);return L.length?'Categorias com mais lançamentos no mês: '+L.map(([c,x])=>`<b>${esc(c)}</b> ${x.n}× = ${brl(x.v)}`).join(' · '):'Poucos lançamentos repetidos neste mês — ótimo sinal (ou lance tudo para ver).'},
+  go:['expenses','Ver meus gastos'],
+  q:['R$ 20 de delivery, 5 vezes por semana, dão quanto por mês (aprox.)?',['R$ 400','R$ 100','R$ 1.000'],0]},
+ {id:'decisao',ic:'🧠',t:'Decidir melhor: regra das 24 horas e o custo em horas',min:3,pilar:'gastar',
+  p:['Compra de desejo acima de um valor (ex.: R$ 200)? Espere <b>24 horas</b>. Acima de R$ 1.000, espere <b>30 dias</b>. A vontade costuma passar.',
+     'Converta o preço em <b>horas de trabalho</b>: preço ÷ (renda ÷ horas trabalhadas no mês). Vale tantas horas da sua vida?',
+     'Pergunte: "isso me aproxima ou me afasta da minha meta?"',
+     'Compare o custo por uso: um item caro usado todo dia pode sair mais barato que um barato usado uma vez.'],
+  me:()=>{const inc=incomeTotal(curMonth),h=+(state.profile||{}).horas||176;return inc?`Sua hora de trabalho vale cerca de <b>${brl(inc/h)}</b> (renda ${brl(inc)} ÷ ${h} h). Um gasto de R$ 300 = <b>${num(300/(inc/h),1)} h</b> de trabalho.`:'Cadastre a renda do mês (e as horas no Meu perfil) para calcular.'},
+  go:['profile','Ajustar horas no Meu perfil'],
+  q:['Renda de R$ 4.400 e 176 h de trabalho no mês. Uma compra de R$ 250 custa quantas horas?',['10 horas','2,5 horas','25 horas'],0]},
+ {id:'variavel',ic:'📈',t:'Renda variável (freelas) sem sustos',min:3,pilar:'plan',
+  p:['Faça o orçamento das <b>Necessidades com a renda fixa</b>. A variável não é garantida.',
+     'Trate o freela como bônus com destino: uma parte para metas/reserva, uma parte para desejos.',
+     'Use a <b>média dos últimos 6 meses</b> (ou o pior mês) para planejar, não o melhor mês.',
+     'Com renda variável alta, a reserva de emergência deve ser maior (6 a 12 meses).'],
+  me:()=>{const ms=[...Array(6)].map((_,i)=>addM(curMonth,-i));const v=ms.map(x=>sum(month(x).income.filter(i=>i.natureza==='variavel'),i=>i.valor));const n=v.filter(Boolean).length;return n?`Renda variável dos últimos 6 meses: média <b>${brl(sum(v)/6)}</b>, menor mês ${brl(Math.min(...v))}, maior ${brl(Math.max(...v))}.`:'Nenhuma renda variável cadastrada nos últimos 6 meses.'},
+  go:['budget','Abrir Renda & Orçamento'],
+  q:['Qual valor de freela usar para planejar o mês?',['A média (ou o pior mês) recente','O melhor mês do ano','O valor que você espera ganhar'],0]},
+ {id:'metas',ic:'🎯',t:'Metas que funcionam e reservas com destino',min:3,pilar:'poupar',
+  p:['Meta boa é <b>específica</b> (o quê), tem <b>valor</b>, <b>prazo</b> e um <b>aporte mensal</b> calculado: falta ÷ meses.',
+     'Gastos que você <b>sabe que vão vir</b> (IPVA, revisão do carro, presentes de fim de ano) não são imprevistos: crie uma reserva com destino e guarde um pouco por mês.',
+     'Pagos pela reserva, eles não estouram o mês — o dinheiro já estava separado.',
+     'Poucas metas por vez. Prioridade: reserva → dívidas caras → metas de médio prazo → longo prazo.'],
+  me:()=>{const g=state.goals.filter(x=>x.kind!=='fundo');return g.length?g.map(x=>`<b>${esc(x.nome)}</b>: ${pctf(x.alvo?x.guardado/x.alvo*100:0,0)}${x.prazo?' · '+brl(goalMonthly(x))+'/mês até '+mLabel(x.prazo):''}`).join('<br>'):'Nenhuma meta cadastrada.'},
+  go:['goals','Abrir Metas & Reservas'],
+  q:['A revisão anual do carro é…',['Um gasto previsível — merece reserva com destino','Um imprevisto — pague com a reserva de emergência','Um desejo'],0]},
+ {id:'rotina',ic:'🔁',t:'O hábito que muda tudo: revisar',min:2,pilar:'plan',
+  p:['<b>Diário (1 min):</b> lance os gastos no dia. Em 3 toques no botão +.',
+     '<b>Semanal (5 min):</b> abra a Revisão do período — o ritmo está dentro do budget?',
+     '<b>Mensal (15 min):</b> leia o Relatório do mês, ajuste o budget do mês seguinte e faça o backup.',
+     'Ninguém acerta o orçamento de primeira: o 3º mês é bem mais fiel que o 1º. Consistência vence perfeição.'],
+  me:()=>{const lim=toISO(new Date(Date.now()-30*864e5)),d=new Set(state.expenses.filter(e=>e.date>=lim).map(e=>e.date)).size;return`Nos últimos 30 dias você lançou gastos em <b>${d} dia(s)</b> diferentes.`},
+  go:['review','Abrir Revisão do período'],
+  q:['Com que frequência vale lançar os gastos?',['No mesmo dia','Uma vez por mês','Só os grandes'],0]}
+];
+function learnState(){state.learn=state.learn||{done:{}};state.learn.done=state.learn.done||{};return state.learn}
+function nextLesson(){const L=learnState(),P=profileCalc(),weak=Object.entries(P.pil).sort((a,b)=>a[1].s-b[1].s).map(x=>x[0]);for(const w of weak){const l=LESSONS.find(x=>x.pilar===w&&!L.done[x.id]);if(l)return l}return LESSONS.find(x=>!L.done[x.id])}
+function vLearn(){
+  const L=learnState(),n=LESSONS.filter(x=>L.done[x.id]).length,nx=nextLesson(),on=state.settings.coach!==false;
+  return`<div class="card hero"><div class="lbl">🎓 Aprender — fundamentos de dinheiro</div><div class="big">${n} de ${LESSONS.length} aulas</div>${bar(n/LESSONS.length*100)}
+   <div class="mini"><span>Aulas curtas com os <b>seus</b> números e um exercício no final.</span></div></div>
+  ${nx?`<div class="card" data-act="openLesson" data-id="${nx.id}" style="cursor:pointer"><div class="muted" style="font-size:12px">⭐ Próxima aula recomendada para você</div><div class="row" style="margin-top:6px"><span style="font-size:26px">${nx.ic}</span><b style="flex:1">${nx.t}</b><span class="pill">${nx.min} min</span></div></div>`:'<div class="alert ok">🏆 Você concluiu todas as aulas! Reveja quando quiser.</div>'}
+  <div class="card"><h3>Aulas</h3><div class="mlist">${LESSONS.map((l,i)=>`<div class="mrow" data-act="openLesson" data-id="${l.id}"><div class="ic" style="background:var(--panel2)">${l.ic}</div><div class="tx"><b>${i+1}. ${l.t}</b><small>${l.min} min${L.done[l.id]?' · concluída '+fmtDate(L.done[l.id].slice(0,10)):''}</small></div><div class="vl">${L.done[l.id]?'<span class="pos">✓</span>':'›'}</div></div>`).join('')}</div></div>
+  <div class="card"><div class="row"><div style="flex:1"><h3>🤖 Coach a cada gasto</h3><div class="sub" style="margin:0">Depois de cada lançamento, mostra se a categoria está dentro, no limite ou acima do budget — com uma dica.</div></div><button class="btn ${on?'primary':''}" data-act="toggleCoach">${on?'Ligado':'Desligado'}</button></div></div>
+  <div class="muted" style="font-size:12px;padding:0 4px">Conteúdo educativo. Não é recomendação de investimento nem consultoria financeira individual.</div>`;
+}
+function openLesson(id){
+  const l=LESSONS.find(x=>x.id===id);if(!l)return;const L=learnState(),f=$('#modalForm');let me='';try{me=l.me?l.me():''}catch(e){}
+  const ord=[0,1,2].sort(()=>Math.random()-.5);
+  f.innerHTML=`<header>${l.ic} ${l.t}</header><div class="body"><div class="full">
+   <ul style="margin:4px 0 0;padding-left:18px;line-height:1.55">${l.p.map(x=>`<li style="margin-bottom:8px">${x}</li>`).join('')}</ul>
+   ${me?`<div class="alert info" style="margin-top:6px"><b>📊 Seus números</b><br>${me}</div>`:''}
+   ${l.go?`<button type="button" class="btn sm" data-act="nav" data-id="${l.go[0]}" style="margin:4px 0 10px">${l.go[1]} ›</button>`:''}
+   <div class="q-label" style="margin-top:10px">✍️ Exercício</div><p style="margin:0 0 10px"><b>${l.q[0]}</b></p>
+   <div style="display:grid;gap:8px" id="quiz">${ord.map(i=>`<button type="button" class="chip" style="justify-content:flex-start;border-radius:12px;text-align:left" data-quiz="${i}">${l.q[1][i]}</button>`).join('')}</div>
+   <div id="quizFb" style="margin-top:10px"></div>
+  </div></div><footer><button type="button" class="btn" data-act="closeModal">${L.done[id]?'Fechar':'Depois'}</button><button type="button" class="btn primary" data-act="lessonNext" data-id="${id}">Próxima aula ›</button></footer>`;
+  f.onsubmit=e=>e.preventDefault();
+  f.onclick=e=>{const b=e.target.closest('[data-quiz]');if(!b)return;const ok=+b.dataset.quiz===l.q[2];
+    f.querySelectorAll('[data-quiz]').forEach(x=>{x.disabled=true;if(+x.dataset.quiz===l.q[2])x.classList.add('on')});
+    if(!ok)b.style.borderColor='var(--bad)';
+    f.querySelector('#quizFb').innerHTML=ok?'<div class="alert ok">✅ Isso mesmo! Aula concluída.</div>':`<div class="alert bad">Quase! A resposta certa é: <b>${l.q[1][l.q[2]]}</b>. Aula concluída — reveja quando quiser.</div>`;
+    if(!L.done[id]){L.done[id]=new Date().toISOString();save()}};
+  $('#modal').classList.remove('hidden');f.querySelector('.body').scrollTop=0;
+}
+
+/* ---------------- COACH A CADA GASTO ---------------- */
+function coachFor(x){ // x={cat,tipo,valor,date,ym?,valorMes?,parcelas?,benefitId?}
+  const ym=x.ym||x.date.slice(0,7),vm=x.valorMes??x.valor,inc=incRef(ym);
+  const r=comparison(ym).find(r=>r.tipo===x.tipo&&norm(r.cat)===norm(x.cat))||{real:vm,plan:0};
+  const dim=daysIn(ym),isCur=ym===todayYM(),dia=isCur?new Date().getDate():ym<todayYM()?dim:1,rest=Math.max(1,dim-dia+1),frac=dia/dim*100;
+  const L=[];let cls='ok',tit,act=null,pct=0;
+  if(x.tipo==='savings'){const b=bucketSummary(ym);tit='💚 Dinheiro trabalhando para você';
+    L.push(`${esc(x.cat)}: ${brl(r.real)}${r.plan?' de '+brl(r.plan)+' planejados':''} neste mês.`);
+    if(inc)L.push(`Taxa de poupança do mês: <b>${pctf(b.savings.real/inc*100)}</b> (meta ${b.savings.pct}%). ${b.savings.real>=b.savings.target?'Meta do mês batida! 🎉':'Faltam '+brl(b.savings.target-b.savings.real)+' para a meta.'}`);
+    pct=r.plan?r.real/r.plan*100:100}
+  else if(!r.plan&&month(ym)._empty){tit='💳 Lançado para '+mLabel(ym,true);pct=0;
+    L.push(`${mLabel(ym,true)} ainda não tem orçamento. Quando você montar o mês (ex.: "Copiar do mês anterior"), este valor já aparece em ${esc(x.cat)}.`)}
+  else if(!r.plan){cls='warn';tit='🟠 Gasto fora do orçamento';pct=100;
+    L.push(`"${esc(x.cat)}" não tem budget em ${mLabel(ym,true)} — já são ${brl(r.real)}.`);
+    L.push('Dinheiro sem destino compete com suas metas. Crie a categoria com um valor realista ou junte com uma que já existe.');act=['orcar',x.tipo+'::'+x.cat,'Orçar categoria']}
+  else{pct=r.real/r.plan*100;const sobra=r.plan-r.real;
+    if(pct>100.0001){cls='bad';tit='🔴 Acima do budget';
+      L.push(`${esc(x.cat)}: ${brl(r.real)} de ${brl(r.plan)} — passou <b>${brl(-sobra)}</b> (${pctf(pct,0)}).`);
+      L.push(x.tipo==='wants'?'Dica do coach: segure novos gastos de desejo nesta categoria até o fim do mês. Se for inevitável, tire de outra categoria de Desejos — nunca da poupança.':'Necessidade que estoura costuma indicar budget irreal. Use 💡 Sugerir valores no orçamento e ajuste o próximo mês; neste, compense em Desejos.')}
+    else if(pct>=85){cls='warn';tit='🟡 No limite';L.push(`${esc(x.cat)}: ${pctf(pct,0)} do budget usado. Restam <b>${brl(sobra)}</b>${isCur?` para ${rest} dia(s) — <b>${brl(sobra/rest)}/dia</b>`:''}.`);
+      if(x.tipo==='wants')L.push('Antes do próximo gasto aqui, pergunte: "isso vale mais do que a folga do fim do mês?"')}
+    else if(isCur&&pct>frac+20&&dia<dim-2){cls='warn';tit='🟡 Ritmo acelerado';L.push(`Você já usou <b>${pctf(pct,0)}</b> do budget de ${esc(x.cat)} com ${pctf(frac,0)} do mês. Nesse ritmo, termina em ~${brl(r.real/dia*dim)} (budget ${brl(r.plan)}).`);
+      L.push(`Para fechar dentro: até <b>${brl(sobra/rest)}/dia</b> daqui para frente.`)}
+    else{tit='🟢 Dentro do budget';L.push(`${esc(x.cat)}: restam <b>${brl(sobra)}</b>${isCur?' ('+brl(sobra/rest)+'/dia até o fim do mês)':''} — ${pctf(pct,0)} usado.`);
+      if(isCur&&pct<frac-15)L.push('Você está abaixo do ritmo do mês. Se sobrar no fim, mande a diferença para a poupança — é assim que a sobra vira patrimônio.')}}
+  // extras
+  if(inc&&x.valor>=inc*.05&&x.tipo!=='savings'){const h=horasTrab(x.valor,ym);L.push(`Este gasto = <b>${num(h,h<10?1:0)} h de trabalho</b> (${pctf(x.valor/inc*100)} da renda do mês).${x.tipo==='wants'?' Para desejos grandes, a regra das 24 h evita arrependimento.':''}`)}
+  if(x.parcelas>1)L.push(`Parcelado em ${x.parcelas}×: compromete <b>${brl(x.valor/x.parcelas)}/mês</b> até ${mLabel(addM(ym,x.parcelas-1),true)}. Parcela futura já é orçamento gasto.`);
+  else if(x.parcelas===1&&x.ym&&x.ym!==x.date.slice(0,7))L.push(`No cartão: entra na fatura de ${mLabel(x.ym,true)}.`);
+  if(x.benefitId){const b=find(state.benefits,x.benefitId);if(b){const ref=x.date,s=benBalance(b,ref),nx=benNext(b,ref),d=Math.max(1,dDiff(ref,nx));L.push(`🧺 Saldo do ${esc(b.nome)}: <b>${brl(s)}</b> — ${brl(Math.max(0,s)/d)}/dia até a recarga de ${fmtDate(nx)}.`)}}
+  if(x.tipo!=='savings'&&!x.parcelas){const es=state.expenses.filter(e=>(e.date||'').slice(0,7)===ym&&e.tipo===x.tipo&&norm(e.cat)===norm(x.cat));if(es.length>=6){const av=sum(es,e=>e.valor)/es.length;if(av<80)L.push(`${es.length}º lançamento em ${esc(x.cat)} no mês (média ${brl(av)}). Pequenos e frequentes somam ${brl(sum(es,e=>e.valor))} — o "efeito cafezinho".`)}}
+  if(x.tipo==='wants'&&inc){const b=bucketSummary(ym);if(b.wants.real>b.wants.target&&cls!=='bad')L.push(`No total, os Desejos do mês (${brl(b.wants.real)}) já passaram da meta de ${b.wants.pct}% da renda (${brl(b.wants.target)}).`)}
+  return{cls,tit,lines:L.slice(0,4),pct,act};
+}
+function coachShow(x,undo,msg){
+  if(state.settings.coach===false){toast(msg,'',undo?{label:'Desfazer',fn:undo}:null);return}
+  let c;try{c=coachFor(x)}catch(e){console.warn(e);toast(msg,'',undo?{label:'Desfazer',fn:undo}:null);return}
+  let el=$('#coach');if(!el){el=document.createElement('div');el.id='coach';document.body.appendChild(el)}
+  el.className='coach '+c.cls;
+  el.innerHTML=`<div class="row" style="justify-content:space-between;gap:8px"><b>${c.tit}</b><span class="muted" style="font-size:12px">${esc(msg)}</span></div>${bar(c.pct,c.cls==='ok'?'ok':c.cls==='warn'?'warn':'bad')}<div class="coach-lines">${c.lines.map(l=>`<div>${l}</div>`).join('')}</div>
+   <div class="row" style="margin-top:8px">${undo?'<button type="button" class="btn sm" id="coachUndo">Desfazer</button>':''}${c.act?`<button type="button" class="btn sm" id="coachAct">${c.act[2]}</button>`:''}<span class="spacer"></span><button type="button" class="btn sm primary" id="coachOk">Entendi</button></div>`;
+  clearTimeout(window._coachT);const close=()=>{el.remove()};
+  el.querySelector('#coachOk').onclick=close;
+  if(undo)el.querySelector('#coachUndo').onclick=()=>{close();undo()};
+  if(c.act)el.querySelector('#coachAct').onclick=()=>{close();ACT[c.act[0]](c.act[1])};
+  window._coachT=setTimeout(close,20000);
+}
+
+/* ---------------- PERFIL FINANCEIRO ---------------- */
+const PILARES={poupar:['💰','Poupar'],gastar:['🛒','Controle dos gastos'],dividas:['⛓','Dívidas'],protecao:['🛟','Proteção (reserva)'],plan:['📋','Planejamento']};
+function monthMetrics(ym){const inc=incomeTotal(ym),bs=bucketSummary(ym),rows=comparison(ym).filter(r=>r.tipo!=='savings'&&r.plan>0);
+  return{ym,inc,needs:bs.needs.real,wants:bs.wants.real,sav:bs.savings.real,adesao:rows.length?rows.filter(r=>r.real<=r.plan+.005).length/rows.length*100:null,
+    debtPay:monthlyDebtPayments(ym),cardFat:sum(state.cards,c=>cardFatura(c.id,ym)),hasBudget:month(ym).budget.length>0,varInc:sum(month(ym).income.filter(i=>i.natureza==='variavel'),i=>i.valor)}}
+function scorePilares(ms){
+  ms=ms.filter(m=>m.inc>0);const res=reservaInfo();
+  if(!ms.length)return null;
+  const S=k=>sum(ms,m=>m[k]),inc=S('inc'),sr=S('sav')/inc*100,wp=S('wants')/inc*100,ad=ms.filter(m=>m.adesao!=null),adv=ad.length?sum(ad,m=>m.adesao)/ad.length:null,dr=S('debtPay')/inc*100,cf=S('cardFat')/inc*100;
+  const lim=toISO(new Date(Date.now()-30*864e5)),dias=new Set(state.expenses.filter(e=>e.date>=lim).map(e=>e.date)).size;
+  const cm=month(curMonth),cinc=incomeTotal(curMonth),bz=cinc?Math.abs(cinc-sum(cm.budget,b=>b.valor))/cinc:1;
+  const p={
+    poupar:{s:clamp(sr/20*100),d:`Taxa de poupança: ${pctf(sr)} da renda (ideal: 20%+)`},
+    gastar:{s:clamp((adv??60)*.6+clamp(100-Math.max(0,wp-30)*4)*.4),d:`${adv!=null?pctf(adv,0)+' das categorias dentro do budget · ':''}Desejos: ${pctf(wp,0)} da renda`},
+    dividas:{s:clamp((dr<=10?100:dr>=45?0:100-(dr-10)/35*100)-Math.max(0,cf-30)),d:`Parcelas: ${pctf(dr,0)} da renda${state.cards.length?' · faturas: '+pctf(cf,0):''} (ideal: até 30%)`},
+    protecao:{s:clamp(res.meses/6*100),d:`Reserva: ${num(res.meses,1)} mês(es) de Necessidades (ideal: 6)`},
+    plan:{s:clamp(ms.filter(m=>m.hasBudget).length/ms.length*40+30*Math.max(0,1-bz*5)+Math.min(30,dias/12*30)),d:`Lançou gastos em ${dias} dia(s) nos últimos 30 · base zero ${bz<.05?'✔':'incompleto'}`}};
+  const total=p.poupar.s*.25+p.gastar.s*.25+p.dividas.s*.2+p.protecao.s*.15+p.plan.s*.15;
+  return{pil:p,total,sr,wp,dr,adv,inc:inc/ms.length,varPct:S('varInc')/inc*100,res};
+}
+function profileCalc(ref=curMonth){
+  const ms=[0,1,2].map(i=>monthMetrics(addM(ref,-i)));
+  return scorePilares(ms)||{pil:Object.fromEntries(Object.keys(PILARES).map(k=>[k,{s:0,d:'Sem dados suficientes'}])),total:0,empty:true,res:reservaInfo()};
+}
+function arquetipo(P){const p=k=>P.pil[k].s;
+  if(P.empty)return['🌱','Começando','Ainda há poucos dados. Cadastre renda, orçamento e lance os gastos por algumas semanas para o perfil ficar preciso.'];
+  if(p('dividas')<40)return['🧗','Em recuperação de dívidas','As parcelas pesam na renda. A prioridade é atacar a dívida mais cara e não contrair novas — cada parcela quitada libera fôlego.'];
+  if(p('protecao')<35&&p('poupar')<50)return['⚠️','Vivendo no limite','Sobra pouco e não há colchão para imprevistos. O primeiro passo é uma reserva pequena (1 mês) e cortar os desejos que menos importam.'];
+  if(p('poupar')>=70&&p('protecao')>=70&&p('gastar')>=60)return['🧱','Construtor de patrimônio','Você poupa com consistência e está protegido. Agora é otimizar: metas de longo prazo e aumentar a poupança a cada aumento de renda.'];
+  if(p('gastar')<50)return['🎉','Aproveitador do presente','Você vive bem o hoje, mas os gastos passam do planejado. Pequenos ajustes nos Desejos podem acelerar muito suas metas.'];
+  if(p('poupar')>=60)return['🐜','Poupador disciplinado','Guardar dinheiro já é um hábito. Atenção para não negligenciar a reserva e o controle do dia a dia.'];
+  if(p('plan')>=70)return['📋','Organizado em evolução','Você acompanha e planeja bem. O próximo passo é transformar a organização em mais poupança.'];
+  return['⚖️','Em equilíbrio','Base razoável em todos os pilares. Escolha o pilar mais fraco e foque nele por um mês.'];}
+function faseVida(pf,P){const i=+pf.idade,L=[];
+  if(i){if(i<25)L.push('<b>Fase de base (até 24):</b> o maior ativo é o hábito. Orçamento todo mês, reserva inicial de 1–3 meses, fuja do rotativo e invista em estudo/carreira.');
+    else if(i<35)L.push('<b>Fase de construção (25–34):</b> reserva de 6 meses, quitar dívidas caras e começar o longo prazo cedo — o tempo é o maior aliado dos juros compostos. A cada aumento de renda, aumente a poupança antes do padrão de vida.');
+    else if(i<50)L.push('<b>Fase de aceleração (35–49):</b> renda costuma ser maior: aumente a taxa de poupança, pense em aposentadoria e proteja quem depende de você.');
+    else L.push('<b>Fase de consolidação (50+):</b> reduza dívidas antes de parar de trabalhar, reforce a reserva e planeje a renda da aposentadoria.')}
+  if(+pf.dependentes>0)L.push(`Com ${pf.dependentes} dependente(s), uma reserva maior (6+ meses) e proteção para a família ganham prioridade.`);
+  if(P.varPct>25)L.push(`${pctf(P.varPct,0)} da sua renda é variável: orce as Necessidades só com a parte fixa e trate o freela como bônus com destino.`);
+  if(pf.moradia==='Aluguel'&&P.inc)L.push('Moradia de aluguel: o ideal é que aluguel + condomínio fiquem até ~30% da renda.');
+  if(pf.trabalho==='Autônomo / PJ')L.push('Como autônomo, separe também impostos e previdência todo mês — não conte com esse dinheiro como renda livre.');
+  return L;}
+function mudancas(){
+  const ref=curMonth===todayYM()&&new Date().getDate()<25?addM(curMonth,-1):curMonth;
+  const A=[0,1,2].map(i=>monthMetrics(addM(ref,-i))).filter(m=>m.inc>0),B=[3,4,5].map(i=>monthMetrics(addM(ref,-i))).filter(m=>m.inc>0);
+  if(!A.length||!B.length)return null;
+  const avg=(X,f)=>sum(X,f)/X.length,pos=[],neg=[];
+  const cmp=(nome,a,b,fmt,bomSubir,lim=0)=>{const d=a-b;if(Math.abs(d)<=lim)return;(d>0===bomSubir?pos:neg).push(`${nome}: ${fmt(b)} → <b>${fmt(a)}</b>`)};
+  cmp('Renda média',avg(A,m=>m.inc),avg(B,m=>m.inc),brl,true,avg(B,m=>m.inc)*.03);
+  cmp('Taxa de poupança',avg(A,m=>m.sav/m.inc*100),avg(B,m=>m.sav/m.inc*100),v=>pctf(v),true,1);
+  cmp('Desejos (% da renda)',avg(A,m=>m.wants/m.inc*100),avg(B,m=>m.wants/m.inc*100),v=>pctf(v),false,1);
+  cmp('Necessidades (R$/mês)',avg(A,m=>m.needs),avg(B,m=>m.needs),brl,false,avg(B,m=>m.needs)*.03);
+  const aA=A.filter(m=>m.adesao!=null),aB=B.filter(m=>m.adesao!=null);if(aA.length&&aB.length)cmp('Categorias dentro do budget',avg(aA,m=>m.adesao),avg(aB,m=>m.adesao),v=>pctf(v,0),true,3);
+  cmp('Parcelas de dívidas (% da renda)',avg(A,m=>m.debtPay/m.inc*100),avg(B,m=>m.debtPay/m.inc*100),v=>pctf(v),false,1);
+  cmp('Faturas de cartão (R$/mês)',avg(A,m=>m.cardFat),avg(B,m=>m.cardFat),brl,false,50);
+  return{pos,neg,a:`${mLabel(addM(ref,-2))}–${mLabel(ref)}`,b:`${mLabel(addM(ref,-5))}–${mLabel(addM(ref,-3))}`};
+}
+function vProfile(){
+  const pf=state.profile||{},P=profileCalc(),[ic,nome,desc]=arquetipo(P),ch=mudancas(),fase=faseVida(pf,P);
+  const weak=Object.entries(P.pil).sort((a,b)=>a[1].s-b[1].s).slice(0,3);
+  const cor=s=>s>=70?'ok':s>=45?'warn':'bad';
+  let h='';
+  if(!pf.idade)h+=`<div class="alert info"><div class="row"><span>👤 Conte um pouco sobre você (idade, dependentes, trabalho, objetivo) para o perfil ficar mais preciso.</span><span class="spacer"></span><button class="btn sm primary" data-act="editProfile">Completar perfil</button></div></div>`;
+  h+=`<div class="card"><div class="row" style="gap:16px;flex-wrap:nowrap"><div class="ring score" style="--p:${P.total};--c:var(--${cor(P.total)==='ok'?'ok':cor(P.total)==='warn'?'warn':'bad'})"><b>${Math.round(P.total)}</b></div>
+   <div style="min-width:0"><div class="muted" style="font-size:12px">Seu perfil financeiro${pf.objetivo?' · objetivo: '+esc(pf.objetivo):''}</div><h2 style="margin:4px 0 6px;font-size:21px">${ic} ${nome}</h2><div class="muted" style="font-size:13px;line-height:1.45">${desc}</div></div></div>
+   <div class="row" style="margin-top:12px"><button class="btn sm" data-act="editProfile">✎ ${pf.idade?'Editar meus dados':'Completar perfil'}</button><span class="muted" style="font-size:12px">Nota de 0 a 100 · últimos 3 meses</span></div></div>
+  <div class="card"><h3>Os 5 pilares</h3><div class="sub">De onde vem a sua nota</div>
+   ${Object.entries(PILARES).map(([k,[e,l]])=>{const x=P.pil[k];return`<div style="margin:12px 0"><div class="stat-line"><span>${e} ${l}</span><b class="${cor(x.s)==='ok'?'pos':cor(x.s)==='warn'?'wrn':'neg'}">${Math.round(x.s)}</b></div>${bar(x.s,cor(x.s))}<div class="muted" style="font-size:12px;margin-top:4px">${x.d}</div></div>`}).join('')}</div>
+  <div class="grid g2"><div class="card"><h3>Equilíbrio dos pilares</h3><div class="chart-box"><canvas id="chRadar"></canvas></div></div>
+   <div class="card"><h3>Evolução da nota</h3><div class="sub">Por mês (cada ponto usa os 3 meses anteriores)</div><div class="chart-box"><canvas id="chScore"></canvas></div></div></div>`;
+  h+=`<div class="card"><h3>📈 O que mudou</h3>${ch?`<div class="sub">${ch.a} comparado com ${ch.b}</div>
+   ${ch.pos.map(x=>`<div class="alert ok">✅ ${x}</div>`).join('')}${ch.neg.map(x=>`<div class="alert bad">⚠️ ${x}</div>`).join('')}${!ch.pos.length&&!ch.neg.length?'<div class="empty">Nada mudou de forma relevante — estabilidade também é uma conquista.</div>':''}`
+   :'<div class="empty">Preciso de pelo menos 6 meses com renda cadastrada para comparar períodos.</div>'}</div>`;
+  if(fase.length)h+=`<div class="card"><h3>🧭 Para o seu momento</h3>${fase.map(x=>`<div class="alert">${x}</div>`).join('')}</div>`;
+  h+=`<div class="card"><h3>🎯 Próximos passos</h3><div class="sub">Focados nos seus pilares mais fracos</div>
+   ${weak.map(([k,x])=>{const l=LESSONS.find(y=>y.pilar===k);return`<div class="mrow" ${l?`data-act="openLesson" data-id="${l.id}"`:''}><div class="ic" style="background:var(--panel2)">${PILARES[k][0]}</div><div class="tx"><b>${PILARES[k][1]} — ${Math.round(x.s)} pts</b><small>${l?'Aula: '+l.t:x.d}</small></div><div class="vl">›</div></div>`}).join('')}</div>
+  <div class="muted" style="font-size:12px;padding:0 4px">O perfil é calculado só com os dados deste app e serve para orientar hábitos. Não é recomendação de investimento nem consultoria financeira.</div>`;
+  setTimeout(()=>{
+    const ks=Object.keys(PILARES);
+    mkChart('chRadar',{type:'radar',_pct:true,data:{labels:ks.map(k=>PILARES[k][1]),datasets:[{label:'Nota',data:ks.map(k=>Math.round(P.pil[k].s)),borderColor:cssVar('--accent'),backgroundColor:cssVar('--accent')+'33',pointRadius:3}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+c.parsed.r+' pts'}}},scales:{r:{min:0,max:100,ticks:{display:false,stepSize:25},grid:{color:cssVar('--border')},angleLines:{color:cssVar('--border')},pointLabels:{font:{size:11}}}}}});
+    const ms=[...Array(6)].map((_,i)=>addM(curMonth,i-5)),sc=ms.map(x=>{const r=scorePilares([0,1,2].map(i=>monthMetrics(addM(x,-i))));return r?Math.round(r.total):null});
+    mkChart('chScore',{type:'line',data:{labels:ms.map(x=>mLabel(x)),datasets:[{label:'Nota',data:sc,borderColor:cssVar('--accent'),backgroundColor:cssVar('--accent')+'22',fill:true,tension:.3,spanGaps:true}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+c.parsed.y+' pts'}}},scales:{y:{min:0,max:100},x:{grid:{display:false}}}}});
+  });
+  return h;
+}
+function profileForm(){
+  const pf=state.profile||{};
+  openForm({title:'Meus dados',fields:[
+    {type:'html',html:'<p class="muted" style="margin:0">Renda, gastos, dívidas e metas já vêm do app. Aqui entram só informações que o app não tem.</p>'},
+    {name:'idade',label:'Idade',type:'number',step:'1',min:14,value:pf.idade},
+    {name:'dependentes',label:'Pessoas que dependem da sua renda',type:'number',step:'1',min:0,value:pf.dependentes??0},
+    {name:'trabalho',label:'Trabalho',type:'select',options:['CLT','Autônomo / PJ','CLT + freelas','Servidor público','Estudante','Outro'],value:pf.trabalho||'CLT + freelas'},
+    {name:'moradia',label:'Moradia',type:'select',options:['Aluguel','Própria (quitada)','Financiada','Com a família','Outro'],value:pf.moradia||'Aluguel'},
+    {name:'objetivo',label:'Objetivo principal agora',type:'select',options:['Organizar o dia a dia','Sair das dívidas','Montar a reserva de emergência','Comprar ou trocar de carro','Comprar um imóvel','Viajar','Investir para o futuro','Aposentadoria'],value:pf.objetivo||'Organizar o dia a dia'},
+    {name:'horas',label:'Horas trabalhadas por mês (para o "custo em horas")',type:'number',step:'1',min:1,value:pf.horas||176}
+  ],onSave:d=>{state.profile=Object.assign({},pf,d,{atualizado:new Date().toISOString()});toast('Perfil atualizado')}});
+}
+
+/* ============================================================
    VIEW: CONFIGURAÇÕES
    ============================================================ */
 function vSaveCard(){
@@ -1527,7 +1826,7 @@ function expenseForm(e,preset){
     {type:'html',html:`<div class="muted" style="font-size:12px">Compras no cartão de crédito: lance em <b>Cartões</b> para que as parcelas caiam nas faturas certas.${state.benefits.length?' Pagou com o vale? Escolha 🧺 na forma de pagamento — desconta do saldo do vale.':''}</div>`}
   ],onSave:d=>{if(e.fundId&&!isNew){const g=find(state.goals,e.fundId);if(g)g.guardado=Math.round(((+g.guardado)+(+e.valor)-(+d.valor))*100)/100;d.pay=e.pay}
     else if(String(d.pay).startsWith('ben:')){const b=find(state.benefits,d.pay.slice(4));d.benefitId=b?b.id:undefined;d.pay=b?b.nome:'Vale'}else d.benefitId=undefined;
-    if(isNew)state.expenses.push({id:uid(),...d});else Object.assign(e,d);toast(d.benefitId?'Gasto lançado no vale — saldo atualizado':'Gasto salvo')},
+    if(isNew){const x={id:uid(),...d};state.expenses.push(x);setTimeout(()=>coachShow(x,()=>{tomb(x.id);state.expenses=state.expenses.filter(y=>y!==x);save();render();toast('Lançamento desfeito')},brl(x.valor)+' lançado'),60)}else{Object.assign(e,d);toast('Gasto salvo')}},
     extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelExpense" data-id="${e.id}" title="Excluir">🗑</button><button type="button" class="btn" data-act="dupExpense" data-id="${e.id}" title="Duplicar">⧉</button>`});
 }
 function incomeForm(i){
@@ -1628,7 +1927,10 @@ const ACT={
   theme:()=>{closeModal();state.settings.theme=state.settings.theme==='dark'?'light':'dark';save();render()},
   closeModal,
   addExpense:()=>isMobile()?quickAdd():expenseForm(),
-  quickAdd:()=>quickAdd(),quickMore:()=>quickMore(),more:()=>openMore(),
+  quickAdd:()=>quickAdd(),
+  openLesson:id=>openLesson(id),lessonNext:id=>{const i=LESSONS.findIndex(x=>x.id===id);const L=learnState();const nx=LESSONS.slice(i+1).find(x=>!L.done[x.id])||LESSONS[(i+1)%LESSONS.length];if(view==='learn')render();openLesson(nx.id)},
+  toggleCoach:()=>{closeModal();state.settings.coach=state.settings.coach===false;save();render();toast('Coach nos gastos '+(state.settings.coach?'ligado':'desligado'))},
+  editProfile:()=>profileForm(),quickMore:()=>quickMore(),more:()=>openMore(),
   mDelExpense:id=>{closeModal();ACT.delExpense(id)},mDelBudget:id=>{closeModal();ACT.delBudget(id)},mDelPurchase:id=>{closeModal();ACT.delPurchase(id)},
   shareBackup:()=>{closeModal();compartilharBackup()},installApp:()=>{closeModal();instalarApp()},
   addBenefit:()=>benefitForm(),editBenefit:id=>benefitForm(find(state.benefits,id)),
@@ -1644,7 +1946,7 @@ const ACT={
   delBill:id=>delUndo('Conta fixa excluída (pagamentos já lançados continuam)',()=>{tomb(id);state.bills=state.bills.filter(x=>x.id!==id)}),
   payBill:id=>{const b=find(state.bills,id);const def=curMonth===todayYM()?todayISO():isoOf(curMonth,+b.dia||1);
     openForm({title:'Pagar — '+b.nome,saveLabel:'Confirmar pagamento',fields:[{name:'valor',label:'Valor pago (R$)',type:'number',step:'0.01',min:0,value:b.valor,required:true},{name:'date',label:'Data do pagamento',type:'date',value:def,required:true},{name:'pay',label:'Forma de pagamento',type:'select',options:PAY,value:b.pay},{type:'html',html:'<div class="muted" style="font-size:12px">O pagamento será lançado como gasto na categoria <b>'+esc(b.cat)+'</b> e comparado com o budget.</div>'}],
-      onSave:x=>{state.expenses.push({id:uid(),desc:b.nome,valor:x.valor,date:x.date,cat:b.cat,tipo:b.tipo,pay:x.pay,billId:b.id,billMonth:curMonth});toast('Pagamento lançado em '+b.cat)}})},
+      onSave:x=>{const e={id:uid(),desc:b.nome,valor:x.valor,date:x.date,cat:b.cat,tipo:b.tipo,pay:x.pay,billId:b.id,billMonth:curMonth};state.expenses.push(e);setTimeout(()=>coachShow({...e,ym:curMonth},null,b.nome+' paga'),60)}})},
   unpayBill:id=>{const e=state.expenses.find(x=>x.billId===id&&x.billMonth===curMonth);if(e)delUndo('Pagamento desfeito',()=>{tomb(e.id);state.expenses=state.expenses.filter(x=>x!==e)})},
   billsToBudget:()=>{const m=month(curMonth,true),g={};state.bills.filter(b=>billActive(b,curMonth)).forEach(b=>{const k=b.tipo+'|'+norm(b.cat);g[k]=g[k]||{cat:b.cat,tipo:b.tipo,v:0};g[k].v+=+b.valor});
     let c=0,u=0;Object.values(g).forEach(x=>{const it=m.budget.find(b=>b.tipo===x.tipo&&norm(b.cat)===norm(x.cat));if(!it){m.budget.push({id:uid(),cat:x.cat,tipo:x.tipo,valor:x.v});c++}else if(+it.valor<x.v){it.valor=x.v;u++}});
@@ -1803,7 +2105,7 @@ function loadSample(){
 /* ============================================================
    RENDER
    ============================================================ */
-const VIEWS={home:vHome,vale:vVale,bills:vBills,dashboard:vDashboard,review:vReview,report:vReport,budget:vBudget,compare:vCompare,expenses:vExpenses,debts:vDebts,cards:vCards,goals:vGoals,settings:vSettings};
+const VIEWS={learn:vLearn,profile:vProfile,home:vHome,vale:vVale,bills:vBills,dashboard:vDashboard,review:vReview,report:vReport,budget:vBudget,compare:vCompare,expenses:vExpenses,debts:vDebts,cards:vCards,goals:vGoals,settings:vSettings};
 function render(){
   document.documentElement.dataset.theme=state.settings.theme;
   const tc=document.querySelector('meta[name=theme-color]');if(tc)tc.content=state.settings.theme==='dark'?'#0b0f17':'#f3f5fa';
