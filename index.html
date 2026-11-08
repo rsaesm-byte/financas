@@ -974,7 +974,7 @@ function vBudget(){
          <td>${r.real||r.plan?`<span class="badge ${st.cls}">${r.real?st.t:'Sem gastos'}</span>`:''}</td>
          <td class="num"><button class="icon-btn" title="Lançar gasto nesta categoria" data-act="addExpenseCat" data-id="${b.id}">＋<span class="m-only"> Lançar</span></button><button class="icon-btn" title="Editar" data-act="editBudget" data-id="${b.id}">✎<span class="m-only"> Editar</span></button><button class="icon-btn" title="Apagar" data-act="delBudget" data-id="${b.id}">🗑<span class="m-only"> Apagar</span></button></td></tr>`;
       });
-      extra.forEach(r=>{h+=`<tr><td>${esc(r.cat)} <span class="pill">não orçado</span></td><td class="num muted">—</td><td class="num"><b>${brl(r.real)}</b></td><td class="num ${isS?'pos':'neg'}">${signBrl(r.real)}</td><td class="num">—</td><td>${bar(100,isS?'ok':'bad')}</td><td><span class="badge ${isS?'ok':'bad'}">${isS?'Extra poupado':'Não orçado'}</span></td><td class="num"><button class="btn sm" data-act="orcar" data-id="${esc(r.tipo+'::'+r.cat)}">Orçar</button></td></tr>`});
+      extra.forEach(r=>{const uid_=esc(r.tipo+'::'+r.cat);h+=`<tr><td data-act="editUnplanned" data-id="${uid_}" style="cursor:pointer" title="Editar / juntar">${esc(r.cat)} <span class="pill">não orçado</span> <span class="muted" style="font-size:12px;font-weight:400">✎</span></td><td class="num muted">—</td><td class="num"><b>${brl(r.real)}</b></td><td class="num ${isS?'pos':'neg'}">${signBrl(r.real)}</td><td class="num">—</td><td>${bar(100,isS?'ok':'bad')}</td><td><span class="badge ${isS?'ok':'bad'}">${isS?'Extra poupado':'Não orçado'}</span></td><td class="num"><button class="btn sm" data-act="orcar" data-id="${uid_}">Orçar</button><button class="icon-btn" title="Editar / juntar com outra categoria" data-act="editUnplanned" data-id="${uid_}">✎<span class="m-only"> Editar</span></button><button class="icon-btn" title="Apagar os gastos" data-act="delUnplanned" data-id="${uid_}">🗑<span class="m-only"> Apagar</span></button></td></tr>`});
     });
     const d=totReal-totPlan;
     h+=`<tr class="total"><td>Total</td><td class="num">${brl(totPlan)}</td><td class="num">${brl(totReal)}</td><td class="num ${d>0?'neg':'pos'}">${signBrl(d)}</td><td class="num">${totPlan?signPct(d/totPlan*100):'—'}</td><td></td><td></td><td></td></tr></tbody></table></div>
@@ -1662,6 +1662,24 @@ const ACT={
   presetCats:()=>{const P=[['Moradia (aluguel/condomínio)','needs'],['Alimentação (mercado)','needs'],['Água','needs'],['Luz','needs'],['Internet','needs'],['Celular','needs'],['Transporte / combustível','needs'],['Saúde / farmácia','needs'],['Educação','needs'],['Dívidas e financiamentos','needs'],['Restaurantes / delivery','wants'],['Lazer','wants'],['Streaming e assinaturas','wants'],['Compras / roupas','wants'],['Cuidados pessoais','wants'],['Reserva de emergência','savings'],['Investimentos','savings']];
     openForm({title:'Categorias sugeridas',fields:[{type:'html',html:'<p class="muted" style="margin:0">Marque as que você usa. Elas serão criadas com valor 0 — depois é só digitar o budget de cada uma direto na tabela.</p>'},...P.map(([c,t],i)=>({name:'c'+i,label:c+' — '+BUCKETS[t].label,type:'checkbox',value:true}))],saveLabel:'Criar categorias',
       onSave:d=>{const m=month(curMonth,true);let n=0;P.forEach(([c,t],i)=>{if(d['c'+i]&&!m.budget.some(x=>x.tipo===t&&norm(x.cat)===norm(c))){m.budget.push({id:uid(),cat:c,tipo:t,valor:0});n++}});toast(n+' categoria(s) criada(s) — agora digite os valores')}})},
+  editUnplanned:id=>{const[t,...c]=id.split('::');const cat=c.join('::'),old={cat,tipo:t};
+    const exp=state.expenses.filter(e=>e.tipo===t&&norm(e.cat)===norm(cat)).length,card=state.cardPurchases.filter(e=>e.tipo===t&&norm(e.cat)===norm(cat)).length;
+    const opts=month().budget.map(b=>b.cat);
+    openForm({title:'Editar "'+cat+'"',saveLabel:'Salvar',fields:[
+      {type:'html',html:`<p class="muted" style="margin:0">Esta categoria veio dos seus lançamentos (${exp} gasto(s)${card?' e '+card+' compra(s) no cartão':''}) e não existe no orçamento do mês. <b>Para juntar com uma categoria que já existe</b>, escolha o nome dela abaixo e o mesmo grupo — os gastos passam para lá.</p>`},
+      {name:'cat',label:'Nome da categoria',value:cat,list:[...new Set(opts.concat(categoriesList()))],required:true,full:true},
+      {name:'tipo',label:'Grupo',type:'select',options:tipoOpts,value:t}],
+      extra:`<button type="button" class="btn danger" data-act="delUnplanned" data-id="${esc(id)}">🗑 Apagar</button>`,
+      onSave:d=>{if(norm(d.cat)===norm(cat)&&d.tipo===t){toast('Nada mudou');return}
+        const alvo=month().budget.find(b=>b.tipo===d.tipo&&norm(b.cat)===norm(d.cat));
+        const n=renomearCategoria(old,{cat:alvo?alvo.cat:d.cat,tipo:d.tipo});
+        toast(alvo?`Juntado com "${alvo.cat}" — ${n} item(ns) movido(s)`:`Renomeado para "${d.cat}" — ${n} item(ns) atualizado(s)`)}})},
+  delUnplanned:id=>{closeModal();const[t,...c]=id.split('::');const cat=c.join('::');
+    const L=state.expenses.filter(e=>e.tipo===t&&norm(e.cat)===norm(cat)&&(e.date||'').slice(0,7)===curMonth&&!e.billId);
+    if(!L.length){toast('Não há lançamentos avulsos de "'+cat+'" em '+mLabel(curMonth,true)+'. Compras no cartão se apagam em Cartões.','err');return}
+    openForm({title:'Apagar gastos de "'+cat+'"',saveLabel:'Apagar '+L.length+' gasto(s)',danger:true,fields:[{type:'html',html:`<p style="margin:0">Isto apaga <b>${L.length} lançamento(s)</b> de ${mLabel(curMonth,true)} nesta categoria (total ${brl(sum(L,e=>e.valor))}):</p><ul class="muted" style="margin:8px 0 0;padding-left:18px">${L.slice(0,8).map(e=>`<li>${fmtDate(e.date)} — ${esc(e.desc)} — ${brl(e.valor)}</li>`).join('')}${L.length>8?'<li>…</li>':''}</ul><p class="muted" style="font-size:12px">Se a ideia é só corrigir o nome, use <b>Editar</b> em vez de apagar.</p>`}],
+      onSave:()=>{const snap=JSON.stringify(state);const ids=new Set(L.map(e=>e.id));L.forEach(e=>{if(e.fundId){const g=find(state.goals,e.fundId);if(g)g.guardado=Math.round(((+g.guardado)+(+e.valor))*100)/100}tomb(e.id)});state.expenses=state.expenses.filter(e=>!ids.has(e.id));
+        setTimeout(()=>toast(L.length+' gasto(s) apagado(s)','',{label:'Desfazer',fn:()=>{state=JSON.parse(snap);overwriteNext=true;save();render();toast('Restaurado')}}),50)}})},
   orcar:id=>{const[t,...c]=id.split('::');budgetForm(null,{cat:c.join('::'),tipo:t})},
   addExpenseCat:id=>{const b=find(month().budget,id);isMobile()?quickAdd({cat:b.cat,tipo:b.tipo}):expenseForm(null,{cat:b.cat,tipo:b.tipo})},editBudget:id=>budgetForm(find(month().budget,id)),
   delBudget:id=>{const b=find(month(curMonth,true).budget,id);if(!b)return;
