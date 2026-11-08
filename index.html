@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Finanças">
-<link rel="manifest" href="manifest.json">
-<link rel="icon" type="image/png" href="icons/icon-192.png">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="manifest" href="manifest.json?v=7">
+<link rel="icon" type="image/png" href="icons/icon-192.png?v=7">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=7">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
 :root{--r:14px;--needs:#4f8cff;--wants:#a970ff;--savings:#22c58b;--ok:#22c58b;--warn:#f5a524;--bad:#f2555a;--font:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
@@ -456,6 +456,11 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
+const APP_VERSAO='2026.11.08-7';
+/* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
+async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
+  if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
+  setTimeout(()=>location.replace(location.pathname+'?atualizado='+Date.now()),400)}
 const standalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
 
 /* indicador na barra superior */
@@ -636,7 +641,7 @@ function openMore(){
    ${sec('Visão geral',it('dashboard','Dashboard')+it('review','Revisão do período')+it('report','Relatório do mês'))}
    ${sec('Planejamento',it('budget','Renda & Orçamento')+it('compare','Planejado × Real')+it('bills','Contas fixas'))}
    ${sec('Compromissos',it('debts','Dívidas')+it('cards','Cartões')+it('goals','Metas & Reservas'))}
-   ${sec('Sistema',it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme',state.settings.theme==='dark'?'Tema claro':'Tema escuro','theme','theme')+
+   ${sec('Sistema',`<button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme',state.settings.theme==='dark'?'Tema claro':'Tema escuro','theme','theme')+
      it('todayM','Ir para o mês atual','calendar','todayM')+(installEvt?it('install','Instalar app','install','installApp'):''))}
   </div></div><footer><button type="button" class="btn" data-act="closeModal">Fechar</button></footer>`;
   f.onsubmit=e=>e.preventDefault();
@@ -2171,6 +2176,7 @@ function vSaveCardMobile(){
     ${L(!backupDue(),'3 — Backup (.json)',(ult?'Último backup: <b>'+ult+'</b>.':'Nenhum backup feito neste celular ainda.')+' Toque em <b>Compartilhar backup</b> e escolha <b>Google Drive</b> (ou WhatsApp/e-mail para você mesmo). O app lembra você na tela Início quando passar 7 dias com alterações sem backup.')}
    </div>
    <div class="row" style="margin-top:12px"><button class="btn primary" data-act="shareBackup">📤 Compartilhar backup</button><button class="btn" data-act="export">⬇ Baixar .json</button>${installEvt?'<button class="btn" data-act="installApp">📲 Instalar app</button>':''}</div>
+   <div class="row" style="margin-top:10px"><button class="btn" data-act="forceUpdate">🔄 Atualizar o app</button><span class="muted" style="font-size:12px">Versão instalada: <b>${APP_VERSAO}</b>. Seus dados não são apagados.</span></div>
    <div class="muted" style="font-size:12px;margin-top:10px">O arquivo tem o mesmo formato da versão do computador: dá para importar o backup do celular lá e vice-versa (Configurações › Importar backup).</div></div>`;
 }
 function vSettings(){
@@ -2310,7 +2316,7 @@ const ACT={
   quickAdd:()=>quickAdd(),
   openLesson:id=>openLesson(id),lessonNext:id=>{const i=LESSONS.findIndex(x=>x.id===id);const L=learnState();const nx=LESSONS.slice(i+1).find(x=>!L.done[x.id])||LESSONS[(i+1)%LESSONS.length];if(view==='learn')render();openLesson(nx.id)},
   toggleCoach:()=>{closeModal();state.settings.coach=state.settings.coach===false;save();render();toast('Coach nos gastos '+(state.settings.coach?'ligado':'desligado'))},
-  editProfile:()=>profileForm(),
+  editProfile:()=>profileForm(),forceUpdate:()=>{closeModal();atualizarApp()},
   invTab:id=>{closeModal();view='invest';ui.invTab=id;render();window.scrollTo(0,0)},
   invStep:id=>{ui.invStep=id;render();setTimeout(()=>{const b=$('#stepBox');b&&b.scrollIntoView({behavior:'smooth',block:'start'})},50)},
   progDone:id=>{const I=inv();I.prog.done[id]=new Date().toISOString();save();const E=progEtapas(),nx=E.find(e=>!e.ok);ui.invStep=nx?nx.id:id;render();toast('Etapa registrada ✓')},
@@ -2516,6 +2522,7 @@ function render(){
 }
 (async()=>{
   if(isMobile())view='home';
+  if(location.search.includes('atualizado=')){history.replaceState(null,'',location.pathname);setTimeout(()=>toast('App atualizado ✓ versão '+APP_VERSAO),800)}
   matchMedia('(max-width:820px)').addEventListener('change',()=>{if(!isMobile()&&view==='home')view='dashboard';render()});
   const temDados=await carregar();revAoAbrir=rev;fileRev=-1;
   pedirPersistencia().then(()=>{if(view==='settings')render()});

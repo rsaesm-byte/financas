@@ -1,10 +1,10 @@
 /* Service worker — Minhas Finanças (celular)
    Deixa o app abrir sem internet. Os DADOS não passam por aqui: ficam no IndexedDB/localStorage do aparelho.
    Ao publicar uma versão nova do app, troque o número de VERSAO para o celular baixar os arquivos novos. */
-const VERSAO = 'financas-celular-v6';
+const VERSAO = 'financas-celular-v7';
 const ARQUIVOS = [
   './', './index.html', './manifest.json',
-  './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png',
+  './icons/icon-192.png?v=7', './icons/icon-512.png?v=7', './icons/icon-maskable-512.png?v=7', './icons/apple-touch-icon.png?v=7',
   'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js'
 ];
 self.addEventListener('install', e => {
@@ -18,7 +18,7 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   // páginas: tenta a rede primeiro (pega atualizações) e cai para o cache se estiver offline
   if (req.mode === 'navigate') {
-    e.respondWith(fetch(req).then(r => { const cp = r.clone(); caches.open(VERSAO).then(c => c.put('./index.html', cp)); return r; })
+    e.respondWith(fetch(req, { cache: 'no-store' }).then(r => { const cp = r.clone(); caches.open(VERSAO).then(c => c.put('./index.html', cp)); return r; })
       .catch(() => caches.match('./index.html')));
     return;
   }
