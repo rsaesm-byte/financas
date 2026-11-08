@@ -257,7 +257,7 @@ const MN=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez
 const MNF=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const PALETTE=['#4f8cff','#a970ff','#22c58b','#f5a524','#f2555a','#2ec4d6','#ff7ab6','#9bd04b','#ff9f43','#7f8cff'];
 
-function defaultState(){return{settings:{theme:'dark',pct:{needs:50,wants:30,savings:20}},months:{},expenses:[],debts:[],cards:[],cardPurchases:[],goals:[],bills:[],benefits:[],deleted:{},profile:{},learn:{done:{}}}}
+function defaultState(){return{settings:{theme:'dark',pct:{needs:50,wants:30,savings:20}},months:{},expenses:[],debts:[],cards:[],cardPurchases:[],goals:[],bills:[],benefits:[],deleted:{},profile:{},learn:{done:{}},investimentos:[],invest:{}}}
 let state=defaultState();
 let curMonth=todayYM();
 let view='dashboard';
@@ -299,7 +299,7 @@ function mergeStates(p,s){
   p=Object.assign(defaultState(),p);s=Object.assign(defaultState(),s);
   const dead=Object.assign({},s.deleted,p.deleted);
   const o=Object.assign(defaultState(),s,p);o.deleted=dead;o.settings=p.settings;
-  ['expenses','debts','cards','cardPurchases','goals','bills','benefits'].forEach(k=>o[k]=mergeById(p[k],s[k],dead));
+  ['expenses','debts','cards','cardPurchases','goals','bills','benefits','investimentos'].forEach(k=>o[k]=mergeById(p[k],s[k],dead));
   o.months={};
   new Set([...Object.keys(s.months),...Object.keys(p.months)]).forEach(ym=>{
     const a=p.months[ym],b=s.months[ym];
@@ -601,6 +601,7 @@ const IC={
  vale:'<path d="M5 8h14l-1.5 11a2 2 0 0 1-2 1.7H8.5a2 2 0 0 1-2-1.7z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>',
  bills:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 15l2 2 4-4"/>',
  report:'<path d="M6 2h9l5 5v15H6zM14 2v6h6M9 13h6M9 17h6"/>',
+ invest:'<path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/>',
  learn:'<path d="M2 7l10-4 10 4-10 4z"/><path d="M6 9v5c0 1.7 2.7 3 6 3s6-1.3 6-3V9"/><path d="M22 7v6"/>',
  profile:'<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>',
  settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'
@@ -610,7 +611,7 @@ const NAV=[
  ['sep','Visão geral'],['home','Início'],['dashboard','Dashboard'],['review','Revisão do período'],['report','Relatório do mês'],
  ['sep','Planejamento'],['budget','Renda & Orçamento'],['compare','Planejado × Real'],['expenses','Gastos'],['bills','Contas fixas'],['vale','Vale-alimentação'],
  ['sep','Compromissos'],['debts','Dívidas & Financiamentos'],['cards','Cartões de crédito'],['goals','Metas & Poupança'],
- ['sep','Coach'],['learn','Aprender'],['profile','Meu perfil'],
+ ['sep','Coach'],['invest','Investir'],['learn','Aprender'],['profile','Meu perfil'],
  ['sep','Sistema'],['settings','Configurações']
 ];
 const TITLES=Object.fromEntries(NAV.filter(n=>n[0]!=='sep'));
@@ -631,7 +632,7 @@ function openMore(){
   const it=(k,l,icon,act='nav')=>`<button type="button" class="more-item ${view===k?'on':''}" data-act="${act}" data-id="${k}">${ico(icon||k)}${l}</button>`;
   const sec=(t,h)=>`<div class="q-label" style="margin-top:12px">${t}</div><div class="more-grid">${h}</div>`;
   f.innerHTML=`<header>Mais</header><div class="body"><div class="full">
-   ${sec('Coach financeiro',it('learn','Aprender')+it('profile','Meu perfil')+`<button type="button" class="more-item ${state.settings.coach!==false?'on':''}" data-act="toggleCoach">🤖<span>Coach nos gastos: ${state.settings.coach!==false?'ligado':'desligado'}</span></button>`)}
+   ${sec('Coach financeiro',it('invest','Investir e sair das dívidas','invest')+it('learn','Aprender')+it('profile','Meu perfil')+`<button type="button" class="more-item ${state.settings.coach!==false?'on':''}" data-act="toggleCoach">🤖<span>Coach nos gastos: ${state.settings.coach!==false?'ligado':'desligado'}</span></button>`)}
    ${sec('Visão geral',it('dashboard','Dashboard')+it('review','Revisão do período')+it('report','Relatório do mês'))}
    ${sec('Planejamento',it('budget','Renda & Orçamento')+it('compare','Planejado × Real')+it('bills','Contas fixas'))}
    ${sec('Compromissos',it('debts','Dívidas')+it('cards','Cartões')+it('goals','Metas & Reservas'))}
@@ -1095,6 +1096,7 @@ function vHome(){
   // últimos lançamentos
   const last=actualEntries(curMonth,true).filter(e=>e.src==='exp').sort((a,b)=>b.date.localeCompare(a.date)||0).slice(0,6);
   h+=`<div class="card"><div class="card-head"><div><h3>🕑 Últimos lançamentos</h3></div><button class="btn sm" data-act="nav" data-id="expenses">Ver todos</button></div>${last.length?expList(last):'<div class="empty">Nada lançado neste mês ainda.</div>'}</div>`;
+  try{const E=progEtapas(),at=E.find(e=>!e.ok);if(at)h+=`<div class="card" data-act="invTab" data-id="prog" style="cursor:pointer"><div class="muted" style="font-size:12px">🧭 Programa "Para onde foi meu dinheiro?" · etapa ${E.indexOf(at)+1} de 7</div><div class="row" style="margin-top:6px;flex-wrap:nowrap"><span style="font-size:24px">${at.ic}</span><b style="flex:1">${at.t}</b><span class="vl">›</span></div>${bar(E.filter(e=>e.ok).length/7*100)}</div>`}catch(e){console.warn(e)}
   try{const P=profileCalc(),[aic,anome]=arquetipo(P),nx=nextLesson();
     h+=`<div class="card"><div class="row" style="flex-wrap:nowrap"><div class="ring" style="--p:${P.total};width:64px;height:64px"><b style="width:50px;height:50px;font-size:15px">${Math.round(P.total)}</b></div><div style="flex:1;min-width:0" data-act="nav" data-id="profile"><div class="muted" style="font-size:12px">Seu perfil financeiro</div><b>${aic} ${anome}</b><div class="muted" style="font-size:12px">Ver pilares e evolução ›</div></div></div>
      ${nx?`<div class="mrow" data-act="openLesson" data-id="${nx.id}" style="border:0;padding-bottom:0"><div class="ic" style="background:var(--panel2)">${nx.ic}</div><div class="tx"><b>${nx.t}</b><small>🎓 Aula recomendada · ${nx.min} min</small></div><div class="vl">›</div></div>`:''}</div>`}catch(e){console.warn(e)}
@@ -1762,6 +1764,384 @@ function profileForm(){
 }
 
 /* ============================================================
+   INVESTIR — programa "Para onde foi meu dinheiro?", guia de investimentos,
+   perfil de investidor, minha carteira, simuladores e segurança.
+   Conteúdo educativo, não é recomendação individual de investimento.
+   Regras conferidas em nov/2026.
+   ============================================================ */
+function inv(){state.invest=state.invest||{};const I=state.invest;I.taxas=I.taxas||{selic:13.75,ipca:5.2,ref:'set/2026'};I.prog=I.prog||{done:{},cortes:[]};I.prog.done=I.prog.done||{};I.prog.cortes=I.prog.cortes||[];I.apos=I.apos||{};state.investimentos=state.investimentos||[];return I}
+const CLASSES={pos:['Reserva / pós-fixados','#22c58b'],infl:['Inflação e prefixados','#4f8cff'],fii:['Fundos imobiliários','#f5a524'],acoes:['Ações e ETFs Brasil','#a970ff'],intl:['Internacional','#2ec4d6'],prev:['Previdência','#9bd04b'],cripto:['Cripto','#ff7ab6'],outros:['Outros','#8a97aa']};
+const RISCO=['','Muito baixo','Baixo','Médio','Alto','Muito alto'];
+/* ---------- guia: todos os tipos ---------- */
+const INV_GRUPOS=[['rfpub','🏛 Renda fixa — Tesouro Direto'],['rfban','🏦 Renda fixa — bancos'],['rfpriv','🏭 Renda fixa — crédito privado'],['fundos','🧺 Fundos de investimento'],['rv','📈 Renda variável'],['prev','👵 Previdência privada'],['alt','🪙 Alternativos'],['nao','🚫 Parecem investimento, mas não são']];
+const INVS=[
+ {id:'poupanca',g:'rfban',n:'Poupança',ic:'🐷',cl:'pos',r:1,liq:'Diária, mas só rende no "aniversário" mensal',ir:'Isenta',fgc:true,min:'Qualquer valor',pz:['curto'],
+  o:'Rende 0,5% ao mês + TR quando a Selic está acima de 8,5% ao ano (abaixo disso, 70% da Selic + TR).',
+  pq:'Quem está começando e precisa de algo simples — mas há opções tão seguras quanto e que rendem mais.',
+  c:'Com a Selic alta, Tesouro Selic e CDB de liquidez diária a partir de 100% do CDI costumam render mais, mesmo depois do IR. Dinheiro sacado antes do aniversário perde o rendimento do mês.'},
+ {id:'tselic',g:'rfpub',n:'Tesouro Selic',ic:'🛟',cl:'pos',r:1,liq:'Resgate rápido, em dias úteis',ir:'Tabela regressiva (22,5% → 15%) + IOF nos primeiros 30 dias',fgc:false,min:'Cerca de R$ 100–200 (frações do título)',pz:['curto','medio'],
+  o:'Título público pós-fixado: acompanha a taxa Selic. Quem paga é o Tesouro Nacional — o menor risco de crédito do país.',
+  pq:'Reserva de emergência e objetivos de curto prazo. É a referência de "porto seguro".',
+  c:'Não tem FGC porque o garantidor é o próprio governo. Há taxa de custódia da B3 em alguns casos — confira as regras atuais no site do Tesouro Direto.'},
+ {id:'tpre',g:'rfpub',n:'Tesouro Prefixado',ic:'📌',cl:'infl',r:2,liq:'Resgate antecipado a preço de mercado',ir:'Tabela regressiva',fgc:false,min:'Cerca de R$ 30–40 (frações)',pz:['medio'],
+  o:'Você sabe exatamente quanto vai receber no vencimento (taxa fixa). Existe versão com juros semestrais.',
+  pq:'Objetivos com data marcada, quando você acha que os juros vão cair.',
+  c:'Se precisar vender antes do vencimento, o preço pode estar abaixo do que você pagou (marcação a mercado). Se a inflação subir muito, a taxa fixa perde valor real.'},
+ {id:'tipca',g:'rfpub',n:'Tesouro IPCA+',ic:'🛡',cl:'infl',r:2,liq:'Resgate antecipado a preço de mercado',ir:'Tabela regressiva',fgc:false,min:'Cerca de R$ 30–60 (frações)',pz:['medio','longo'],
+  o:'Paga a inflação (IPCA) + uma taxa real. Protege o poder de compra no longo prazo. Existe versão com juros semestrais.',
+  pq:'Aposentadoria, compra de imóvel, educação dos filhos — objetivos de 5 anos ou mais.',
+  c:'Oscila bastante no caminho: segure até o vencimento para garantir a taxa contratada.'},
+ {id:'trenda',g:'rfpub',n:'Tesouro RendA+ e Educa+',ic:'🎓',cl:'infl',r:2,liq:'Pensado para segurar até o fim',ir:'Tabela regressiva',fgc:false,min:'Baixo (frações)',pz:['longo'],
+  o:'RendA+ paga uma renda mensal corrigida pela inflação por 20 anos a partir da data escolhida para se aposentar. Educa+ paga 5 anos de renda mensal para a faculdade.',
+  pq:'Quem quer montar aposentadoria ou a educação de um filho no "piloto automático".',
+  c:'Resgatar antes da data de conversão pode ter perda e penalidade. É para longo prazo de verdade.'},
+ {id:'cdb',g:'rfban',n:'CDB',ic:'🏦',cl:'pos',r:2,liq:'Diária (alguns) ou só no vencimento',ir:'Tabela regressiva',fgc:true,min:'A partir de R$ 1 em muitos bancos',pz:['curto','medio'],
+  o:'Você empresta para o banco. Pode ser pós-fixado (% do CDI), prefixado ou atrelado à inflação.',
+  pq:'Reserva (os de liquidez diária a 100% do CDI ou mais) e objetivos com prazo (os com vencimento pagam mais).',
+  c:'Banco pagando muito acima do mercado = risco maior. Respeite o limite do FGC: R$ 250 mil por CPF por conglomerado, contando os juros.'},
+ {id:'lcilca',g:'rfban',n:'LCI e LCA',ic:'🌾',cl:'pos',r:2,liq:'Só após a carência mínima (meses)',ir:'Isentas para pessoa física (Lei 11.033/2004)',fgc:true,min:'Varia — R$ 100 a R$ 1.000',pz:['medio'],
+  o:'Títulos de bancos que financiam o setor imobiliário (LCI) e o agronegócio (LCA).',
+  pq:'Dinheiro que pode ficar parado alguns meses ou anos. Compare sempre a taxa líquida com a de um CDB.',
+  c:'Têm prazo mínimo de carência: não sirvem para reserva de emergência. Já houve propostas de taxar, que não foram aprovadas — fique de olho em mudanças.'},
+ {id:'lcrdb',g:'rfban',n:'LC e RDB',ic:'🧾',cl:'pos',r:2,liq:'Geralmente no vencimento',ir:'Tabela regressiva',fgc:true,min:'Baixo',pz:['curto','medio'],
+  o:'Parecidos com o CDB, emitidos por financeiras (LC) e bancos/cooperativas (RDB).',
+  pq:'Quem busca um pouco mais de taxa com proteção do FGC.',
+  c:'Costumam ter pouca ou nenhuma liquidez antes do vencimento.'},
+ {id:'cricra',g:'rfpriv',n:'CRI e CRA',ic:'🏗',cl:'infl',r:3,liq:'Baixa — no vencimento ou mercado secundário',ir:'Isentos para pessoa física',fgc:false,min:'R$ 1.000 em geral',pz:['medio','longo'],
+  o:'Títulos lastreados em dívidas do setor imobiliário (CRI) ou do agronegócio (CRA).',
+  pq:'Investidor com alguma experiência, que já tem reserva e diversifica.',
+  c:'NÃO têm FGC. Se o devedor não pagar, você pode perder. Leia a nota de crédito (rating) e não concentre.'},
+ {id:'deb',g:'rfpriv',n:'Debêntures (comuns e incentivadas)',ic:'🏭',cl:'infl',r:3,liq:'Baixa',ir:'Comuns: tabela regressiva · Incentivadas: isentas',fgc:false,min:'R$ 1.000 em geral',pz:['medio','longo'],
+  o:'Você empresta para uma empresa. As incentivadas financiam infraestrutura e são isentas de IR para pessoa física.',
+  pq:'Quem já tem a base pronta e quer taxas maiores, aceitando risco de crédito.',
+  c:'Sem FGC. Prefira empresas grandes, diversifique entre emissores e evite o que não entende.'},
+ {id:'fdi',g:'fundos',n:'Fundos DI e de renda fixa',ic:'🧺',cl:'pos',r:2,liq:'D+0 a D+30',ir:'Tabela regressiva + come-cotas em maio e novembro',fgc:false,min:'Varia',pz:['curto','medio'],
+  o:'Um gestor compra títulos por você. Os DI seguem o CDI.',
+  pq:'Quem prefere praticidade.',
+  c:'Taxa de administração come a rentabilidade: em fundo DI, evite taxas acima de ~0,5% a.a. Muitas vezes o Tesouro Selic rende igual ou mais.'},
+ {id:'fmm',g:'fundos',n:'Fundos multimercado e de ações',ic:'🎛',cl:'acoes',r:4,liq:'D+1 a D+60',ir:'Multimercado: tabela regressiva + come-cotas · Ações: 15% no resgate',fgc:false,min:'Varia',pz:['longo'],
+  o:'Gestor profissional investe em várias classes (multimercado) ou em ações.',
+  pq:'Quem quer gestão ativa e aceita oscilação.',
+  c:'Compare com o índice de referência por 5 anos ou mais. Taxa de performance e de administração altas podem anular o ganho.'},
+ {id:'coe',g:'fundos',n:'COE',ic:'🧩',cl:'outros',r:3,liq:'Praticamente nenhuma',ir:'Tabela regressiva',fgc:false,min:'R$ 1.000+',pz:['medio'],
+  o:'Produto estruturado, com retorno ligado a algum índice ou ativo.',
+  pq:'Quase nunca é para iniciante.',
+  c:'Difícil de entender, com custos embutidos e sem liquidez. Se o gerente insistir, desconfie.'},
+ {id:'acoes',g:'rv',n:'Ações',ic:'📈',cl:'acoes',r:5,liq:'D+2 (venda na bolsa)',ir:'15% sobre o lucro (day trade: 20%). Vendas até R$ 20 mil/mês isentas (swing trade)',fgc:false,min:'O preço de 1 ação (fracionário)',pz:['longo'],
+  o:'Você vira sócio de empresas: ganha com valorização e dividendos.',
+  pq:'Objetivos de 5 anos ou mais, com reserva pronta e estômago para quedas de 30% ou mais.',
+  c:'Diversifique (10+ empresas de setores diferentes ou um ETF). Dividendos são isentos, mas desde 2026 os acima de R$ 50 mil/mês da mesma empresa têm 10% retido na fonte.'},
+ {id:'etf',g:'rv',n:'ETFs (fundos de índice)',ic:'🧺',cl:'acoes',r:4,liq:'D+2',ir:'15% sobre o lucro (não tem a isenção de R$ 20 mil)',fgc:false,min:'Preço de 1 cota (às vezes < R$ 100)',pz:['longo'],
+  o:'Uma cesta que replica um índice (ex.: Ibovespa, S&P 500) — diversificação instantânea com custo baixo.',
+  pq:'O jeito mais simples de começar em renda variável e no exterior.',
+  c:'Veja a taxa de administração e o índice que ele segue. ETF internacional tem risco cambial (dólar).'},
+ {id:'fii',g:'rv',n:'Fundos imobiliários (FIIs) e Fiagro',ic:'🏢',cl:'fii',r:3,liq:'D+2',ir:'Rendimentos mensais isentos para pessoa física (com condições da lei) · lucro na venda: 20%',fgc:false,min:'Preço de 1 cota (muitas ≈ R$ 10–100)',pz:['medio','longo'],
+  o:'Cotas de imóveis (shoppings, galpões, lajes) ou de dívidas imobiliárias/agro, que pagam renda mensal.',
+  pq:'Quem quer renda mensal e exposição a imóveis sem comprar um imóvel.',
+  c:'A cota oscila como ação. Diversifique entre tipos de fundo e não escolha só pelo maior dividendo.'},
+ {id:'bdr',g:'rv',n:'BDRs e investimentos no exterior',ic:'🌎',cl:'intl',r:4,liq:'D+2',ir:'15% sobre o lucro · dividendos tributados',fgc:false,min:'Preço de 1 unidade',pz:['longo'],
+  o:'Recibos de empresas estrangeiras negociados na B3, ou ETFs de índices globais.',
+  pq:'Diversificar fora do Brasil e se proteger de crises locais.',
+  c:'Variação do dólar mexe muito no resultado. Comece por ETFs amplos antes de ações individuais.'},
+ {id:'pgbl',g:'prev',n:'Previdência PGBL',ic:'👵',cl:'prev',r:2,liq:'Baixa (pensada para longo prazo)',ir:'Sobre o valor total resgatado · tabela regressiva cai até 10% após 10 anos',fgc:false,min:'Varia',pz:['longo'],
+  o:'Permite deduzir até 12% da renda bruta tributável no IR — se você faz a declaração completa e contribui para o INSS.',
+  pq:'Quem declara no modelo completo e quer economizar IR hoje.',
+  c:'Fuja de taxa de carregamento e de taxa de administração alta. Escolha o regime de tributação (regressivo ou progressivo) na contratação.'},
+ {id:'vgbl',g:'prev',n:'Previdência VGBL',ic:'👴',cl:'prev',r:2,liq:'Baixa',ir:'Só sobre o rendimento · tabela regressiva até 10%',fgc:false,min:'Varia',pz:['longo'],
+  o:'Igual ao PGBL, mas sem dedução no IR — o imposto incide só sobre o ganho.',
+  pq:'Quem declara no modelo simplificado ou já usou o limite do PGBL; também facilita sucessão (não entra em inventário).',
+  c:'Compare taxas e rentabilidade com alternativas como o Tesouro IPCA+.'},
+ {id:'cripto',g:'alt',n:'Criptoativos',ic:'🪙',cl:'cripto',r:5,liq:'Imediata (24h), mas com volatilidade extrema',ir:'Vendas até R$ 35 mil/mês em corretoras brasileiras: isentas · acima: 15% a 22,5% sobre o lucro · no exterior: 15% com apuração anual',fgc:false,min:'Qualquer valor',pz:['longo'],
+  o:'Ativos digitais como Bitcoin. Podem subir ou cair mais de 50% em pouco tempo.',
+  pq:'Só para uma pequena parte do patrimônio (ex.: até 5%), depois da reserva e sem dívidas caras.',
+  c:'Use corretoras conhecidas e autenticação em dois fatores. "Rendimento fixo em cripto" e "robôs" são campo fértil de golpes.'},
+ {id:'ouro',g:'alt',n:'Ouro e dólar',ic:'🥇',cl:'intl',r:3,liq:'Boa (via ETF na bolsa)',ir:'15% sobre o lucro',fgc:false,min:'Baixo via ETF',pz:['longo'],
+  o:'Ativos de proteção que costumam subir em crises.',
+  pq:'Uma pequena fatia de proteção numa carteira diversificada.',
+  c:'Não pagam juros nem dividendos: o ganho vem só da valorização.'},
+ {id:'cap',g:'nao',n:'Título de capitalização',ic:'🎟',cl:'outros',r:1,liq:'Carência e multa',ir:'—',fgc:false,min:'—',pz:[],
+  o:'Um "sorteio" em que você devolve parte do dinheiro no fim, quase sempre abaixo da inflação.',
+  pq:'Ninguém que queira investir.',
+  c:'Muito oferecido por gerentes de banco. Não é investimento: é um produto de sorteio.'},
+ {id:'consorcio',g:'nao',n:'Consórcio',ic:'🚗',cl:'outros',r:2,liq:'Só quando for contemplado',ir:'—',fgc:false,min:'—',pz:[],
+  o:'Compra planejada em grupo, com taxa de administração. Não rende juros.',
+  pq:'Quem quer disciplina para comprar um bem e não tem pressa.',
+  c:'Compare o custo total (taxa de administração + fundo de reserva) com juntar o dinheiro investindo.'},
+ {id:'imovel',g:'nao',n:'Imóvel para morar',ic:'🏠',cl:'outros',r:2,liq:'Muito baixa',ir:'Ganho de capital na venda',fgc:false,min:'—',pz:[],
+  o:'É moradia e segurança, não uma fonte de renda: gera custos (IPTU, condomínio, manutenção).',
+  pq:'Decisão de vida, não de investimento.',
+  c:'Faça a conta de aluguel × compra antes de financiar 30 anos.'}
+];
+const PERFIS={
+ conservador:{n:'Conservador',ic:'🛡',d:'Prioriza segurança e liquidez. Aceita render menos para não ver o saldo cair.',alv:{pos:70,infl:22,fii:3,acoes:3,intl:2}},
+ moderado:{n:'Moderado',ic:'⚖️',d:'Aceita oscilações moderadas em parte da carteira em troca de mais retorno no longo prazo.',alv:{pos:40,infl:25,fii:8,acoes:15,intl:10,cripto:2}},
+ arrojado:{n:'Arrojado',ic:'🚀',d:'Foca no longo prazo e aceita quedas grandes no caminho para buscar retornos maiores.',alv:{pos:20,infl:20,fii:12,acoes:30,intl:15,cripto:3}}
+};
+const QUIZ=[
+ ['Em quanto tempo você deve precisar da maior parte desse dinheiro?',['Menos de 1 ano','1 a 3 anos','3 a 10 anos','Mais de 10 anos']],
+ ['Seus investimentos caem 15% em um mês. O que você faz?',['Vendo tudo para não perder mais','Vendo uma parte','Mantenho e espero','Aproveito para comprar mais']],
+ ['Qual é o seu principal objetivo?',['Preservar o que tenho','Ter uma renda estável','Crescer de forma moderada','Crescer o máximo possível']],
+ ['O que você já investiu?',['Nunca investi','Poupança ou CDB','Tesouro Direto ou fundos','Ações, FIIs ou ETFs']],
+ ['Você tem reserva de emergência?',['Não tenho','Menos de 3 meses','De 3 a 6 meses','Mais de 6 meses']],
+ ['Como é a sua renda?',['Instável','Parte fixa, parte variável','Estável','Estável e com renda extra']],
+ ['Você tem dívidas caras (cartão rotativo, cheque especial, empréstimo pessoal)?',['Sim, várias','Algumas','Só financiamento com juros baixos','Nenhuma']]
+];
+/* ---------- utilidades financeiras ---------- */
+const mensal=a=>Math.pow(1+a/100,1/12)-1;
+function fv(ini,ap,taxaAA,meses){const i=mensal(taxaAA);let v=ini;const s=[v];for(let k=1;k<=meses;k++){v=v*(1+i)+ap;s.push(v)}return s}
+function pmt(alvo,ini,taxaAA,meses){const i=mensal(taxaAA);if(meses<=0)return Math.max(0,alvo-ini);const f=Math.pow(1+i,meses);return i?Math.max(0,(alvo-ini*f)*i/(f-1)):Math.max(0,(alvo-ini)/meses)}
+function carteiraTotal(){return sum(state.investimentos||[],x=>+x.atual||+x.aplicado||0)}
+function invPerfil(){const p=inv().perfil;return p&&PERFIS[p.tipo]?p:null}
+function horizonte(m){return m<=24?['curto','Curto prazo (até 2 anos)']:m<=60?['medio','Médio prazo (2 a 5 anos)']:['longo','Longo prazo (mais de 5 anos)']}
+const PRAZO_TXT={curto:'Segurança e liquidez: Tesouro Selic, CDB de liquidez diária ≥ 100% do CDI. Nada de renda variável.',medio:'Renda fixa com vencimento próximo da data: CDB/LCI/LCA, Tesouro Prefixado ou IPCA+ com vencimento compatível.',longo:'Aqui cabe diversificar: Tesouro IPCA+, previdência barata, FIIs, ações/ETFs e um pouco de exterior, conforme o seu perfil.'};
+
+/* ---------- programa: dívidas ---------- */
+function simDividas(lista,extra,metodo){
+  let ds=lista.map(d=>({n:d.n,s:+d.saldo,i:(+d.juros||0)/100,p:+d.parc||0})).filter(d=>d.s>0.5);
+  const ordem=()=>ds.filter(d=>d.s>0.5).sort((a,b)=>metodo==='bola'?a.s-b.s:b.i-a.i);
+  let mes=0,juros=0,ordemQuit=[];
+  while(ds.some(d=>d.s>0.5)&&mes<600){mes++;let livre=extra;
+    ds.forEach(d=>{if(d.s<=0.5)return;const j=d.s*d.i;juros+=j;d.s+=j;const pg=Math.min(d.s,d.p);d.s-=pg;if(d.s<=0.5&&!ordemQuit.find(x=>x.n===d.n))ordemQuit.push({n:d.n,m:mes})});
+    ds.forEach(d=>{if(d.s<=0.5&&d.p){livre+=d.p;d.p=0}});
+    for(const d of ordem()){if(livre<=0)break;const pg=Math.min(d.s,livre);d.s-=pg;livre-=pg;if(d.s<=0.5&&!ordemQuit.find(x=>x.n===d.n))ordemQuit.push({n:d.n,m:mes})}}
+  return{meses:mes,juros,ordem:ordemQuit,nunca:mes>=600};
+}
+function dividasLista(){
+  /* saldo devedor = valor presente das parcelas que faltam (sem os juros futuros) */
+  const L=state.debts.filter(d=>debtRemaining(d)>0).map(d=>{const n=Math.max(0,(+d.totalParcelas)-(+d.parcelasPagas)),i=(+d.juros||0)/100,pv=i?(+d.parcela)*(1-Math.pow(1+i,-n))/i:debtRemaining(d);return{n:d.nome,saldo:Math.round(pv*100)/100,juros:+d.juros||0,parc:+d.parcela}});
+  state.cards.forEach(c=>{const u=cardUsed(c.id,curMonth);if(u>0)L.push({n:'💳 '+c.nome+' (parcelas futuras)',saldo:u,juros:0,parc:cardFatura(c.id,curMonth)||u})});
+  return L;
+}
+/* ---------- programa: diagnóstico ---------- */
+function diagnostico(){
+  const ms=[1,2,3].map(i=>addM(curMonth,-i)).filter(x=>actualEntries(x).length);if(curMonth===todayYM()&&!ms.length)ms.push(curMonth);
+  const cats={};let tot=0,inc=0;
+  ms.forEach(x=>{inc+=incomeTotal(x);actualEntries(x).filter(e=>e.tipo!=='savings').forEach(e=>{const k=e.tipo+'|'+e.cat;cats[k]=cats[k]||{cat:e.cat,tipo:e.tipo,v:0,n:0,peq:0};cats[k].v+=e.valor;cats[k].n++;if(e.valor<60)cats[k].peq+=e.valor;tot+=e.valor})});
+  const L=Object.values(cats).map(c=>({...c,mes:c.v/ms.length})).sort((a,b)=>b.v-a.v);
+  const fixas=sum(state.bills.filter(b=>billActive(b,curMonth)),b=>+b.valor)+monthlyDebtPayments(curMonth);
+  return{ms,L,tot:tot/Math.max(1,ms.length),inc:inc/Math.max(1,ms.length),peq:sum(L,c=>c.peq)/Math.max(1,ms.length),fixas};
+}
+function progEtapas(){
+  const I=inv(),r=reservaInfo(),D=dividasLista(),caras=D.filter(d=>d.juros>=1.5),pf=state.profile||{},vari=(profileCalc().varPct||0)>25||+pf.dependentes>0,metaRes=r.needs*(vari?9:6),mini=Math.max(1000,r.needs);
+  const temCorte=I.prog.cortes.length>0;
+  return[
+   {id:'diag',ic:'🔍',t:'Para onde foi meu dinheiro?',d:'Diagnóstico dos últimos 3 meses: categorias, gastos invisíveis e quanto da renda já está comprometida.',ok:!!I.prog.done.diag,pct:I.prog.done.diag?100:0},
+   {id:'cortes',ic:'✂️',t:'Conter os vazamentos',d:'Escolha até 3 categorias para reduzir e acompanhe o resultado mês a mês.',ok:temCorte&&!!I.prog.done.cortes,pct:temCorte?(I.prog.done.cortes?100:50):0},
+   {id:'mini',ic:'🧯',t:'Mini-reserva',d:`Um colchão de ${brl(mini)} (1 mês de Necessidades) para imprevistos não virarem dívida.`,ok:r.valor>=mini,pct:clamp(r.valor/mini*100)},
+   {id:'divida',ic:'⛓',t:'Plano de quitação de dívidas',d:'Simule avalanche × bola de neve e descubra quando fica livre — e quanto economiza em juros.',ok:!caras.length,pct:D.length?(caras.length?(I.prog.done.divida?50:10):100):100},
+   {id:'reserva',ic:'🛟',t:'Reserva de emergência completa',d:`${vari?9:6} meses de Necessidades = ${brl(metaRes)}${vari?' (renda variável ou dependentes pedem mais)':''}.`,ok:r.needs>0&&r.valor>=metaRes,pct:metaRes?clamp(r.valor/metaRes*100):0},
+   {id:'investir',ic:'🌱',t:'Começar a investir com segurança',d:'Descubra seu perfil de investidor, entenda os tipos de investimento e registre o primeiro na sua carteira.',ok:!!invPerfil()&&state.investimentos.length>0,pct:(invPerfil()?50:0)+(state.investimentos.length?50:0)},
+   {id:'apos',ic:'🏖',t:'Longo prazo e aposentadoria',d:'Calcule quanto precisa juntar para a independência financeira e o aporte mensal que leva até lá.',ok:!!I.apos.salvo,pct:I.apos.salvo?100:0}
+  ];
+}
+/* ---------- telas ---------- */
+const INV_TABS=[['prog','🧭 Programa'],['guia','📚 Guia'],['perfil','🧑‍💼 Perfil'],['carteira','💼 Carteira'],['sim','🧮 Simular'],['seg','🔐 Segurança']];
+function vInvest(){
+  inv();const tab=ui.invTab||'prog';
+  const tabs=`<div class="chips" style="flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch">${INV_TABS.map(([k,l])=>`<button class="chip ${tab===k?'on':''}" data-act="invTab" data-id="${k}" style="flex:none">${l}</button>`).join('')}</div>`;
+  let h='';try{h={prog:vProg,guia:vGuia,perfil:vInvPerfil,carteira:vCarteira,sim:vSim,seg:vSeg}[tab]()}catch(e){console.error(e);h=`<div class="card empty">Erro: ${esc(e.message)}</div>`}
+  return tabs+h+`<div class="muted" style="font-size:12px;padding:0 4px">Conteúdo educativo, com regras conferidas em nov/2026. Não é recomendação individual de investimento. Antes de decidir, confira as condições do produto e, se precisar, procure um profissional certificado.</div>`;
+}
+function vProg(){
+  const E=progEtapas(),n=E.filter(e=>e.ok).length,at=E.find(e=>!e.ok),sel=ui.invStep||(at?at.id:'diag');
+  let h=`<div class="card hero"><div class="lbl">🧭 Programa "Para onde foi meu dinheiro?"</div><div class="big">${at?'Etapa '+(E.indexOf(at)+1)+' de 7':'🏆 Programa concluído'}</div><div class="mini" style="margin:-4px 0 8px"><span>${n} de 7 etapas concluídas</span></div>${bar(n/7*100)}
+   <div class="mini"><span>Da dívida à prosperidade com pequenas mudanças — uma etapa por vez.</span></div></div>
+  <div class="card"><div class="mlist">${E.map((e,i)=>`<div class="mrow" data-act="invStep" data-id="${e.id}" style="${sel===e.id?'background:var(--panel2);border-radius:12px':''}"><div class="ic" style="background:${e.ok?'color-mix(in srgb,var(--ok) 20%,transparent)':'var(--panel2)'}">${e.ok?'✅':e.ic}</div><div class="tx"><b>${i+1}. ${e.t}</b><small>${e.ok?'Concluída':e===at?'👉 Você está aqui · '+Math.round(e.pct)+'%':Math.round(e.pct)+'%'}</small></div><div class="vl">${sel===e.id?'▾':'›'}</div></div>`).join('')}</div></div>`;
+  const e=E.find(x=>x.id===sel);
+  h+=`<div class="card" id="stepBox"><h3>${e.ic} ${e.t}</h3><div class="sub">${e.d}</div>${({diag:stDiag,cortes:stCortes,mini:stMini,divida:stDivida,reserva:stReserva,investir:stInvestir,apos:stApos}[sel])()}</div>`;
+  return h;
+}
+function stDiag(){
+  const D=diagnostico(),I=inv();if(!D.L.length)return'<div class="empty">Lance seus gastos por algumas semanas para ver o diagnóstico.</div>';
+  const top=D.L.slice(0,8),inc=D.inc||1;
+  const peqTxt=D.peq>0?`<div class="alert warn">☕ <b>Gastos invisíveis:</b> compras abaixo de R$ 60 somam em média <b>${brl(D.peq)}/mês</b> (${pctf(D.peq/inc*100,0)} da renda) — ${brl(D.peq*12)} por ano.</div>`:'';
+  setTimeout(()=>mkChart('chDiag',{type:'doughnut',data:{labels:top.map(c=>c.cat),datasets:[{data:top.map(c=>c.mes),backgroundColor:PALETTE,borderWidth:0}]},options:{cutout:'60%',plugins:{legend:{position:'bottom',labels:{boxWidth:8,font:{size:11}}}}}}));
+  return`<div class="grid g4">${kpi('Renda média',brl(D.inc),D.ms.length+' mês(es) analisado(s)')}${kpi('Gasto médio',brl(D.tot),pctf(D.tot/inc*100,0)+' da renda',null,D.tot>D.inc?'neg':'')}${kpi('Já comprometido',brl(D.fixas),'contas fixas + parcelas · '+pctf(D.fixas/inc*100,0))}${kpi('Sobra média',brl(D.inc-D.tot),'antes da poupança',null,D.inc-D.tot<0?'neg':'pos')}</div>
+   <div class="chart-box" style="margin-top:12px"><canvas id="chDiag"></canvas></div>
+   <h3 style="font-size:14px;margin:14px 0 4px">Para onde vai cada R$ 100 da sua renda</h3>
+   ${top.map(c=>`<div style="margin:9px 0"><div class="stat-line"><span>${esc(c.cat)} ${tipoBadge(c.tipo)}</span><b>${brl(c.mes)}/mês · R$ ${num(c.mes/inc*100,0)}</b></div>${bar(c.mes/top[0].mes*100)}</div>`).join('')}
+   ${peqTxt}
+   <div class="alert">🧠 <b>Leitura do especialista:</b> ${D.tot>D.inc?'você está gastando mais do que ganha. A prioridade absoluta é a etapa 2 (conter) e não contrair novas dívidas.':D.fixas/inc>0.6?'mais de 60% da renda já sai comprometida antes do mês começar. Renegociar contas fixas e parcelas libera mais dinheiro do que cortar o cafezinho.':D.inc-D.tot<D.inc*0.1?'sobra menos de 10% da renda. Pequenos cortes nas 2 ou 3 maiores categorias de Desejos já mudam o jogo.':'a base é boa: agora é direcionar a sobra com intenção — reserva primeiro, depois investimentos.'}</div>
+   <button class="btn primary" data-act="progDone" data-id="diag" style="margin-top:6px">${I.prog.done.diag?'✔ Diagnóstico entendido':'Entendi meu diagnóstico ›'}</button>`;
+}
+function stCortes(){
+  const I=inv(),D=diagnostico(),dcat=new Set(state.debts.map(d=>norm(d.cat))),cand=D.L.filter(c=>c.tipo!=='savings'&&!dcat.has(norm(c.cat))).sort((a,b)=>(a.tipo==='wants'?0:1)-(b.tipo==='wants'?0:1)||b.mes-a.mes).slice(0,10);
+  const atual=c=>{const r=comparison(curMonth).find(r=>r.tipo===c.tipo&&norm(r.cat)===norm(c.cat));return r?r.real:0};
+  const cortes=I.prog.cortes;
+  let h=`<div class="alert">💡 Corte onde dói menos e rende mais: categorias grandes de <b>Desejos</b> e contas fixas renegociáveis (planos de celular/internet, assinaturas, seguros). Meta realista: 10% a 30% por categoria.</div>`;
+  if(cortes.length)h+=`<h3 style="font-size:14px;margin:12px 0 4px">Suas metas de corte</h3>${cortes.map((c,i)=>{const alvo=c.base*(1-c.meta/100),a=atual(c),proj=curMonth===todayYM()?a/new Date().getDate()*daysIn(curMonth):a,ok=proj<=alvo;
+    return`<div class="item-card" style="margin:8px 0"><div class="row" style="justify-content:space-between"><b>${esc(c.cat)}</b><span class="badge ${ok?'ok':'warn'}">${ok?'No caminho':'Acima da meta'}</span></div>
+     <div class="stat-line"><span>Antes (média)</span><b>${brl(c.base)}/mês</b></div><div class="stat-line"><span>Meta (−${c.meta}%)</span><b>${brl(alvo)}/mês</b></div><div class="stat-line"><span>${mLabel(curMonth)}${curMonth===todayYM()?' (projeção)':''}</span><b class="${ok?'pos':'neg'}">${brl(proj)}</b></div>
+     <div class="muted" style="font-size:12px">Economia potencial: <b>${brl(c.base-alvo)}/mês = ${brl((c.base-alvo)*12)}/ano</b></div>
+     <div class="row" style="margin-top:8px"><button class="btn sm" data-act="corteBudget" data-id="${i}">Aplicar meta no budget</button><button class="btn sm danger" data-act="corteDel" data-id="${i}">Remover</button></div></div>`}).join('')}
+    <div class="alert ok">💰 Se cumprir as metas, sobram <b>${brl(sum(cortes,c=>c.base*c.meta/100))}/mês</b> para a reserva e as dívidas.</div>`;
+  if(cortes.length<3)h+=`<h3 style="font-size:14px;margin:12px 0 4px">Escolher categoria para reduzir</h3>${cand.filter(c=>!cortes.some(x=>norm(x.cat)===norm(c.cat)&&x.tipo===c.tipo)).map(c=>`<div class="mrow" data-act="corteAdd" data-id="${esc(c.tipo+'::'+c.cat)}"><div class="tx"><b>${esc(c.cat)}</b><small>${BUCKETS[c.tipo].label} · média ${brl(c.mes)}/mês</small></div><div class="vl">＋</div></div>`).join('')||'<div class="empty">Sem categorias suficientes ainda.</div>'}`;
+  if(cortes.length&&!I.prog.done.cortes)h+=`<button class="btn primary" data-act="progDone" data-id="cortes" style="margin-top:10px">Assumir o compromisso ›</button>`;
+  return h;
+}
+function stMini(){const r=reservaInfo(),mini=Math.max(1000,r.needs),f=mini-r.valor,cortes=sum(inv().prog.cortes,c=>c.base*c.meta/100);
+  return`<div class="stat-line"><span>Guardado em reserva</span><b>${brl(r.valor)}</b></div><div class="stat-line"><span>Meta da mini-reserva</span><b>${brl(mini)}</b></div>${bar(r.valor/mini*100,r.valor>=mini?'ok':'warn')}
+   ${f>0?`<div class="alert">Faltam <b>${brl(f)}</b>.${cortes?` Com a economia das suas metas de corte (${brl(cortes)}/mês), chega lá em <b>${Math.ceil(f/cortes)} mês(es)</b>.`:''} Onde guardar: <b>Tesouro Selic</b> ou <b>CDB de liquidez diária ≥ 100% do CDI</b>, separado da conta do dia a dia.</div>`:'<div class="alert ok">✅ Mini-reserva pronta! Imprevistos pequenos já não viram dívida.</div>'}
+   <div class="muted" style="font-size:12px">O app conta como reserva as metas com "reserva" ou "emergência" no nome.</div>
+   <div class="row" style="margin-top:8px">${state.goals.some(g=>/emerg|reserva/i.test(g.nome)&&g.kind!=='fundo')?'':'<button class="btn sm primary" data-act="criarReserva">Criar meta "Reserva de emergência"</button>'}<button class="btn sm" data-act="nav" data-id="goals">Abrir Metas</button></div>`}
+function stDivida(){
+  const I=inv(),L=dividasLista();if(!L.length)return'<div class="alert ok">🎉 Nenhuma dívida cadastrada. Se tiver alguma fora do app, cadastre em Dívidas para simular.</div><button class="btn sm" data-act="nav" data-id="debts">Abrir Dívidas</button>';
+  const extra=+(I.prog.extra??Math.round(sum(I.prog.cortes,c=>c.base*c.meta/100)));
+  const base=simDividas(L,0,'avalanche'),av=simDividas(L,extra,'avalanche'),bo=simDividas(L,extra,'bola');
+  const fmtM=m=>m>=600?'nunca (os juros superam a parcela)':m>=12?Math.floor(m/12)+' ano(s) e '+(m%12)+' mês(es)':m+' mês(es)';
+  return`<div class="table-wrap"><table><thead><tr><th>Dívida</th><th class="num">Saldo</th><th class="num">Juros a.m.</th><th class="num">Parcela</th></tr></thead><tbody>${[...L].sort((a,b)=>b.juros-a.juros).map(d=>`<tr><td>${esc(d.n)}${d.juros>=4?' <span class="badge bad">cara</span>':d.juros>=1.5?' <span class="badge warn">média</span>':''}</td><td class="num">${brl(d.saldo)}</td><td class="num">${num(d.juros,2)}%</td><td class="num">${brl(d.parc)}</td></tr>`).join('')}</tbody></table></div>
+   <label style="display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--muted);font-weight:600;margin-top:10px">Quanto a mais você consegue pagar por mês? (R$)<input type="text" inputmode="decimal" data-progextra value="${extra||''}" placeholder="Ex.: 300"></label>
+   <div class="grid g3" style="margin-top:10px">${kpi('Só as parcelas',fmtM(base.meses),'juros: '+brl(base.juros))}${kpi('🏔 Avalanche',fmtM(av.meses),'juros: '+brl(av.juros),null,'pos')}${kpi('⛄ Bola de neve',fmtM(bo.meses),'juros: '+brl(bo.juros))}</div>
+   ${extra>0&&base.juros>av.juros?`<div class="alert ok">💰 Pagando ${brl(extra)} a mais por mês pelo método avalanche, você economiza <b>${brl(base.juros-av.juros)}</b> em juros e fica livre <b>${base.meses-av.meses} mês(es)</b> antes.</div>`:''}
+   <div class="alert"><b>Ordem de ataque (avalanche):</b> ${av.ordem.map((o,i)=>`${i+1}º ${esc(o.n)} (mês ${o.m})`).join(' → ')||'—'}<br><span class="muted" style="font-size:12px">Avalanche = maior juros primeiro (economiza mais). Bola de neve = menor saldo primeiro (motiva mais). Os dois funcionam — o pior é não ter método.</span></div>
+   <div class="alert warn">🛠 <b>Táticas do especialista:</b> 1) pare de usar cartão rotativo e cheque especial — tire o limite se preciso; 2) renegocie: bancos dão desconto à vista e o <b>Desenrola</b>/feirões de renegociação aparecem periodicamente; 3) troque dívida cara por barata (portabilidade, consignado) só se não voltar a usar a cara; 4) cada dívida quitada: some a parcela dela à próxima.</div>
+   <button class="btn primary" data-act="progDone" data-id="divida">${I.prog.done.divida?'✔ Plano definido':'Vou seguir este plano ›'}</button>`;
+}
+function stReserva(){const r=reservaInfo(),pf=state.profile||{},vari=(profileCalc().varPct||0)>25||+pf.dependentes>0,ms=vari?9:6,meta=r.needs*ms,f=Math.max(0,meta-r.valor),ap=Math.max(100,Math.round(f/24/10)*10);
+  return`<div class="stat-line"><span>Necessidades por mês</span><b>${brl(r.needs)}</b></div><div class="stat-line"><span>Meta (${ms} meses)</span><b>${brl(meta)}</b></div><div class="stat-line"><span>Você tem</span><b>${brl(r.valor)} · ${num(r.meses,1)} mês(es)</b></div>${bar(meta?r.valor/meta*100:0,r.valor>=meta?'ok':'warn')}
+   ${f>0?`<div class="alert">Faltam ${brl(f)}. Guardando <b>${brl(ap)}/mês</b> em Tesouro Selic (${num(inv().taxas.selic,2)}% a.a. bruto), chega lá em cerca de <b>${(()=>{const s=fv(r.valor,ap,inv().taxas.selic*0.82,240);const k=s.findIndex(v=>v>=meta);return k<0?'mais de 20 anos':k+' meses'})()}</b>.</div>`:'<div class="alert ok">✅ Reserva completa! Agora o dinheiro novo pode ir para investimentos de prazo maior.</div>'}
+   <div class="alert">📍 <b>Regras da reserva:</b> segura (Tesouro Selic ou CDB de banco sólido com FGC), resgate no mesmo dia, separada da conta corrente. Rentabilidade é o critério menos importante aqui.</div>`}
+function stInvestir(){const p=invPerfil();return`<div class="row" style="gap:8px">${p?`<span class="badge ok">${PERFIS[p.tipo].ic} Perfil ${PERFIS[p.tipo].n}</span>`:'<span class="badge warn">Perfil não definido</span>'}${state.investimentos.length?`<span class="badge ok">${state.investimentos.length} investimento(s) na carteira</span>`:'<span class="badge warn">Carteira vazia</span>'}</div>
+  <div class="alert" style="margin-top:10px">🪜 <b>Ordem segura para começar:</b> 1) reserva pronta; 2) sem dívidas caras; 3) defina o objetivo e o prazo de cada dinheiro; 4) comece simples (Tesouro e CDB) e só depois adicione renda variável, em pequenas doses; 5) aporte todo mês — constância vale mais que acertar o momento.</div>
+  <div class="row"><button class="btn sm primary" data-act="invTab" data-id="perfil">${p?'Rever meu perfil':'Descobrir meu perfil'}</button><button class="btn sm" data-act="invTab" data-id="guia">Ver tipos de investimento</button><button class="btn sm" data-act="invTab" data-id="carteira">Minha carteira</button></div>`}
+function stApos(){const I=inv();return I.apos.salvo?`<div class="alert ok">✅ Plano salvo: juntar <b>${brl(I.apos.alvo)}</b> até os ${I.apos.idadeA} anos, aportando <b>${brl(I.apos.aporte)}/mês</b>.</div><button class="btn sm" data-act="invTab" data-id="sim">Rever simulação</button>`:`<div class="alert">Use o simulador de aposentadoria para descobrir quanto juntar e salve seu plano.</div><button class="btn sm primary" data-act="invTab" data-id="sim">Abrir simulador</button>`}
+
+function vGuia(){
+  const f=ui.invFiltro||'todos',open=ui.invOpen;
+  const ok=x=>f==='todos'||(f==='seguro'?x.r<=2&&x.g!=='nao':x.pz.includes(f));
+  const filt=[['todos','Todos'],['curto','Curto prazo'],['medio','Médio prazo'],['longo','Longo prazo'],['seguro','Baixo risco']];
+  let h=`<div class="card"><h3>📚 Guia de investimentos no Brasil</h3><div class="sub">Toque em um investimento para ver o que é, o risco, o imposto, a proteção e os cuidados.</div>
+   <div class="chips">${filt.map(([k,l])=>`<button class="chip ${f===k?'on':''}" data-act="invFiltro" data-id="${k}">${l}</button>`).join('')}</div></div>`;
+  INV_GRUPOS.forEach(([g,gl])=>{const L=INVS.filter(x=>x.g===g&&ok(x));if(!L.length)return;
+    h+=`<div class="card"><h3>${gl}</h3><div class="mlist">${L.map(x=>`<div class="mrow" data-act="invOpen" data-id="${x.id}"><div class="ic" style="background:var(--panel2)">${x.ic}</div><div class="tx"><b>${x.n}</b><small>Risco ${RISCO[x.r].toLowerCase()} · ${x.fgc?'com FGC':'sem FGC'}${x.pz.length?' · '+x.pz.map(p=>({curto:'curto',medio:'médio',longo:'longo'}[p])).join('/')+' prazo':''}</small></div><div class="vl">${open===x.id?'▾':'›'}</div></div>
+     ${open===x.id?`<div class="item-card" style="margin:6px 0 10px"><p style="margin:0 0 8px">${x.o}</p>
+      <div class="stat-line"><span>Risco</span><b>${'●'.repeat(x.r)}${'○'.repeat(5-x.r)} ${RISCO[x.r]}</b></div>
+      <div class="stat-line"><span>Liquidez</span><b style="text-align:right;max-width:65%">${x.liq}</b></div>
+      <div class="stat-line"><span>Imposto de renda</span><b style="text-align:right;max-width:65%">${x.ir}</b></div>
+      <div class="stat-line"><span>FGC</span><b>${x.fgc?'✅ Até R$ 250 mil por CPF por instituição':x.g==='rfpub'?'Não (garantia do Tesouro Nacional)':'❌ Não tem'}</b></div>
+      <div class="stat-line"><span>Mínimo</span><b style="text-align:right;max-width:65%">${x.min}</b></div>
+      <div class="alert ok" style="margin-top:8px">👤 <b>Para quem:</b> ${x.pq}</div><div class="alert warn">⚠️ <b>Cuidados:</b> ${x.c}</div></div>`:''}`).join('')}</div></div>`});
+  h+=`<div class="card"><h3>🧾 Imposto de renda — resumo (nov/2026)</h3>
+   <div class="stat-line"><span>Renda fixa (CDB, Tesouro, LC, debêntures comuns)</span><b>22,5% → 15%</b></div>
+   <div class="muted" style="font-size:12px;margin-bottom:8px">Até 180 dias 22,5% · 181–360 dias 20% · 361–720 dias 17,5% · acima de 720 dias 15%. Resgates com menos de 30 dias também pagam IOF.</div>
+   <div class="stat-line"><span>Poupança, LCI, LCA, CRI, CRA, debêntures incentivadas</span><b>Isentos</b></div>
+   <div class="stat-line"><span>Ações (swing trade)</span><b>15% · isento até R$ 20 mil de vendas/mês</b></div>
+   <div class="stat-line"><span>FIIs</span><b>Rendimentos isentos* · venda 20%</b></div>
+   <div class="stat-line"><span>Previdência (regime regressivo)</span><b>35% → 10% em 10 anos</b></div>
+   <div class="stat-line"><span>Cripto (corretora brasileira)</span><b>Isento até R$ 35 mil de vendas/mês</b></div>
+   <div class="muted" style="font-size:12px;margin-top:8px">*com as condições da lei. A MP 1.303/2025, que mudaria várias dessas regras, não foi aprovada; o assunto pode voltar ao Congresso — confira antes de decidir.</div></div>`;
+  return h;
+}
+function vInvPerfil(){
+  const p=invPerfil(),I=inv(),r=reservaInfo(),caras=dividasLista().filter(d=>d.juros>=1.5);
+  let h='';
+  if(!p||ui.invQuiz){const resp=ui.quizResp||{};
+    h+=`<div class="card"><h3>🧑‍💼 Qual é o seu perfil de investidor?</h3><div class="sub">7 perguntas, igual às que as corretoras fazem (suitability).</div>
+     ${QUIZ.map(([q,ops],i)=>`<div style="margin:14px 0"><b>${i+1}. ${q}</b><div style="display:grid;gap:6px;margin-top:8px">${ops.map((o,j)=>`<button class="chip ${resp[i]===j?'on':''}" style="justify-content:flex-start;border-radius:12px" data-act="quizResp" data-id="${i}:${j}">${o}</button>`).join('')}</div></div>`).join('')}
+     <button class="btn primary" data-act="quizFim" ${Object.keys(resp).length<QUIZ.length?'disabled style="opacity:.5"':''}>Ver meu perfil (${Object.keys(resp).length}/${QUIZ.length})</button></div>`;
+    return h;}
+  const P=PERFIS[p.tipo];
+  if(r.meses<1||caras.length)h+=`<div class="alert bad">🚦 <b>Antes de assumir risco:</b> ${r.meses<1?'monte a reserva de emergência':''}${r.meses<1&&caras.length?' e ':''}${caras.length?'quite as dívidas caras ('+caras.map(d=>esc(d.n)).join(', ')+')':''}. Nenhum investimento rende de forma garantida mais do que os juros dessas dívidas custam.</div>`;
+  h+=`<div class="card"><div class="row" style="flex-wrap:nowrap;gap:14px"><span style="font-size:42px">${P.ic}</span><div><div class="muted" style="font-size:12px">Seu perfil de investidor · ${p.pts}/21 pontos · ${fmtDate(p.data.slice(0,10))}</div><h2 style="margin:2px 0 4px">${P.n}</h2><div class="muted" style="font-size:13px">${P.d}</div></div></div>
+   <button class="btn sm" data-act="quizRefazer" style="margin-top:10px">Refazer questionário</button></div>
+  <div class="card"><h3>Carteira de referência — ${P.n}</h3><div class="sub">Distribuição para o dinheiro de longo prazo, <b>fora</b> da reserva de emergência. É ponto de partida educativo, não recomendação.</div>
+   <div class="chart-box sm"><canvas id="chModelo"></canvas></div>
+   ${Object.entries(P.alv).map(([k,v])=>`<div class="stat-line"><span><span class="dot" style="background:${CLASSES[k][1]}"></span> ${CLASSES[k][0]}</span><b>${v}%</b></div>`).join('')}</div>
+  <div class="card"><h3>Os 3 perfis</h3>${Object.entries(PERFIS).map(([k,x])=>`<div class="alert ${k===p.tipo?'ok':''}"><b>${x.ic} ${x.n}</b> — ${x.d}<br><span class="muted" style="font-size:12px">${Object.entries(x.alv).map(([c,v])=>CLASSES[c][0]+' '+v+'%').join(' · ')}</span></div>`).join('')}</div>`;
+  const G=state.goals.filter(g=>g.prazo&&g.kind!=='fundo');
+  h+=`<div class="card"><h3>🎯 Seus objetivos por prazo</h3><div class="sub">O prazo de cada objetivo decide onde investir — mais até que o perfil.</div>
+   ${G.length?G.map(g=>{const m=Math.max(1,mDiff(todayYM(),g.prazo)),[k,l]=horizonte(m);return`<div class="item-card" style="margin:8px 0"><div class="row" style="justify-content:space-between"><b>${esc(g.nome)}</b><span class="pill">${l}</span></div><div class="muted" style="font-size:12px;margin:4px 0">${m} mês(es) · faltam ${brl(Math.max(0,g.alvo-g.guardado))} · ${brl(goalMonthly(g))}/mês</div><div style="font-size:13px">${PRAZO_TXT[k]}</div></div>`}).join(''):'<div class="empty">Cadastre metas com prazo em Metas & Reservas.</div>'}
+   ${Object.entries(PRAZO_TXT).map(([k,t])=>`<div class="stat-line" style="display:block"><b>${({curto:'⏱ Curto (até 2 anos)',medio:'📅 Médio (2–5 anos)',longo:'🌳 Longo (5+ anos)'})[k]}:</b> <span class="muted">${t}</span></div>`).join('')}</div>`;
+  setTimeout(()=>mkChart('chModelo',{type:'doughnut',_pct:true,data:{labels:Object.keys(P.alv).map(k=>CLASSES[k][0]),datasets:[{data:Object.values(P.alv),backgroundColor:Object.keys(P.alv).map(k=>CLASSES[k][1]),borderWidth:0}]},options:{cutout:'62%',plugins:{legend:{display:false}}}}));
+  return h;
+}
+function vCarteira(){
+  const L=state.investimentos,p=invPerfil(),tot=carteiraTotal(),apl=sum(L,x=>+x.aplicado||0);
+  if(!L.length)return`<div class="card welcome"><h2>💼 Minha carteira</h2><p class="muted">Registre seus investimentos (onde, quanto, vencimento) e o app acompanha a distribuição, o limite do FGC por banco, os vencimentos e o rebalanceamento conforme o seu perfil.</p><button class="btn primary" data-act="invAdd">+ Adicionar investimento</button></div>`;
+  const porCl={};L.forEach(x=>{const c=(INVS.find(i=>i.id===x.tipo)||{}).cl||'outros';porCl[c]=(porCl[c]||0)+(+x.atual||+x.aplicado||0)});
+  const fgc={};L.forEach(x=>{const t=INVS.find(i=>i.id===x.tipo);if(t&&t.fgc&&x.inst){const k=norm(x.inst);fgc[k]=fgc[k]||{n:x.inst,v:0};fgc[k].v+=+x.atual||+x.aplicado||0}});
+  const fgcAl=Object.values(fgc).filter(f=>f.v>200000);
+  const venc=L.filter(x=>x.venc&&x.venc>=todayISO()&&dDiff(todayISO(),x.venc)<=90).sort((a,b)=>a.venc.localeCompare(b.venc));
+  const velho=L.filter(x=>!x.atualizado||dDiff(x.atualizado.slice(0,10),todayISO())>35);
+  let h=`<div class="grid g4">${kpi('Patrimônio investido',brl(tot),L.length+' investimento(s)')}${kpi('Total aplicado',brl(apl),'')}${kpi('Resultado',signBrl(tot-apl),apl?signPct((tot-apl)/apl*100):'—',null,tot>=apl?'pos':'neg')}${kpi('Perfil',p?PERFIS[p.tipo].ic+' '+PERFIS[p.tipo].n:'—',p?'':'<a data-act="invTab" data-id="perfil" style="cursor:pointer;color:var(--accent)">definir perfil</a>')}</div>`;
+  if(velho.length)h+=`<div class="alert warn">🗓 <b>Check-up mensal:</b> ${velho.length} investimento(s) sem valor atualizado há mais de 35 dias. Abra o app do banco/corretora e toque em "Atualizar valor".</div>`;
+  fgcAl.forEach(f=>h+=`<div class="alert ${f.v>250000?'bad':'warn'}">🏦 <b>FGC:</b> ${brl(f.v)} em <b>${esc(f.n)}</b>. O FGC cobre até R$ 250 mil por CPF por conglomerado (contando os juros). ${f.v>250000?'Uma parte está descoberta — distribua em outra instituição.':'Você está perto do limite.'}</div>`);
+  venc.forEach(x=>h+=`<div class="alert">⏰ <b>${esc(x.nome)}</b> vence em ${fmtDate(x.venc)} (${dDiff(todayISO(),x.venc)} dias). Planeje para onde vai o dinheiro.</div>`);
+  h+=`<div class="card"><div class="card-head"><div><h3>Distribuição</h3><div class="sub">${p?'Atual × referência do perfil '+PERFIS[p.tipo].n:'Defina o perfil para comparar com uma referência'}</div></div></div><div class="chart-box sm"><canvas id="chCart"></canvas></div>
+   ${Object.keys(CLASSES).filter(k=>porCl[k]||(p&&PERFIS[p.tipo].alv[k])).map(k=>{const a=tot?(porCl[k]||0)/tot*100:0,al=p?PERFIS[p.tipo].alv[k]||0:null,d=al==null?0:a-al;return`<div style="margin:9px 0"><div class="stat-line"><span><span class="dot" style="background:${CLASSES[k][1]}"></span> ${CLASSES[k][0]}</span><b>${pctf(a,0)}${al!=null?` <span class="muted">/ ${al}%</span>`:''}</b></div>${bar(a)}${al!=null&&Math.abs(d)>=5?`<div class="${d>0?'wrn':'muted'}" style="font-size:12px;margin-top:3px">${d>0?'Acima da referência — direcione os próximos aportes para outras classes':'Abaixo da referência — bom destino para os próximos aportes'} (${signPct(d)} p.p.)</div>`:''}</div>`}).join('')}
+   <div class="muted" style="font-size:12px">💡 Rebalanceie aportando no que está abaixo, em vez de vender o que está acima (evita IR e custos). A reserva de emergência entra em "Reserva / pós-fixados".</div></div>
+  <div class="card"><div class="card-head"><h3>Investimentos</h3><button class="btn sm primary" data-act="invAdd">+ Adicionar</button></div><div class="mlist">
+   ${L.map(x=>{const t=INVS.find(i=>i.id===x.tipo)||{n:'Outro',ic:'💠',cl:'outros'},at=+x.atual||+x.aplicado||0,ren=+x.aplicado?(at-x.aplicado)/x.aplicado*100:0;return`<div class="mrow" data-act="invEdit" data-id="${x.id}"><div class="ic" style="background:${CLASSES[t.cl][1]}22;color:${CLASSES[t.cl][1]}">${t.ic}</div><div class="tx"><b>${esc(x.nome)}</b><small>${t.n}${x.inst?' · '+esc(x.inst):''}${x.venc?' · vence '+fmtDate(x.venc)+'/'+x.venc.slice(2,4):''}</small></div><div class="vl" style="text-align:right">${brl(at)}<div class="${ren>=0?'pos':'neg'}" style="font-size:11px;font-weight:600">${signPct(ren)}</div></div></div>`}).join('')}</div></div>`;
+  setTimeout(()=>{const ks=Object.keys(porCl);mkChart('chCart',{type:'doughnut',data:{labels:ks.map(k=>CLASSES[k][0]),datasets:[{data:ks.map(k=>porCl[k]),backgroundColor:ks.map(k=>CLASSES[k][1]),borderWidth:0}]},options:{cutout:'62%',plugins:{legend:{position:'bottom',labels:{boxWidth:8}}}}})});
+  return h;
+}
+function invForm(x){
+  const isNew=!x;x=x||{tipo:'tselic',data:todayISO(),liq:'Diária'};
+  openForm({title:isNew?'Adicionar investimento':'Editar investimento',fields:[
+    {name:'nome',label:'Nome',value:x.nome,required:true,full:true,placeholder:'Ex.: Tesouro Selic 2029 — reserva'},
+    {name:'tipo',label:'Tipo',type:'select',options:INVS.filter(i=>i.g!=='nao').map(i=>[i.id,i.n]).concat([['outro','Outro']]),value:x.tipo},
+    {name:'inst',label:'Banco / corretora',value:x.inst,placeholder:'Ex.: Nubank, XP, Inter'},
+    {name:'aplicado',label:'Valor aplicado (R$)',type:'number',step:'0.01',min:0,value:x.aplicado,required:true},
+    {name:'atual',label:'Valor atual (R$)',type:'number',step:'0.01',min:0,value:x.atual??x.aplicado},
+    {name:'data',label:'Data da aplicação',type:'date',value:x.data},
+    {name:'venc',label:'Vencimento (se tiver)',type:'date',value:x.venc},
+    {name:'liq',label:'Liquidez',type:'select',options:['Diária','D+1 a D+30','Só no vencimento','Carência','Bolsa (D+2)'],value:x.liq},
+    {name:'obs',label:'Objetivo / observação',value:x.obs,full:true,placeholder:'Ex.: reserva de emergência'}
+  ],extra:isNew?'':`<button type="button" class="btn danger" data-act="invDel" data-id="${x.id}">🗑</button>`,
+  onSave:d=>{if(!d.atual)d.atual=d.aplicado;d.atualizado=new Date().toISOString();if(isNew)state.investimentos.push({id:uid(),hist:[{d:todayISO(),v:d.atual}],...d});else{if(+d.atual!==+x.atual){x.hist=x.hist||[];x.hist.push({d:todayISO(),v:d.atual})}Object.assign(x,d)}toast('Investimento salvo')}});
+}
+function vSim(){
+  const I=inv(),T=I.taxas,s=ui.sim||(ui.sim={ini:carteiraTotal()||1000,ap:500,taxa:+(T.selic*0.85).toFixed(2),anos:10}),pf=state.profile||{},A=Object.assign({idade:+pf.idade||30,idadeA:60,renda:Math.round((incomeTotal(curMonth)||5000)*0.7/100)*100,real:4.5,atual:carteiraTotal()},I.apos,ui.apos||{});ui.apos=A;
+  const ms=Math.round(s.anos*12),serie=fv(+s.ini,+s.ap,+s.taxa,ms),final=serie[ms],aport=+s.ini+(+s.ap)*ms,infl=+T.ipca,real=final/Math.pow(1+infl/100,s.anos);
+  const anosA=Math.max(1,A.idadeA-A.idade),alvo=A.renda*12/0.04,apNec=pmt(alvo,+A.atual,+A.real,anosA*12),serieA=fv(+A.atual,apNec,+A.real,anosA*12);
+  const inp=(grp,k,l,v,step)=>`<label style="display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--muted);font-weight:600">${l}<input type="text" inputmode="decimal" data-sim="${grp}.${k}" value="${String(v).replace('.',',')}"></label>`;
+  setTimeout(()=>{
+    const lab=[];const dJ=[],dA=[];for(let k=0;k<=ms;k+=Math.max(1,Math.round(ms/24))){lab.push(k%12===0?(k/12)+'a':'');dJ.push(serie[k]);dA.push(+s.ini+(+s.ap)*k)}
+    mkChart('chSimJ',{type:'line',data:{labels:lab,datasets:[{label:'Patrimônio',data:dJ,borderColor:cssVar('--accent'),backgroundColor:cssVar('--accent')+'22',fill:true,tension:.3,pointRadius:0},{label:'Só o que você aportou',data:dA,borderColor:cssVar('--muted'),borderDash:[5,4],pointRadius:0}]},options:{interaction:{mode:'index',intersect:false},scales:{y:moneyAxis,x:{grid:{display:false}}}}});
+    const la=[],da=[];for(let k=0;k<=anosA*12;k+=12){la.push(String(A.idade+k/12));da.push(serieA[k])}
+    mkChart('chSimA',{type:'bar',data:{labels:la,datasets:[{label:'Patrimônio (em R$ de hoje)',data:da,backgroundColor:cssVar('--savings'),borderRadius:4}]},options:{plugins:{legend:{display:false}},scales:{y:moneyAxis,x:{grid:{display:false},ticks:{maxTicksLimit:8}}}}});
+  });
+  return`<div class="card"><h3>📊 Taxas de referência</h3><div class="sub">Usadas nas simulações. Selic de ${num(T.selic,2)}% a.a. (ref. ${esc(T.ref)}) — atualize quando o Copom mudar.</div><div class="grid g2">${inp('tx','selic','Selic (% a.a.)',T.selic)}${inp('tx','ipca','Inflação esperada — IPCA (% a.a.)',T.ipca)}</div></div>
+  <div class="card"><h3>🌱 Juros compostos</h3><div class="sub">Quanto o dinheiro vira com aportes todo mês</div>
+   <div class="grid g4">${inp('s','ini','Valor inicial (R$)',s.ini)}${inp('s','ap','Aporte mensal (R$)',s.ap)}${inp('s','taxa','Rentabilidade líquida (% a.a.)',s.taxa)}${inp('s','anos','Prazo (anos)',s.anos)}</div>
+   <div class="grid g3" style="margin-top:10px">${kpi('Valor final',brl(final),'em '+s.anos+' ano(s)',null,'pos')}${kpi('Você aportou',brl(aport),'')}${kpi('Juros trabalharam',brl(final-aport),pctf(aport?(final-aport)/aport*100:0,0)+' a mais')}</div>
+   <div class="muted" style="font-size:12px;margin:6px 0">Em poder de compra de hoje (descontando ${num(infl,1)}% de inflação ao ano): <b>${brl(real)}</b>.</div>
+   <div class="chart-box"><canvas id="chSimJ"></canvas></div></div>
+  <div class="card"><h3>🏖 Aposentadoria / independência financeira</h3><div class="sub">Tudo em reais de hoje. A taxa é <b>real</b> (acima da inflação). Regra dos 4%: retirar 4% ao ano tende a preservar o patrimônio.</div>
+   <div class="grid g3">${inp('a','idade','Sua idade',A.idade)}${inp('a','idadeA','Idade para se aposentar',A.idadeA)}${inp('a','renda','Renda mensal desejada (R$ de hoje)',A.renda)}${inp('a','atual','Já tem investido (R$)',A.atual)}${inp('a','real','Rentabilidade real (% a.a.)',A.real)}</div>
+   <div class="grid g3" style="margin-top:10px">${kpi('Patrimônio necessário',brl(alvo),'= renda × 300 (regra dos 4%)')}${kpi('Aporte mensal necessário',brl(apNec),'por '+anosA+' ano(s)',null,'pos')}${kpi('% da sua renda atual',incomeTotal(curMonth)?pctf(apNec/incomeTotal(curMonth)*100,0):'—','')}</div>
+   <div class="alert">🧠 ${apNec>incomeTotal(curMonth)*0.3?'O aporte está alto para a renda atual: aumente o prazo, reduza a renda desejada ou comece com o que der e aumente a cada reajuste. Começar cedo vale mais que aportar muito.':'Viável! Automatize esse aporte no dia do salário. Bons veículos de longo prazo: Tesouro IPCA+ / RendA+, previdência com taxas baixas e, conforme o perfil, ações/ETFs.'} O INSS entra como complemento, se você contribui.</div>
+   <div class="chart-box"><canvas id="chSimA"></canvas></div>
+   <button class="btn primary" data-act="aposSalvar" style="margin-top:8px">${I.apos.salvo?'Atualizar meu plano':'Salvar como meu plano'}</button></div>`;
+}
+function vSeg(){
+  const golpes=[['📈','Retorno garantido alto','"1% ao dia", "dobra em 3 meses", "sem risco". Nenhum investimento real garante isso. Retorno alto sempre vem com risco alto.'],
+   ['🔺','Pirâmide e "indique amigos"','Se o ganho depende de trazer novas pessoas, é pirâmide — crime contra a economia popular. Quem entra por último perde tudo.'],
+   ['🤖','Robôs, sinais e "trader de sucesso"','Robôs que "não perdem", grupos de sinais pagos e mentores ostentando: a renda deles vem de quem paga o curso, não do mercado.'],
+   ['💸','Pix para pessoa física para "investir"','Instituição séria nunca pede depósito na conta de uma pessoa. Invista só pela sua conta em banco/corretora autorizada.'],
+   ['📞','Falsa central, falso gerente','Banco não liga pedindo senha, código, token ou para "regularizar" a conta. Desligue e ligue você no número oficial.'],
+   ['🪙','Cripto com rendimento fixo','"Staking garantido", "arbitragem automática", plataforma desconhecida: frequentemente golpe. Sacar costuma ser impossível.'],
+   ['🎁','Pressa e exclusividade','"Só hoje", "vagas limitadas", "não conte para ninguém". Pressão para decidir rápido é tática de golpe.']];
+  const check=[['Instituição autorizada','Confira se banco/corretora é autorizada pelo Banco Central (bcb.gov.br) e, para valores mobiliários, pela CVM (gov.br/cvm).'],
+   ['Profissional certificado','Assessor, consultor ou analista precisa de registro (CVM / ANCORD / Apimec). Peça o número e confira.'],
+   ['Entendo o produto','Se não consegue explicar em 2 frases como ele rende e como pode perder, não invista.'],
+   ['Sei o risco de crédito','Quem me deve? Governo (Tesouro), banco com FGC, ou empresa sem garantia (CRI, CRA, debêntures)?'],
+   ['Respeito o FGC','No máximo R$ 250 mil por CPF por conglomerado, contando os juros (e teto de R$ 1 milhão a cada 4 anos).'],
+   ['Conheço os custos','Taxa de administração, performance, carregamento, custódia, corretagem e IR — custos pequenos viram fortunas em 20 anos.'],
+   ['Liquidez combina com o objetivo','Reserva em produto com resgate no mesmo dia. Nunca prenda a reserva em LCI/LCA com carência ou em renda variável.'],
+   ['Diversifiquei','Nada de colocar tudo num só produto, banco ou ação. Diversificar é o único "almoço grátis".'],
+   ['Sem alavancagem','Opções, day trade alavancado e derivativos podem gerar perdas maiores que o valor investido.'],
+   ['Proteção da conta','Senha forte, autenticação em dois fatores e alertas de movimentação ativados no app.'],
+   ['Declaro no IR','Todos os investimentos vão para a declaração anual, mesmo os isentos.']];
+  const I=inv(),C=I.check||{};
+  return`<div class="card"><h3>🚨 Sinais de golpe</h3><div class="sub">Se aparecer qualquer um destes, pare.</div>${golpes.map(([i,t,d])=>`<div class="alert bad"><b>${i} ${t}</b><br>${d}</div>`).join('')}</div>
+  <div class="card"><h3>✅ Checklist antes de investir</h3><div class="sub">Toque para marcar — ${Object.values(C).filter(Boolean).length} de ${check.length}</div>
+   ${check.map(([t,d],i)=>`<div class="mrow" data-act="segCheck" data-id="${i}"><div class="ic" style="background:${C[i]?'color-mix(in srgb,var(--ok) 22%,transparent)':'var(--panel2)'}">${C[i]?'✔':i+1}</div><div class="tx" style="white-space:normal"><b>${t}</b><small style="white-space:normal">${d}</small></div></div>`).join('')}</div>
+  <div class="card"><h3>🧭 Os 10 mandamentos do especialista</h3><ol style="margin:0;padding-left:20px;line-height:1.6">
+   <li>Gaste menos do que ganha — sempre. Investimento nenhum salva quem gasta mais.</li><li>Reserva antes de investimento; dívida cara antes de tudo.</li><li>Todo dinheiro tem um objetivo e um prazo.</li><li>O prazo escolhe o produto; o perfil escolhe as proporções.</li><li>Comece simples e aumente a complexidade com o conhecimento.</li><li>Aporte todo mês: constância vence o "momento certo".</li><li>Diversifique entre classes, instituições e países.</li><li>Fuja das taxas altas e dos produtos que você não entende.</li><li>Revise uma vez por mês, rebalanceie uma ou duas vezes por ano — sem pânico nas quedas.</li><li>Aumente a poupança a cada aumento de renda.</li></ol></div>`;
+}
+
+/* ============================================================
    VIEW: CONFIGURAÇÕES
    ============================================================ */
 function vSaveCard(){
@@ -1930,7 +2310,25 @@ const ACT={
   quickAdd:()=>quickAdd(),
   openLesson:id=>openLesson(id),lessonNext:id=>{const i=LESSONS.findIndex(x=>x.id===id);const L=learnState();const nx=LESSONS.slice(i+1).find(x=>!L.done[x.id])||LESSONS[(i+1)%LESSONS.length];if(view==='learn')render();openLesson(nx.id)},
   toggleCoach:()=>{closeModal();state.settings.coach=state.settings.coach===false;save();render();toast('Coach nos gastos '+(state.settings.coach?'ligado':'desligado'))},
-  editProfile:()=>profileForm(),quickMore:()=>quickMore(),more:()=>openMore(),
+  editProfile:()=>profileForm(),
+  invTab:id=>{closeModal();view='invest';ui.invTab=id;render();window.scrollTo(0,0)},
+  invStep:id=>{ui.invStep=id;render();setTimeout(()=>{const b=$('#stepBox');b&&b.scrollIntoView({behavior:'smooth',block:'start'})},50)},
+  progDone:id=>{const I=inv();I.prog.done[id]=new Date().toISOString();save();const E=progEtapas(),nx=E.find(e=>!e.ok);ui.invStep=nx?nx.id:id;render();toast('Etapa registrada ✓')},
+  corteAdd:id=>{const[t,...c]=id.split('::'),cat=c.join('::'),d=diagnostico().L.find(x=>x.tipo===t&&x.cat===cat);
+    openForm({title:'Reduzir "'+cat+'"',fields:[{type:'html',html:`<p class="muted" style="margin:0">Média dos últimos meses: <b>${brl(d?d.mes:0)}/mês</b>. Escolha uma meta que você consiga manter — corte radical costuma durar pouco.</p>`},{name:'meta',label:'Reduzir em',type:'select',options:[['10','10% (leve)'],['20','20% (recomendado)'],['30','30% (firme)'],['50','50% (radical)']],value:'20'}],saveLabel:'Definir meta',
+      onSave:x=>{inv().prog.cortes.push({cat,tipo:t,base:Math.round((d?d.mes:0)*100)/100,meta:+x.meta,desde:curMonth});toast('Meta de corte definida')}})},
+  corteDel:id=>{inv().prog.cortes.splice(+id,1);save();render()},
+  corteBudget:id=>{const c=inv().prog.cortes[+id],m=month(curMonth,true),v=Math.round(c.base*(1-c.meta/100)*100)/100;let it=m.budget.find(b=>b.tipo===c.tipo&&norm(b.cat)===norm(c.cat));if(!it){it={id:uid(),cat:c.cat,tipo:c.tipo,valor:0};m.budget.push(it)}it.valor=v;save();render();toast('Budget de '+c.cat+' = '+brl(v))},
+  criarReserva:()=>{const r=reservaInfo();state.goals.push({id:uid(),nome:'Reserva de emergência',alvo:Math.round(r.needs*6),guardado:0,cor:'#22c58b'});save();render();toast('Meta criada — registre os aportes em Metas')},
+  invFiltro:id=>{ui.invFiltro=id;render()},invOpen:id=>{ui.invOpen=ui.invOpen===id?null:id;render()},
+  quizResp:id=>{const[i,j]=id.split(':').map(Number);ui.quizResp=ui.quizResp||{};ui.quizResp[i]=j;const y=window.scrollY;render();window.scrollTo(0,y)},
+  quizFim:()=>{const r=ui.quizResp||{};if(Object.keys(r).length<QUIZ.length)return;const pts=sum(Object.values(r));const tipo=pts<=8?'conservador':pts<=15?'moderado':'arrojado';
+    inv().perfil={tipo,pts,resp:r,data:new Date().toISOString()};ui.invQuiz=false;ui.quizResp=null;save();render();window.scrollTo(0,0);toast('Perfil: '+PERFIS[tipo].n)},
+  quizRefazer:()=>{ui.invQuiz=true;ui.quizResp=Object.assign({},(inv().perfil||{}).resp);render();window.scrollTo(0,0)},
+  invAdd:()=>invForm(),invEdit:id=>invForm(find(state.investimentos,id)),
+  invDel:id=>{closeModal();delUndo('Investimento removido',()=>{tomb(id);state.investimentos=state.investimentos.filter(x=>x.id!==id)})},
+  aposSalvar:()=>{const A=ui.apos,anos=Math.max(1,A.idadeA-A.idade),alvo=A.renda*12/0.04;inv().apos=Object.assign({},A,{alvo,aporte:Math.round(pmt(alvo,+A.atual,+A.real,anos*12)),salvo:new Date().toISOString()});save();render();toast('Plano de aposentadoria salvo')},
+  segCheck:id=>{const I=inv();I.check=I.check||{};I.check[id]=!I.check[id];save();const y=window.scrollY;render();window.scrollTo(0,y)},quickMore:()=>quickMore(),more:()=>openMore(),
   mDelExpense:id=>{closeModal();ACT.delExpense(id)},mDelBudget:id=>{closeModal();ACT.delBudget(id)},mDelPurchase:id=>{closeModal();ACT.delPurchase(id)},
   shareBackup:()=>{closeModal();compartilharBackup()},installApp:()=>{closeModal();instalarApp()},
   addBenefit:()=>benefitForm(),editBenefit:id=>benefitForm(find(state.benefits,id)),
@@ -2057,6 +2455,8 @@ document.addEventListener('change',e=>{const t=e.target;
   if(t.dataset.filter&&t.tagName==='SELECT')render();
   if(t.dataset.ref!==undefined&&t.value){ui.refDate=t.value;curMonth=t.value.slice(0,7);render()}
   if(t.dataset.defpct)render();
+  if(t.dataset.sim){const[g,k]=t.dataset.sim.split('.'),v=parseNum(t.value);if(g==='tx'){inv().taxas[k]=v;inv().taxas.ref=new Date().toLocaleDateString('pt-BR',{month:'short',year:'numeric'});save()}else if(g==='s'){ui.sim[k]=v}else{ui.apos[k]=v}const y=window.scrollY;render();window.scrollTo(0,y)}
+  if(t.dataset.progextra!==undefined){inv().prog.extra=parseNum(t.value);save();const y=window.scrollY;render();window.scrollTo(0,y)}
   if(t.id==='importFile'&&t.files[0]){const r=new FileReader();r.onload=()=>{try{const o=JSON.parse(r.result);const d=o&&o.dados?o.dados:o;if(!d||!d.months)throw 0;state=Object.assign(defaultState(),d);overwriteNext=true;save();render();toast('Backup importado'+(handle?' — e gravado no arquivo conectado':''))}catch(x){toast('Arquivo inválido','err')}};r.readAsText(t.files[0]);t.value=''}
 });
 
@@ -2105,7 +2505,7 @@ function loadSample(){
 /* ============================================================
    RENDER
    ============================================================ */
-const VIEWS={learn:vLearn,profile:vProfile,home:vHome,vale:vVale,bills:vBills,dashboard:vDashboard,review:vReview,report:vReport,budget:vBudget,compare:vCompare,expenses:vExpenses,debts:vDebts,cards:vCards,goals:vGoals,settings:vSettings};
+const VIEWS={invest:vInvest,learn:vLearn,profile:vProfile,home:vHome,vale:vVale,bills:vBills,dashboard:vDashboard,review:vReview,report:vReport,budget:vBudget,compare:vCompare,expenses:vExpenses,debts:vDebts,cards:vCards,goals:vGoals,settings:vSettings};
 function render(){
   document.documentElement.dataset.theme=state.settings.theme;
   const tc=document.querySelector('meta[name=theme-color]');if(tc)tc.content=state.settings.theme==='dark'?'#0b0f17':'#f3f5fa';
