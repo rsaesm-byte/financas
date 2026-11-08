@@ -1645,7 +1645,7 @@ function coachFor(x){ // x={cat,tipo,valor,date,ym?,valorMes?,parcelas?,benefitI
   else if(x.parcelas===1&&x.ym&&x.ym!==x.date.slice(0,7))L.push(`No cartão: entra na fatura de ${mLabel(x.ym,true)}.`);
   if(x.benefitId){const b=find(state.benefits,x.benefitId);if(b){const ref=x.date,s=benBalance(b,ref),nx=benNext(b,ref),d=Math.max(1,dDiff(ref,nx));L.push(`🧺 Saldo do ${esc(b.nome)}: <b>${brl(s)}</b> — ${brl(Math.max(0,s)/d)}/dia até a recarga de ${fmtDate(nx)}.`)}}
   if(x.tipo!=='savings'&&!x.parcelas){const es=state.expenses.filter(e=>(e.date||'').slice(0,7)===ym&&e.tipo===x.tipo&&norm(e.cat)===norm(x.cat));if(es.length>=6){const av=sum(es,e=>e.valor)/es.length;if(av<80)L.push(`${es.length}º lançamento em ${esc(x.cat)} no mês (média ${brl(av)}). Pequenos e frequentes somam ${brl(sum(es,e=>e.valor))} — o "efeito cafezinho".`)}}
-  if(x.tipo==='wants'&&inc){const b=bucketSummary(ym);if(b.wants.real>b.wants.target&&cls!=='bad')L.push(`No total, os Desejos do mês (${brl(b.wants.real)}) já passaram da meta de ${b.wants.pct}% da renda (${brl(b.wants.target)}).`)}
+  if(x.tipo==='wants'&&inc&&!month(ym)._empty){const b=bucketSummary(ym);if(b.wants.real>b.wants.target&&cls!=='bad')L.push(`No total, os Desejos do mês (${brl(b.wants.real)}) já passaram da meta de ${b.wants.pct}% da renda (${brl(b.wants.target)}).`)}
   return{cls,tit,lines:L.slice(0,4),pct,act};
 }
 function coachShow(x,undo,msg){
