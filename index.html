@@ -132,6 +132,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .mrow .tx{flex:1;min-width:0}
 .mrow .tx b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
 .mrow .tx small{display:block;color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.money .mrow .tx small{white-space:normal}
 .mrow .vl{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
 .hero{background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 85%,#000),color-mix(in srgb,var(--wants) 80%,#000));color:#fff;border:0}
 .hero .lbl{opacity:.8;font-size:13px}
@@ -259,7 +260,7 @@ const MN=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez
 const MNF=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const PALETTE=['#4f8cff','#a970ff','#22c58b','#f5a524','#f2555a','#2ec4d6','#ff7ab6','#9bd04b','#ff9f43','#7f8cff'];
 
-function defaultState(){return{settings:{theme:'dark',pct:{needs:50,wants:30,savings:20}},months:{},expenses:[],debts:[],cards:[],cardPurchases:[],goals:[],bills:[],benefits:[],deleted:{},profile:{},learn:{done:{}},investimentos:[],invest:{}}}
+function defaultState(){return{settings:{theme:'dark',pct:{needs:50,wants:30,savings:20}},months:{},expenses:[],debts:[],cards:[],cardPurchases:[],goals:[],bills:[],benefits:[],deleted:{},profile:{},learn:{done:{}},investimentos:[],invest:{},contas:[]}}
 let state=defaultState();
 let curMonth=todayYM();
 let view='dashboard';
@@ -301,7 +302,7 @@ function mergeStates(p,s){
   p=Object.assign(defaultState(),p);s=Object.assign(defaultState(),s);
   const dead=Object.assign({},s.deleted,p.deleted);
   const o=Object.assign(defaultState(),s,p);o.deleted=dead;o.settings=p.settings;
-  ['expenses','debts','cards','cardPurchases','goals','bills','benefits','investimentos'].forEach(k=>o[k]=mergeById(p[k],s[k],dead));
+  ['expenses','debts','cards','cardPurchases','goals','bills','benefits','investimentos','contas'].forEach(k=>o[k]=mergeById(p[k],s[k],dead));
   o.months={};
   new Set([...Object.keys(s.months),...Object.keys(p.months)]).forEach(ym=>{
     const a=p.months[ym],b=s.months[ym];
@@ -458,7 +459,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.08-8';
+const APP_VERSAO='2026.11.09-1';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -941,10 +942,21 @@ function alertsHTML(over){
 /* ============================================================
    VIEW: RENDA & ORÇAMENTO
    ============================================================ */
+const BUD_TABS=[['renda','💵 Renda'],['needs','🏠 Needs'],['wants','🎉 Wants'],['savings','💚 Savings'],['poupanca','🐷 Poupança'],['invest','📈 Investimentos'],['reserva','🛟 Reserva']];
+function budTabs(){
+  const tab=ui.budTab||'renda',inc=incomeTotal(curMonth),bs=bucketSummary(curMonth),pl=sum(month().budget,b=>b.valor),real=bs.needs.real+bs.wants.real+bs.savings.real;
+  return`<div class="chips" style="flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch">${BUD_TABS.map(([k,l])=>`<button class="chip ${tab===k?'on':''}" data-act="budTab" data-id="${k}" style="flex:none">${l}</button>`).join('')}</div>
+  <div class="grid g4">${kpi('Renda do mês',brl(inc),'')}${kpi('Planejado',brl(pl),inc?pctf(pl/inc*100,0)+' da renda':'')}${kpi('Gasto/aplicado',brl(real),pl?pctf(real/pl*100,0)+' do planejado':'')}${kpi(inc-pl>=0?'Sem destino':'Acima da renda',brl(Math.abs(inc-pl)),'',null,Math.abs(inc-pl)<0.5?'pos':inc-pl<0?'neg':'wrn')}</div>`;
+}
 function vBudget(){
+  const tab=ui.budTab||'renda';
   const m=month(),inc=incomeTotal(curMonth),bs=bucketSummary(curMonth),pctSum=sum(Object.values(m.pct));
   const src=incomeBySource(curMonth),fixed=incomeFixed(curMonth);
-  let h=`<div class="grid g2">
+  let h=budTabs();
+  if(tab==='poupanca')return h+budPoupanca();
+  if(tab==='invest')return h+budInvest();
+  if(tab==='reserva')return h+budReserva();
+  if(tab==='renda'){h+=`<div class="grid g2">
   <div class="card"><div class="card-head"><div><h3>Fontes de renda — ${mLabel(curMonth,true)}</h3><div class="sub">Trabalho, freelas e outras entradas do mês</div></div><button class="btn primary sm" data-act="addIncome">+ Renda</button></div>
    ${m.income.length||benIncome(curMonth).length?`<div class="table-wrap"><table><thead><tr><th>Fonte</th><th>Descrição</th><th>Data</th><th>Tipo</th><th class="num">Valor</th><th></th></tr></thead><tbody>
    ${m.income.map(i=>`<tr><td><b>${esc(i.fonte)}</b></td><td class="muted">${esc(i.desc||'')}</td><td>${fmtDate(i.date)}</td><td><span class="badge ${i.natureza==='variavel'?'warn':'info'}">${i.natureza==='variavel'?'Variável':'Fixa'}</span></td><td class="num">${brl(i.valor)}</td><td class="num"><button class="icon-btn" data-act="editIncome" data-id="${i.id}">✎</button><button class="icon-btn" data-act="delIncome" data-id="${i.id}">🗑</button></td></tr>`).join('')}
@@ -956,23 +968,25 @@ function vBudget(){
    ${Object.entries(BUCKETS).map(([k,b])=>`<div class="pct-row"><b><span class="dot" style="background:${b.color}"></span> ${b.label}</b><input type="range" min="0" max="100" step="1" value="${m.pct[k]}" data-pct="${k}"><input type="number" min="0" max="100" step="0.5" value="${m.pct[k]}" data-pctn="${k}"><b class="num" id="pv_${k}" style="text-align:right">${brl(inc*m.pct[k]/100)}</b></div>`).join('')}
    <div class="row" style="margin-top:8px"><span>Total:</span><b id="pctSum" class="${Math.abs(pctSum-100)>0.01?'neg':'pos'}">${num(pctSum,1)}%</b><span class="spacer"></span><span class="muted" style="font-size:12px">Ajuste os controles — os valores são recalculados a partir da renda.</span></div>
   </div></div>`;
-  h+=`<div class="grid g3">${Object.entries(BUCKETS).map(([k,b])=>{const s=bs[k],left=s.target-s.plan;return`<div class="card"><h3><span class="dot" style="background:${b.color}"></span> ${b.label}</h3><div class="sub">${s.pct}% de ${brl(inc)}</div>
+  }
+  h+=`<div class="grid g3">${Object.entries(BUCKETS).filter(([k])=>tab==='renda'||tab===k).map(([k,b])=>{const s=bs[k],left=s.target-s.plan;return`<div class="card" ${tab==='renda'?`data-act="budTab" data-id="${k}" style="cursor:pointer"`:''}><h3><span class="dot" style="background:${b.color}"></span> ${b.label}</h3><div class="sub">${s.pct}% de ${brl(inc)}${tab===k?' · gasto real '+brl(s.real):''}</div>
    <div class="stat-line"><span>Meta do grupo</span><b>${brl(s.target)}</b></div><div class="stat-line"><span>Já distribuído em categorias</span><b>${brl(s.plan)}</b></div>
    <div class="stat-line"><span>${left>=0?'Falta distribuir':'Distribuído a mais'}</span><b class="${left>=0?'':'neg'}">${brl(Math.abs(left))}</b></div>${bar(s.target?s.plan/s.target*100:0,left<0?'bad':'ok')}</div>`}).join('')}</div>`;
   // ---- Categorias: planejado (editável) × real (puxado dos gastos) ----
   const cmp=comparison(curMonth),cmap={};cmp.forEach(r=>cmap[r.tipo+'|'+norm(r.cat)]=r);
   const totPlan=sum(m.budget,b=>b.valor),totReal=sum(cmp,r=>r.real);
-  if(inc){const sd=inc-totPlan;
+  if(inc&&tab==='renda'){const sd=inc-totPlan;
     h+=Math.abs(sd)<0.5?`<div class="alert ok">✅ <b>Orçamento base zero:</b> cada real da sua renda (${brl(inc)}) já tem um destino.</div>`
       :sd>0?`<div class="alert warn"><div class="row"><span>💰 Falta dar destino a <b>${brl(sd)}</b> da sua renda. Dinheiro sem destino costuma "sumir" em gastos pequenos — distribua nas categorias ou envie para a poupança.</span><span class="spacer"></span><button class="btn sm primary" data-act="sobraPoupanca">Enviar para a poupança</button></div></div>`
       :`<div class="alert bad">⚠️ Seu budget (${brl(totPlan)}) passa da renda em <b>${brl(-sd)}</b>. Reduza categorias de Desejos primeiro.</div>`}
-  h+=`<div class="card"><div class="card-head"><div><h3>Categorias do orçamento × gasto real</h3><div class="sub">Digite quanto espera gastar em cada item. O gasto real é puxado automaticamente dos seus lançamentos de ${mLabel(curMonth,true)}.</div></div>
-   <div class="row">${state.months[addM(curMonth,-1)]?`<button class="btn sm" data-act="copyPrev">Copiar do mês anterior</button>`:''}<button class="btn sm" data-act="presetCats">✨ Categorias sugeridas</button><button class="btn sm" data-act="suggestBudget">💡 Sugerir valores</button><button class="btn primary sm" data-act="addBudget">+ Categoria</button></div></div>`;
-  if(!m.budget.length&&!cmp.length){
-    h+=`<div class="empty"><p style="margin:0 0 6px"><b>Comece cadastrando suas categorias.</b></p><p style="margin:0 0 14px">Ex.: Moradia, Alimentação, Água, Luz, Internet, Celular, Transporte (Needs) · Restaurantes, Lazer (Wants) · Reserva de emergência (Savings).</p><button class="btn primary" data-act="presetCats">✨ Criar categorias sugeridas</button> <button class="btn" data-act="addBudget">+ Criar uma por uma</button></div></div>`;
-  }else{
+  if(tab==='renda'){setTimeout(()=>{if(Object.keys(src).length>1)mkChart('chSrc',{type:'doughnut',data:{labels:Object.keys(src),datasets:[{data:Object.values(src),backgroundColor:PALETTE,borderWidth:0}]},options:{cutout:'62%',plugins:{legend:{position:'right'}}}})});return h}
+  h+=`<div class="card"><div class="card-head"><div><h3>${BUCKETS[tab].label}: categorias × gasto real</h3><div class="sub">Digite quanto espera gastar em cada item. O gasto real é puxado automaticamente dos seus lançamentos de ${mLabel(curMonth,true)}.</div></div>
+   <div class="row">${state.months[addM(curMonth,-1)]?`<button class="btn sm" data-act="copyPrev">Copiar do mês anterior</button>`:''}<button class="btn sm" data-act="presetCats">✨ Categorias sugeridas</button><button class="btn sm" data-act="suggestBudget">💡 Sugerir valores</button><button class="btn primary sm" data-act="addBudgetTipo" data-id="${tab}">+ Categoria</button></div></div>`;
+  if(!m.budget.some(b=>b.tipo===tab)&&!cmp.some(r=>r.tipo===tab)){
+    h+=`<div class="empty"><p style="margin:0 0 6px"><b>Comece cadastrando suas categorias.</b></p><p style="margin:0 0 14px">Ex.: Moradia, Alimentação, Água, Luz, Internet, Celular, Transporte (Needs) · Restaurantes, Lazer (Wants) · Reserva de emergência (Savings).</p><button class="btn primary" data-act="presetCats">✨ Criar categorias sugeridas</button> <button class="btn" data-act="addBudgetTipo" data-id="${tab}">+ Criar uma por uma</button></div></div>`;
+  }else{const totPlan=sum(m.budget.filter(b=>b.tipo===tab),b=>b.valor),totReal=sum(cmp.filter(r=>r.tipo===tab),r=>r.real);
     h+=`<div class="table-wrap"><table><thead><tr><th>Categoria</th><th class="num" style="width:150px">Planejado (budget)</th><th class="num">Gasto real</th><th class="num">Diferença R$</th><th class="num">Diferença %</th><th style="width:130px">Uso</th><th>Status</th><th></th></tr></thead><tbody>`;
-    Object.keys(BUCKETS).forEach(k=>{
+    [tab].forEach(k=>{
       const items=m.budget.filter(b=>b.tipo===k);
       const extra=cmp.filter(r=>r.tipo===k&&r.unplanned);
       if(!items.length&&!extra.length)return;
@@ -1083,6 +1097,7 @@ function vHome(){
   const base=planNW||inc,livre=base-spent,use=base?spent/base*100:0;
   let h='';
   if(backupDue())h+=`<div class="alert warn"><div class="row"><span>💾 ${meta.exportAt?'Seu último backup foi em '+new Date(meta.exportAt).toLocaleDateString('pt-BR'):'Você ainda não fez backup neste celular'}. Guarde uma cópia no Google Drive.</span><span class="spacer"></span><button class="btn sm primary" data-act="shareBackup">Fazer backup</button></div></div>`;
+  try{h+=vDinheiroHoje()}catch(e){console.warn(e)}
   if(month()._empty)h+=emptyMonthBanner();
   h+=`<div class="card hero"><div class="lbl">${planNW?'Ainda pode gastar (Needs + Wants)':'Renda − gastos'} · ${mLabel(curMonth,true)}</div>
    <div class="big">${livre<0?'−':''}${brl(Math.abs(livre))}</div>${bar(use)}
@@ -1090,7 +1105,7 @@ function vHome(){
    ${isCur&&livre>0&&diasRest?`<div class="mini" style="margin-top:4px"><span>≈ <b>${brl(livre/diasRest)}</b> por dia nos próximos ${diasRest} dia(s)</span></div>`:''}</div>
   <div class="grid g4">${kpi('Renda',brl(inc),Object.keys(incomeBySource(curMonth)).length+' fonte(s)')}${kpi('Poupado',brl(bs.savings.real),'meta '+brl(bs.savings.target),BUCKETS.savings.color,'pos')}</div>`;
   // vale
-  if(state.benefits.length){const ref=benRef();h+=state.benefits.map(b=>{const saldo=benBalance(b,ref),nx=benNext(b,ref),dias=Math.max(1,dDiff(ref,nx));
+  if(false){const ref=benRef();h+=state.benefits.map(b=>{const saldo=benBalance(b,ref),nx=benNext(b,ref),dias=Math.max(1,dDiff(ref,nx));
     return`<div class="card" data-act="nav" data-id="vale" style="cursor:pointer;border-left:4px solid ${b.cor||'#22c58b'}"><div class="row" style="justify-content:space-between"><div><div class="muted" style="font-size:12px">🧺 ${esc(b.nome)}</div><b style="font-size:20px" class="${saldo<0?'neg':''}">${brl(saldo)}</b></div><div style="text-align:right"><div class="muted" style="font-size:12px">pode gastar por dia</div><b>${brl(Math.max(0,saldo)/dias)}</b><div class="muted" style="font-size:11px">recarga ${fmtDate(nx)}</div></div></div></div>`}).join('')}
   // contas
   const bl=billsOf(curMonth).filter(x=>!x.pay);
@@ -1148,7 +1163,7 @@ function quickAdd(preset={}){
     const desc=d.desc||d.cat;let undo;
     if(d.pay.startsWith('card:')){const cid=d.pay.slice(5),p={id:uid(),cardId:cid,desc,valorTotal:d.valor,parcelas:d.parcelas,dataCompra:d.date,primeiraFatura:faturaDe(cid,d.date),cat:d.cat,tipo:d.tipo};state.cardPurchases.push(p);
       undo=()=>{tomb(p.id);state.cardPurchases=state.cardPurchases.filter(x=>x!==p)};}
-    else{const x={id:uid(),desc,valor:d.valor,date:d.date,cat:d.cat,tipo:d.tipo,pay:d.pay};
+    else{const x={id:uid(),criado:Date.now(),desc,valor:d.valor,date:d.date,cat:d.cat,tipo:d.tipo,pay:d.pay};
       if(d.pay.startsWith('ben:')){const b=find(state.benefits,d.pay.slice(4));x.benefitId=b?b.id:undefined;x.pay=b?b.nome:'Vale'}
       state.expenses.push(x);undo=()=>{tomb(x.id);state.expenses=state.expenses.filter(y=>y!==x)}}
     meta.lastPay=d.pay;saveMeta();closeModal();save();render();
@@ -2148,6 +2163,73 @@ function vSeg(){
    <li>Gaste menos do que ganha — sempre. Investimento nenhum salva quem gasta mais.</li><li>Reserva antes de investimento; dívida cara antes de tudo.</li><li>Todo dinheiro tem um objetivo e um prazo.</li><li>O prazo escolhe o produto; o perfil escolhe as proporções.</li><li>Comece simples e aumente a complexidade com o conhecimento.</li><li>Aporte todo mês: constância vence o "momento certo".</li><li>Diversifique entre classes, instituições e países.</li><li>Fuja das taxas altas e dos produtos que você não entende.</li><li>Revise uma vez por mês, rebalanceie uma ou duas vezes por ano — sem pânico nas quedas.</li><li>Aumente a poupança a cada aumento de renda.</li></ol></div>`;
 }
 
+
+/* ---------- Renda & Orçamento: abas Poupança, Investimentos e Reserva ---------- */
+const ehReserva=g=>/emerg|reserva/i.test(g.nome)&&g.kind!=='fundo';
+function budPoupanca(){
+  const bs=bucketSummary(curMonth),inc=incomeTotal(curMonth),G=state.goals.filter(g=>g.kind!=='fundo'&&!ehReserva(g)),F=state.goals.filter(g=>g.kind==='fundo');
+  const sav=actualEntries(curMonth).filter(e=>e.tipo==='savings');
+  let h=`<div class="card"><h3>🐷 Poupança de ${mLabel(curMonth,true)}</h3><div class="sub">Tudo o que você separou no mês (categorias de Savings)</div>
+   <div class="stat-line"><span>Guardado no mês</span><b class="pos">${brl(bs.savings.real)}</b></div><div class="stat-line"><span>Meta do mês (${bs.savings.pct}% da renda)</span><b>${brl(bs.savings.target)}</b></div>
+   <div class="stat-line"><span>Taxa de poupança</span><b>${inc?pctf(bs.savings.real/inc*100):'—'}</b></div>${bar(bs.savings.target?bs.savings.real/bs.savings.target*100:0,bs.savings.real>=bs.savings.target?'ok':'warn')}
+   ${sav.length?`<div class="mlist" style="margin-top:8px">${sav.sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8).map(expRow).join('')}</div>`:'<div class="muted" style="margin-top:8px;font-size:13px">Nenhum aporte lançado neste mês. Use o + e escolha uma categoria de Savings.</div>'}</div>`;
+  h+=`<div class="card"><div class="card-head"><div><h3>🎯 Metas</h3><div class="sub">Objetivos com valor e prazo</div></div><button class="btn sm" data-act="nav" data-id="goals">Gerenciar</button></div>
+   ${G.length?G.map(g=>`<div style="margin:12px 0"><div class="stat-line"><span>${esc(g.nome)}${g.prazo?` <span class="muted" style="font-size:12px">até ${mLabel(g.prazo)}</span>`:''}</span><b>${brl(g.guardado)} / ${brl(g.alvo)}</b></div>${bar(g.alvo?g.guardado/g.alvo*100:0)}
+     <div class="row" style="justify-content:space-between;margin-top:4px"><span class="muted" style="font-size:12px">${g.prazo?'Guardar '+brl(goalMonthly(g))+'/mês':'Sem prazo'}</span><button class="btn sm" data-act="contribGoal" data-id="${g.id}">+ Aporte</button></div></div>`).join(''):'<div class="empty">Nenhuma meta. Crie em Metas & Poupança.</div>'}</div>`;
+  if(F.length)h+=`<div class="card"><h3>🔧 Reservas com destino</h3><div class="sub">Dinheiro separado para gastos previsíveis (carro, IPVA, presentes…)</div>
+   ${F.map(g=>{const c=fundCalc(g);return`<div class="stat-line"><span>${esc(g.nome)}</span><b>${brl(c.saldo)} · guardar ${brl(c.recomendado)}/mês</b></div>`}).join('')}</div>`;
+  return h;
+}
+function budInvest(){
+  const L=state.investimentos||[],tot=carteiraTotal(),apl=sum(L,x=>+x.aplicado||0),p=invPerfil();
+  const ap=actualEntries(curMonth).filter(e=>e.tipo==='savings'&&/invest|a[cç][aã]o|a[cç]oes|tesouro|cdb|fii|etf|cripto|previd/i.test(e.cat+' '+e.desc));
+  return`<div class="grid g4">${kpi('Patrimônio investido',brl(tot),L.length+' investimento(s)')}${kpi('Resultado',signBrl(tot-apl),apl?signPct((tot-apl)/apl*100):'—',null,tot>=apl?'pos':'neg')}${kpi('Aportado no mês',brl(sum(ap,e=>e.valor)),'categorias de investimento')}${kpi('Perfil',p?PERFIS[p.tipo].ic+' '+PERFIS[p.tipo].n:'—','')}</div>
+  <div class="card"><div class="card-head"><div><h3>📈 Investimentos</h3><div class="sub">Resumo da sua carteira</div></div><button class="btn sm primary" data-act="invTab" data-id="carteira">Abrir carteira</button></div>
+   ${L.length?`<div class="mlist">${L.map(x=>{const t=INVS.find(i=>i.id===x.tipo)||{n:'Outro',ic:'💠',cl:'outros'},at=+x.atual||+x.aplicado||0;return`<div class="mrow" data-act="invEdit" data-id="${x.id}"><div class="ic" style="background:${CLASSES[t.cl][1]}22">${t.ic}</div><div class="tx"><b>${esc(x.nome)}</b><small>${t.n}${x.inst?' · '+esc(x.inst):''}</small></div><div class="vl">${brl(at)}</div></div>`}).join('')}</div>`:'<div class="empty">Nenhum investimento registrado ainda.<br><br><button class="btn primary" data-act="invAdd">+ Adicionar investimento</button></div>'}
+   <div class="row" style="margin-top:10px"><button class="btn sm" data-act="invTab" data-id="perfil">Meu perfil de investidor</button><button class="btn sm" data-act="invTab" data-id="guia">Guia de investimentos</button><button class="btn sm" data-act="invTab" data-id="sim">Simuladores</button></div></div>
+  <div class="muted" style="font-size:12px;padding:0 4px">Para o aporte aparecer em "Aportado no mês", lance-o com uma categoria de Savings que tenha "Investimento" (ou Tesouro, CDB, FII, ETF…) no nome.</div>`;
+}
+function budReserva(){return`<div class="card"><h3>🛟 Reserva de emergência</h3><div class="sub">O colchão que impede que um imprevisto vire dívida</div>${stReserva()}
+  <div class="row" style="margin-top:10px">${state.goals.some(ehReserva)?state.goals.filter(ehReserva).map(g=>`<button class="btn sm primary" data-act="contribGoal" data-id="${g.id}">+ Aporte em ${esc(g.nome)}</button>`).join(''):'<button class="btn sm primary" data-act="criarReserva">Criar meta "Reserva de emergência"</button>'}<button class="btn sm" data-act="invTab" data-id="prog">Ver no programa</button></div></div>`}
+
+/* ---------- Saldo em conta (estimado) e resumo "Seu dinheiro hoje" ---------- */
+const PAY_CONTA=['Pix','Débito','Boleto','Transferência','Débito automático'];
+function contaSaldo(c){
+  if(!c.auto)return{v:+c.saldo||0,ent:0,sai:0,fat:0};
+  const d0=(c.data||todayISO()).slice(0,10),ts0=Date.parse(c.data)||0,hoje=todayISO(),dentro=(d,x)=>d&&d<=hoje&&(d>d0||(d===d0&&x&&(x.criado||0)>ts0));
+  let ent=0;Object.values(state.months).forEach(m=>(m.income||[]).forEach(i=>{if(dentro(i.date,i))ent+=+i.valor||0}));
+  const sai=sum(state.expenses.filter(e=>dentro(e.date,e)&&PAY_CONTA.includes(e.pay)&&!e.benefitId&&!e.fundId),e=>+e.valor||0);
+  let fat=0;state.cards.forEach(cc=>{for(let ym=d0.slice(0,7);ym<=hoje.slice(0,7);ym=addM(ym,1)){if(dentro(isoOf(ym,+cc.vencimento||10)))fat+=cardFatura(cc.id,ym)}});
+  return{v:(+c.saldo||0)+ent-sai-fat,ent,sai,fat};
+}
+function proxFatura(c){const hoje=todayISO();let ym=todayYM();if(isoOf(ym,+c.vencimento||10)<hoje)ym=addM(ym,1);return{ym,venc:isoOf(ym,+c.vencimento||10),v:cardFatura(c.id,ym),aberto:cardUsed(c.id,ym)}}
+function vDinheiroHoje(){
+  state.contas=state.contas||[];const C=state.contas,ref=benRef();
+  const contas=C.map(c=>({c,s:contaSaldo(c)})),totC=sum(contas,x=>x.s.v);
+  const vales=state.benefits.map(b=>({b,v:benBalance(b,ref)})),cards=state.cards.map(c=>({c,...proxFatura(c)}));
+  const totFat=sum(cards,x=>x.v),totAb=sum(cards,x=>x.aberto);
+  let h=`<div class="card money"><div class="card-head"><div><h3>💼 Seu dinheiro hoje</h3></div><button class="btn sm" data-act="editConta">${C.length?'+ Conta':'Informar saldo'}</button></div>`;
+  h+=C.length?contas.map(({c,s})=>`<div class="mrow" data-act="editConta" data-id="${c.id}"><div class="ic" style="background:color-mix(in srgb,var(--accent) 18%,transparent)">🏦</div><div class="tx"><b>${esc(c.nome)}</b><small>${c.auto?'Estimado · ':''}conferido em ${fmtDate((c.data||'').slice(0,10))}${c.auto&&(s.ent||s.sai||s.fat)?` · ${s.ent?'+'+brl(s.ent)+' ':''}${s.sai||s.fat?'−'+brl(s.sai+s.fat):''}`:''}</small></div><div class="vl ${s.v<0?'neg':''}">${brl(s.v)}</div></div>`).join('')
+    :`<div class="mrow" data-act="editConta"><div class="ic" style="background:var(--panel2)">🏦</div><div class="tx"><b>Saldo em conta</b><small>Toque para informar o saldo do banco</small></div><div class="vl">—</div></div>`;
+  h+=vales.map(({b,v})=>{const nx=benNext(b,ref);return`<div class="mrow" data-act="nav" data-id="vale"><div class="ic" style="background:${(b.cor||'#22c58b')}22">🧺</div><div class="tx"><b>${esc(b.nome)}</b><small>Recarga em ${fmtDate(nx)} · ${brl(Math.max(0,v)/Math.max(1,dDiff(ref,nx)))}/dia</small></div><div class="vl ${v<0?'neg':''}">${brl(v)}</div></div>`}).join('');
+  h+=cards.map(x=>`<div class="mrow" data-act="nav" data-id="cards"><div class="ic" style="background:${(x.c.cor||'#ff7a7a')}22">💳</div><div class="tx"><b>${esc(x.c.nome)}</b><small>Fatura vence ${fmtDate(x.venc)} · total em aberto ${brl(x.aberto)}${x.c.limite?' · limite livre '+brl(Math.max(0,x.c.limite-x.aberto)):''}</small></div><div class="vl neg">${brl(x.v)}</div></div>`).join('');
+  if(C.length&&cards.length)h+=`<div class="stat-line" style="margin-top:8px"><span>Saldo em conta − próximas faturas</span><b class="${totC-totFat<0?'neg':'pos'}">${brl(totC-totFat)}</b></div>`;
+  if(cards.length>1)h+=`<div class="stat-line"><span>Dívida total nos cartões (com parcelas futuras)</span><b class="neg">${brl(totAb)}</b></div>`;
+  return h+'</div>';
+}
+function contaForm(c){
+  state.contas=state.contas||[];const isNew=!c;c=c||{nome:state.contas.length?'':'Conta principal',auto:!state.contas.some(x=>x.auto)};
+  const est=!isNew?contaSaldo(c).v:'';
+  openForm({title:isNew?'Saldo em conta':'Atualizar saldo — '+c.nome,fields:[
+    {type:'html',html:`<p class="muted" style="margin:0">Confira o saldo no app do banco e digite aqui.${!isNew&&c.auto?` Estimativa atual: <b>${brl(est)}</b>.`:''}</p>`},
+    {name:'nome',label:'Nome da conta',value:c.nome,required:true,placeholder:'Ex.: Nubank, Itaú'},
+    {name:'saldo',label:'Saldo agora (R$)',type:'number',step:'0.01',value:isNew?'':Math.round(est*100)/100,required:true},
+    {name:'auto',type:'checkbox',value:!!c.auto,label:'Atualizar sozinho com o que eu lançar (rendas com data, gastos no Pix/débito/boleto e faturas de cartão)'}
+  ],extra:isNew?'':`<button type="button" class="btn danger" data-act="delConta" data-id="${c.id}">🗑</button>`,
+  onSave:d=>{const x={nome:d.nome,saldo:d.saldo,auto:!!d.auto,data:new Date().toISOString()};if(x.auto)state.contas.forEach(o=>{if(o!==c)o.auto=false});
+    if(isNew)state.contas.push({id:uid(),...x});else Object.assign(c,x);toast('Saldo atualizado')}});
+}
+
 /* ============================================================
    VIEW: CONFIGURAÇÕES
    ============================================================ */
@@ -2214,7 +2296,7 @@ function expenseForm(e,preset){
     {type:'html',html:`<div class="muted" style="font-size:12px">Compras no cartão de crédito: lance em <b>Cartões</b> para que as parcelas caiam nas faturas certas.${state.benefits.length?' Pagou com o vale? Escolha 🧺 na forma de pagamento — desconta do saldo do vale.':''}</div>`}
   ],onSave:d=>{if(e.fundId&&!isNew){const g=find(state.goals,e.fundId);if(g)g.guardado=Math.round(((+g.guardado)+(+e.valor)-(+d.valor))*100)/100;d.pay=e.pay}
     else if(String(d.pay).startsWith('ben:')){const b=find(state.benefits,d.pay.slice(4));d.benefitId=b?b.id:undefined;d.pay=b?b.nome:'Vale'}else d.benefitId=undefined;
-    if(isNew){const x={id:uid(),...d};state.expenses.push(x);setTimeout(()=>coachShow(x,()=>{tomb(x.id);state.expenses=state.expenses.filter(y=>y!==x);save();render();toast('Lançamento desfeito')},brl(x.valor)+' lançado'),60)}else{Object.assign(e,d);toast('Gasto salvo')}},
+    if(isNew){const x={id:uid(),criado:Date.now(),...d};state.expenses.push(x);setTimeout(()=>coachShow(x,()=>{tomb(x.id);state.expenses=state.expenses.filter(y=>y!==x);save();render();toast('Lançamento desfeito')},brl(x.valor)+' lançado'),60)}else{Object.assign(e,d);toast('Gasto salvo')}},
     extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelExpense" data-id="${e.id}" title="Excluir">🗑</button><button type="button" class="btn" data-act="dupExpense" data-id="${e.id}" title="Duplicar">⧉</button>`});
 }
 function incomeForm(i){
@@ -2225,7 +2307,7 @@ function incomeForm(i){
     {name:'desc',label:'Descrição / cliente',value:i.desc,placeholder:'Ex.: Tradução contrato — cliente X'},
     {name:'valor',label:'Valor líquido (R$)',type:'number',step:'0.01',min:0,value:i.valor,required:true},
     {name:'date',label:'Data de recebimento',type:'date',value:i.date}
-  ],onSave:d=>{const m=month(curMonth,true);if(isNew)m.income.push({id:uid(),...d});else Object.assign(i,d);toast('Renda salva')}});
+  ],onSave:d=>{const m=month(curMonth,true);if(isNew)m.income.push({id:uid(),criado:Date.now(),...d});else Object.assign(i,d);toast('Renda salva')}});
 }
 function budgetForm(b,preset){
   const isNew=!b;b=b||Object.assign({tipo:'needs'},preset);const old={cat:b.cat,tipo:b.tipo};
@@ -2352,7 +2434,7 @@ const ACT={
   delBill:id=>delUndo('Conta fixa excluída (pagamentos já lançados continuam)',()=>{tomb(id);state.bills=state.bills.filter(x=>x.id!==id)}),
   payBill:id=>{const b=find(state.bills,id);const def=curMonth===todayYM()?todayISO():isoOf(curMonth,+b.dia||1);
     openForm({title:'Pagar — '+b.nome,saveLabel:'Confirmar pagamento',fields:[{name:'valor',label:'Valor pago (R$)',type:'number',step:'0.01',min:0,value:b.valor,required:true},{name:'date',label:'Data do pagamento',type:'date',value:def,required:true},{name:'pay',label:'Forma de pagamento',type:'select',options:PAY,value:b.pay},{type:'html',html:'<div class="muted" style="font-size:12px">O pagamento será lançado como gasto na categoria <b>'+esc(b.cat)+'</b> e comparado com o budget.</div>'}],
-      onSave:x=>{const e={id:uid(),desc:b.nome,valor:x.valor,date:x.date,cat:b.cat,tipo:b.tipo,pay:x.pay,billId:b.id,billMonth:curMonth};state.expenses.push(e);setTimeout(()=>coachShow({...e,ym:curMonth},null,b.nome+' paga'),60)}})},
+      onSave:x=>{const e={id:uid(),criado:Date.now(),desc:b.nome,valor:x.valor,date:x.date,cat:b.cat,tipo:b.tipo,pay:x.pay,billId:b.id,billMonth:curMonth};state.expenses.push(e);setTimeout(()=>coachShow({...e,ym:curMonth},null,b.nome+' paga'),60)}})},
   unpayBill:id=>{const e=state.expenses.find(x=>x.billId===id&&x.billMonth===curMonth);if(e)delUndo('Pagamento desfeito',()=>{tomb(e.id);state.expenses=state.expenses.filter(x=>x!==e)})},
   billsToBudget:()=>{const m=month(curMonth,true),g={};state.bills.filter(b=>billActive(b,curMonth)).forEach(b=>{const k=b.tipo+'|'+norm(b.cat);g[k]=g[k]||{cat:b.cat,tipo:b.tipo,v:0};g[k].v+=+b.valor});
     let c=0,u=0;Object.values(g).forEach(x=>{const it=m.budget.find(b=>b.tipo===x.tipo&&norm(b.cat)===norm(x.cat));if(!it){m.budget.push({id:uid(),cat:x.cat,tipo:x.tipo,valor:x.v});c++}else if(+it.valor<x.v){it.valor=x.v;u++}});
@@ -2366,7 +2448,9 @@ const ACT={
   delExpense:id=>delUndo('Gasto excluído',()=>{const x=find(state.expenses,id);if(x&&x.fundId){const g=find(state.goals,x.fundId);if(g)g.guardado=Math.round(((+g.guardado)+(+x.valor))*100)/100}tomb(id);state.expenses=state.expenses.filter(x=>x.id!==id)}),
   addIncome:()=>incomeForm(),editIncome:id=>incomeForm(find(month().income,id)),
   delIncome:id=>delUndo('Renda excluída',()=>{tomb(id);const m=month(curMonth,true);m.income=m.income.filter(x=>x.id!==id)}),
-  addBudget:()=>budgetForm(),
+  addBudget:()=>budgetForm(),addBudgetTipo:t=>budgetForm(null,{tipo:t}),
+  budTab:id=>{ui.budTab=id;view='budget';render();window.scrollTo(0,0)},
+  editConta:id=>contaForm(id?find(state.contas,id):null),delConta:id=>{closeModal();delUndo('Conta removida',()=>{tomb(id);state.contas=state.contas.filter(x=>x.id!==id)})},
   presetCats:()=>{const P=[['Moradia (aluguel/condomínio)','needs'],['Alimentação (mercado)','needs'],['Água','needs'],['Luz','needs'],['Internet','needs'],['Celular','needs'],['Transporte / combustível','needs'],['Saúde / farmácia','needs'],['Educação','needs'],['Dívidas e financiamentos','needs'],['Restaurantes / delivery','wants'],['Lazer','wants'],['Streaming e assinaturas','wants'],['Compras / roupas','wants'],['Cuidados pessoais','wants'],['Reserva de emergência','savings'],['Investimentos','savings']];
     openForm({title:'Categorias sugeridas',fields:[{type:'html',html:'<p class="muted" style="margin:0">Marque as que você usa. Elas serão criadas com valor 0 — depois é só digitar o budget de cada uma direto na tabela.</p>'},...P.map(([c,t],i)=>({name:'c'+i,label:c+' — '+BUCKETS[t].label,type:'checkbox',value:true}))],saveLabel:'Criar categorias',
       onSave:d=>{const m=month(curMonth,true);let n=0;P.forEach(([c,t],i)=>{if(d['c'+i]&&!m.budget.some(x=>x.tipo===t&&norm(x.cat)===norm(c))){m.budget.push({id:uid(),cat:c,tipo:t,valor:0});n++}});toast(n+' categoria(s) criada(s) — agora digite os valores')}})},
