@@ -235,7 +235,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 [data-theme=dark] .mrow.sel{background:var(--gold-bg);box-shadow:0 0 0 1px var(--gold-bd) inset;border-radius:12px}
 [data-theme=dark] .chip.on .dot{box-shadow:0 0 0 2px rgba(0,0,0,.25)}
 /* ============ FX 3D ============ */
-[data-fx=on] #view{perspective:1100px;perspective-origin:50% 180px}
+[data-fx=on] body,[data-fx=on] #view{overflow-x:clip}
 /* entrada da tela: a página gira de lado e os cartões sobem em cascata, como dominós se levantando */
 [data-fx=on] body.fx-in #view>*{animation:fxSobe .62s cubic-bezier(.2,.85,.25,1.08) both;transform-origin:50% 0}
 [data-fx=on] body.fx-in #view>*:nth-child(2){animation-delay:.05s}
@@ -244,7 +244,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 [data-fx=on] body.fx-in #view>*:nth-child(5){animation-delay:.2s}
 [data-fx=on] body.fx-in #view>*:nth-child(6){animation-delay:.25s}
 [data-fx=on] body.fx-in #view>*:nth-child(n+7){animation-delay:.3s}
-@keyframes fxSobe{from{opacity:0;transform:translate3d(calc(var(--fx-dir,1)*46px),30px,-140px) rotateY(calc(var(--fx-dir,1)*-16deg)) rotateX(-18deg)}to{opacity:1;transform:none}}
+@keyframes fxSobe{from{opacity:0;transform:perspective(1100px) translate3d(calc(var(--fx-dir,1)*46px),30px,-140px) rotateY(calc(var(--fx-dir,1)*-16deg)) rotateX(-18deg)}to{opacity:1;transform:none}}
 [data-fx=on] body.fx-in .bar>i{animation:fxBarra .9s .25s cubic-bezier(.2,.9,.3,1) both;transform-origin:0 50%}
 @keyframes fxBarra{from{transform:scaleX(0)}to{transform:scaleX(1)}}
 [data-fx=on] body.fx-in .topbar h1{animation:fxTitulo .5s cubic-bezier(.2,.9,.3,1.2) both;transform-origin:0 50%}
@@ -545,7 +545,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.11-1';
+const APP_VERSAO='2026.11.11-2';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
