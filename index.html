@@ -234,6 +234,23 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 [data-theme=dark] .bnav button.on svg{filter:drop-shadow(0 0 6px rgba(242,193,78,.45))}
 [data-theme=dark] .mrow.sel{background:var(--gold-bg);box-shadow:0 0 0 1px var(--gold-bd) inset;border-radius:12px}
 [data-theme=dark] .chip.on .dot{box-shadow:0 0 0 2px rgba(0,0,0,.25)}
+/* ============ BLOQUEIO ============ */
+#lock{position:fixed;inset:0;z-index:9999;background:var(--bg);display:grid;place-items:center;padding:calc(env(safe-area-inset-top) + 20px) 22px calc(env(safe-area-inset-bottom) + 20px);overflow:auto}
+#lock::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 50% 18%,color-mix(in srgb,var(--accent) 22%,transparent),transparent 60%);pointer-events:none}
+.lk-box{position:relative;width:min(340px,100%);text-align:center;animation:fxCoach .45s cubic-bezier(.2,1.2,.4,1)}
+.lk-logo{width:84px;height:84px;border-radius:22px;box-shadow:0 14px 34px rgba(0,0,0,.4)}
+.lk-box h2{margin:16px 0 4px;font-size:21px}
+.lk-msg{color:var(--muted);margin:0 0 16px;min-height:22px;font-size:14px}.lk-erro{color:var(--bad)}
+#lkSenha{background:var(--panel2);color:var(--text);border:1px solid var(--border);outline:none;text-align:center;font-size:20px!important;letter-spacing:.2em;padding:14px!important;border-radius:14px!important;width:100%}
+.lk-pad{width:min(280px,100%);margin:0 auto;touch-action:none;user-select:none}
+.lk-pad svg{width:100%;display:block;touch-action:none}
+.lk-dot{fill:var(--muted);opacity:.55;transition:r .12s,opacity .12s}
+.lk-dot.on{fill:var(--sel,var(--gold,var(--accent)));opacity:1;r:16px;filter:drop-shadow(0 0 8px var(--sel,var(--gold,var(--accent))))}
+#lkLinha{stroke:var(--sel,var(--gold,var(--accent)));opacity:.75}
+.lk-links{display:grid;gap:10px;justify-items:center;margin-top:18px}
+.lk-link{border:0;background:none;color:var(--muted);font-size:13px;text-decoration:underline;padding:8px;cursor:pointer}
+.lk-treme{animation:lkTreme .38s}
+@keyframes lkTreme{20%{transform:translateX(-10px)}40%{transform:translateX(9px)}60%{transform:translateX(-6px)}80%{transform:translateX(4px)}}
 /* ============ FX 3D ============ */
 [data-fx=on] body,[data-fx=on] #view{overflow-x:clip}
 /* entrada da tela: a página gira de lado e os cartões sobem em cascata, como dominós se levantando */
@@ -545,7 +562,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.11-2';
+const APP_VERSAO='2026.11.11-3';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -730,7 +747,7 @@ function openMore(){
    ${sec('Visão geral',it('dashboard','Dashboard')+it('review','Revisão do período')+it('report','Relatório do mês'))}
    ${sec('Planejamento',it('contas','Contas e saldos','vale')+it('budget','Renda & Orçamento')+it('compare','Planejado × Real')+it('bills','Contas fixas'))}
    ${sec('Compromissos',it('debts','Dívidas')+it('cards','Cartões')+it('goals','Metas & Reservas'))}
-   ${sec('Sistema',`<button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme',state.settings.theme==='dark'?'Tema claro':'Tema escuro','theme','theme')+
+   ${sec('Sistema',`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme',state.settings.theme==='dark'?'Tema claro':'Tema escuro','theme','theme')+
      it('todayM','Ir para o mês atual','calendar','todayM')+(installEvt?it('install','Instalar app','install','installApp'):''))}
   </div></div><footer><button type="button" class="btn" data-act="closeModal">Fechar</button></footer>`;
   f.onsubmit=e=>e.preventDefault();
@@ -2748,6 +2765,122 @@ function render(){
   $('#monthLabel').textContent=mLabel(curMonth,true);setSaveStatus();
   try{const v=view==='expenses'&&isMobile()?vExpensesMobile:VIEWS[view];$('#view').innerHTML=v();cardifyTables($('#view'))}catch(err){console.error(err);$('#view').innerHTML=`<div class="card empty">Erro ao montar a tela: ${esc(err.message)}</div>`}
 }
+/* ============================================================
+   BLOQUEIO DO APP — senha, padrão desenhado ou impressão digital
+   A configuração fica só neste aparelho (não vai no backup).
+   É uma tranca de tela: impede que alguém com o celular na mão abra o app.
+   ============================================================ */
+const LK_KEY='finm_lock';
+const lkGet=()=>{try{return JSON.parse(localStorage.getItem(LK_KEY))||null}catch(e){return null}};
+const lkSet=c=>{try{c?localStorage.setItem(LK_KEY,JSON.stringify(c)):localStorage.removeItem(LK_KEY)}catch(e){}};
+const b64=buf=>btoa(String.fromCharCode(...new Uint8Array(buf))),unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+async function lkHash(segredo,salt){const k=await crypto.subtle.importKey('raw',new TextEncoder().encode(segredo),'PBKDF2',false,['deriveBits']);
+  return b64(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:unb64(salt),iterations:120000},k,256))}
+let LKS=null,lkBioBusy=false,lkSaiu=0;
+const lkTravado=()=>!!(LKS&&LKS.modo==='abrir');
+function lkHide(){const o=$('#lock');if(o)o.remove();LKS=null}
+function lkShow(modo,tipo,cb){LKS={modo,tipo,cb,first:null};lkDraw()}
+function lkLock(){const c=lkGet();if(!c||lkTravado())return;try{closeModal()}catch(e){}lkShow('abrir',c.tipo);if(c.bio)setTimeout(()=>lkBio(true),350)}
+function lkDraw(msg,erro){
+  const c=lkGet()||{},S=LKS;let o=$('#lock');if(!o){o=document.createElement('div');o.id='lock';document.body.appendChild(o)}
+  const T={abrir:['Minhas Finanças',S.tipo==='padrao'?'Desenhe seu padrão para entrar':'Digite sua senha para entrar'],
+    verifica:['Confirme que é você',S.tipo==='padrao'?'Desenhe o padrão atual':'Digite a senha atual'],
+    novo:[S.tipo==='padrao'?'Novo padrão':'Nova senha',S.tipo==='padrao'?'Ligue pelo menos 4 pontos':'Mínimo de 4 caracteres (letras ou números)'],
+    confirma:['Repita para confirmar',S.tipo==='padrao'?'Desenhe o mesmo padrão de novo':'Digite a mesma senha de novo'],
+    esqueci:['Esqueceu?','']}[S.modo];
+  const espera=c.ate&&c.ate>Date.now()&&(S.modo==='abrir'||S.modo==='verifica')?Math.ceil((c.ate-Date.now())/1000):0;
+  let corpo='';
+  if(S.modo==='esqueci')corpo=`<p class="lk-msg">Não existe como recuperar a senha ou o padrão. A única saída é <b>apagar os dados deste aparelho</b> e depois importar o seu último backup (.json).</p>
+    <button class="btn danger" data-act="lkApagar" style="width:100%;justify-content:center">${S.certeza?'Toque de novo para APAGAR TUDO':'Apagar os dados e recomeçar'}</button>
+    <button class="btn" data-act="lkVoltar" style="width:100%;justify-content:center;margin-top:10px">Voltar</button>`;
+  else if(espera)corpo=`<p class="lk-msg lk-erro">Muitas tentativas erradas.<br>Tente de novo em <b id="lkSeg">${espera}</b> s.</p>`;
+  else if(S.tipo==='padrao')corpo=`<div class="lk-pad" id="lkPad"></div>`;
+  else corpo=`<form id="lkForm" autocomplete="off"><input id="lkSenha" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Senha" enterkeyhint="go"><button class="btn primary" type="submit" style="width:100%;justify-content:center;margin-top:10px">${S.modo==='abrir'?'Entrar':'Continuar'}</button></form>`;
+  o.innerHTML=`<div class="lk-box"><img src="icons/icon-192.png?v=7" alt="" class="lk-logo"><h2>${T[0]}</h2>
+    <p class="lk-msg ${erro?'lk-erro':''}" id="lkMsg">${espera?'':msg||T[1]}</p>${corpo}
+    <div class="lk-links">${S.modo==='abrir'&&c.bio&&!espera?'<button class="btn" data-act="lkBio">👆 Usar impressão digital</button>':''}
+    ${S.modo==='abrir'||S.modo==='verifica'?'<button class="lk-link" data-act="lkEsqueci">Esqueci</button>':''}
+    ${S.modo!=='abrir'&&S.modo!=='esqueci'?'<button class="lk-link" data-act="lkCancelar">Cancelar</button>':''}</div></div>`;
+  if(erro){const b=o.querySelector('.lk-box');b.classList.add('lk-treme');try{navigator.vibrate&&navigator.vibrate(60)}catch(e){}}
+  if(espera){const t=setInterval(()=>{const e=$('#lkSeg');if(!e||!LKS){clearInterval(t);return}const s=Math.ceil((c.ate-Date.now())/1000);if(s<=0){clearInterval(t);lkDraw()}else e.textContent=s},500);return}
+  const f=$('#lkForm');if(f){f.onsubmit=e=>{e.preventDefault();lkTenta($('#lkSenha').value)};if(S.modo!=='abrir'||!c.bio)setTimeout(()=>{const i=$('#lkSenha');i&&i.focus()},80)}
+  const p=$('#lkPad');if(p)lkPad(p,lkTenta);
+}
+/* grade 3×3 para desenhar o padrão */
+function lkPad(el,pronto){
+  const P=i=>({x:(i%3)*95+45,y:Math.floor(i/3)*95+45});
+  el.innerHTML=`<svg viewBox="0 0 280 280"><polyline id="lkLinha" fill="none" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>${[...Array(9)].map((_,i)=>`<circle class="lk-dot" data-i="${i}" cx="${P(i).x}" cy="${P(i).y}" r="11"/>`).join('')}</svg>`;
+  const svg=el.querySelector('svg'),linha=el.querySelector('#lkLinha');let seq=[],on=false;
+  const pos=e=>{const r=svg.getBoundingClientRect();return{x:(e.clientX-r.left)/r.width*280,y:(e.clientY-r.top)/r.height*280}};
+  const desenha=d=>{linha.setAttribute('points',seq.map(i=>P(i).x+','+P(i).y).concat(d?[d.x+','+d.y]:[]).join(' '))};
+  const toca=e=>{const d=pos(e);for(let i=0;i<9;i++){if(!seq.includes(i)&&Math.hypot(P(i).x-d.x,P(i).y-d.y)<34){seq.push(i);svg.querySelector(`[data-i="${i}"]`).classList.add('on');try{navigator.vibrate&&navigator.vibrate(8)}catch(e){}}}desenha(on?d:null)};
+  svg.addEventListener('pointerdown',e=>{e.preventDefault();seq=[];svg.querySelectorAll('.on').forEach(x=>x.classList.remove('on'));on=true;try{svg.setPointerCapture(e.pointerId)}catch(_){}toca(e)});
+  svg.addEventListener('pointermove',e=>{if(on)toca(e)});
+  const fim=()=>{if(!on)return;on=false;desenha();if(seq.length<4){$('#lkMsg').textContent='Ligue pelo menos 4 pontos';$('#lkMsg').classList.add('lk-erro');setTimeout(()=>{seq=[];desenha();svg.querySelectorAll('.on').forEach(x=>x.classList.remove('on'))},500);return}pronto(seq.join('-'))};
+  svg.addEventListener('pointerup',fim);svg.addEventListener('pointercancel',fim);
+}
+async function lkTenta(seg){
+  const S=LKS,c=lkGet()||{};if(!S||!seg)return;
+  if(S.modo==='novo'){if(seg.length<4){lkDraw('Muito curta: use pelo menos 4 caracteres',true);return}S.first=seg;S.modo='confirma';lkDraw();return}
+  if(S.modo==='confirma'){if(seg!==S.first){S.modo='novo';S.first=null;lkDraw('Não conferiu. Comece de novo.',true);return}
+    const salt=b64(crypto.getRandomValues(new Uint8Array(16)));lkSet({tipo:S.tipo,salt,hash:await lkHash(seg,salt),bio:c.bio||null,auto:c.auto||0,erros:0});
+    lkHide();render();toast('Bloqueio ativado 🔒');return}
+  if(c.ate&&c.ate>Date.now()){lkDraw();return}
+  if(await lkHash(seg,c.salt)===c.hash){c.erros=0;c.ate=0;lkSet(c);const cb=S.cb;lkHide();if(cb)cb();return}
+  c.erros=(c.erros||0)+1;if(c.erros>=5)c.ate=Date.now()+Math.min(600,30*Math.pow(2,c.erros-5))*1000;lkSet(c);
+  lkDraw(c.erros>=5?'':(S.tipo==='padrao'?'Padrão incorreto':'Senha incorreta')+` (${5-c.erros} tentativa(s) antes da pausa)`,true);
+}
+/* impressão digital / biometria do aparelho (WebAuthn) */
+const lkBioOk=async()=>{try{return!!(window.PublicKeyCredential&&await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable())}catch(e){return false}};
+async function lkBio(silencioso){
+  const c=lkGet();if(!c||!c.bio||!lkTravado()||lkBioBusy)return;lkBioBusy=true;
+  try{await navigator.credentials.get({publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)),allowCredentials:[{type:'public-key',id:unb64(c.bio)}],userVerification:'required',timeout:60000}});
+    c.erros=0;c.ate=0;lkSet(c);lkHide()}
+  catch(e){if(!silencioso&&lkTravado())lkDraw('Não foi possível ler a digital. Use '+(c.tipo==='padrao'?'o padrão':'a senha')+'.',true)}
+  finally{setTimeout(()=>lkBioBusy=false,600)}
+}
+async function lkBioAtivar(){
+  const c=lkGet();if(!c)return;
+  if(!(await lkBioOk())){toast('Este navegador/aparelho não liberou a biometria para sites. Use senha ou padrão.','err');return}
+  lkBioBusy=true;
+  try{const cred=await navigator.credentials.create({publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)),rp:{name:'Minhas Finanças'},
+      user:{id:crypto.getRandomValues(new Uint8Array(16)),name:'minhas-financas',displayName:'Minhas Finanças'},
+      pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
+      authenticatorSelection:{authenticatorAttachment:'platform',userVerification:'required',residentKey:'discouraged'},timeout:60000,attestation:'none'}});
+    c.bio=b64(cred.rawId);lkSet(c);render();toast('Impressão digital ativada 👆')}
+  catch(e){toast('Não foi possível ativar a biometria'+(e&&e.name?' ('+e.name+')':''),'err')}
+  finally{setTimeout(()=>lkBioBusy=false,600)}
+}
+/* bloqueia ao sair do app */
+document.addEventListener('visibilitychange',()=>{const c=lkGet();if(!c)return;
+  if(document.visibilityState==='hidden'){lkSaiu=Date.now();if(!(c.auto>0)&&!lkBioBusy)lkLock()}
+  else if(c.auto>0&&lkSaiu&&Date.now()-lkSaiu>=c.auto*60000)lkLock()});
+function lkCard(){
+  const c=lkGet(),auto=c?c.auto||0:0;
+  return`<div class="card"><div class="card-head"><div><h3>🔒 Bloqueio do app</h3><div class="sub">${c?'Ativo com <b>'+(c.tipo==='padrao'?'padrão desenhado':'senha')+'</b>'+(c.bio?' + <b>impressão digital</b>':''):'Desligado — qualquer pessoa com o celular desbloqueado abre o app'}</div></div>${c?'<span class="badge ok">Ativo</span>':'<span class="badge warn">Desligado</span>'}</div>
+   <div class="row"><button class="btn ${c&&c.tipo==='senha'?'primary':''}" data-act="lkDefinir" data-id="senha">🔑 ${c&&c.tipo==='senha'?'Trocar senha':'Usar senha'}</button><button class="btn ${c&&c.tipo==='padrao'?'primary':''}" data-act="lkDefinir" data-id="padrao">⬚ ${c&&c.tipo==='padrao'?'Trocar padrão':'Usar padrão'}</button>
+    ${c?`<button class="btn ${c.bio?'primary':''}" data-act="lkBioToggle">👆 Digital: ${c.bio?'ligada':'ativar'}</button>`:''}</div>
+   ${c?`<div class="q-label" style="margin-top:14px">Bloquear automaticamente</div><div class="chips">${[[0,'Assim que sair do app'],[1,'Após 1 min fora'],[5,'Após 5 min fora']].map(([v,l])=>`<button class="chip ${auto===v?'on':''}" data-act="lkAuto" data-id="${v}">${l}</button>`).join('')}</div>
+   <div class="row" style="margin-top:14px"><button class="btn" data-act="lkAgora">Bloquear agora</button><button class="btn danger" data-act="lkDesligar">Desligar bloqueio</button></div>`:''}
+   <div class="muted" style="font-size:12px;margin-top:10px">⚠️ Não há como recuperar senha ou padrão esquecido: a saída é apagar os dados do aparelho e importar o backup. <b>Faça um backup antes de ativar.</b> O bloqueio vale só neste aparelho e protege a tela do app; o arquivo de backup não é protegido por ele.</div></div>`;
+}
+Object.assign(ACT,{
+  lkDefinir:tipo=>{closeModal();const ir=()=>lkShow('novo',tipo);const c=lkGet();c?lkShow('verifica',c.tipo,ir):ir()},
+  lkDesligar:()=>{const c=lkGet();if(c)lkShow('verifica',c.tipo,()=>{lkSet(null);render();toast('Bloqueio desligado')})},
+  lkBioToggle:()=>{const c=lkGet();if(!c)return;if(c.bio){c.bio=null;lkSet(c);render();toast('Impressão digital desligada')}else lkBioAtivar()},
+  lkAuto:v=>{const c=lkGet();if(!c)return;c.auto=+v;lkSet(c);render()},
+  lkAgora:()=>lkLock(),lkBio:()=>lkBio(false),
+  lkCancelar:()=>lkHide(),
+  lkEsqueci:()=>{LKS.antes=LKS.modo;LKS.modo='esqueci';LKS.certeza=false;lkDraw()},
+  lkVoltar:()=>{LKS.modo=LKS.antes||'abrir';lkDraw()},
+  lkApagar:async()=>{if(!LKS.certeza){LKS.certeza=true;lkDraw();return}
+    try{state=defaultState();rev=0;[STORE,'finm_meta','finm_wizard',LK_KEY].forEach(k=>localStorage.removeItem(k));await new Promise(r=>{const q=indexedDB.deleteDatabase('minhas_financas_mobile_db');q.onsuccess=q.onerror=q.onblocked=r})}catch(e){}
+    location.replace(location.pathname)},
+  lockMenu:()=>{closeModal();view='settings';render();setTimeout(()=>{const e=[...document.querySelectorAll('#view h3')].find(h=>h.textContent.includes('Bloqueio'));e&&e.scrollIntoView({block:'start'})},60)}
+});
+{const _vs=VIEWS.settings;VIEWS.settings=()=>lkCard()+_vs();}
+lkLock();   // já abre travado, antes de mostrar qualquer dado
+
 /* ============================================================
    FX 3D — camada de animações (pode ser desligada em Mais › Animações 3D)
    Só usa transform/opacity (leve para o celular) e respeita "reduzir movimento".
