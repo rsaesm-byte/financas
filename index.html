@@ -234,6 +234,37 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 [data-theme=dark] .bnav button.on svg{filter:drop-shadow(0 0 6px rgba(242,193,78,.45))}
 [data-theme=dark] .mrow.sel{background:var(--gold-bg);box-shadow:0 0 0 1px var(--gold-bd) inset;border-radius:12px}
 [data-theme=dark] .chip.on .dot{box-shadow:0 0 0 2px rgba(0,0,0,.25)}
+/* ============ MANUAL ============ */
+.man-hero input{width:100%;margin-top:6px;font-size:16px;padding:13px 14px;border-radius:14px;border:0;background:rgba(255,255,255,.95);color:#162033;outline:none}
+.man-hero .btn{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.4);color:#fff}
+.man-grid{display:grid;gap:10px;align-items:start}
+@media(min-width:900px){.man-grid{grid-template-columns:1fr 1fr}.man-passos{display:grid;grid-template-columns:1fr 1fr;column-gap:18px}.man-gloss{grid-template-columns:1fr 1fr}}
+.man-t{background:var(--panel);border:1px solid var(--border);border-radius:16px;overflow:hidden;transition:border-color .2s,box-shadow .2s}
+.man-t[open]{border-color:var(--sel-bd,var(--gold-bd,var(--accent)));box-shadow:0 8px 26px rgba(0,0,0,.18)}
+.man-t summary,.man-faq summary{list-style:none;display:flex;gap:12px;align-items:center;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.man-t summary{padding:14px}
+.man-t summary::-webkit-details-marker,.man-faq summary::-webkit-details-marker{display:none}
+.man-ic{width:42px;height:42px;border-radius:13px;background:var(--panel2);display:grid;place-items:center;font-size:20px;flex:none}
+.man-tt{flex:1;min-width:0;display:grid;gap:2px}.man-tt small{color:var(--muted);font-size:12px}
+.man-tt small i{font-style:normal;background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:1px 6px}
+.man-ok{color:var(--ok);font-weight:800}
+.man-ch{color:var(--muted);font-size:20px;transition:transform .2s;flex:none}
+details[open]>summary .man-ch{transform:rotate(90deg)}
+.man-b{padding:0 14px 16px;animation:fxCoach .3s ease-out;transform-origin:50% 0}
+.man-b p{margin:0 0 10px;color:var(--muted)}
+.man-ol{list-style:none;counter-reset:p;margin:0 0 12px;padding:0;display:grid;gap:10px}
+.man-ol li{counter-increment:p;position:relative;padding-left:38px;line-height:1.45;min-height:26px}
+.man-ol li::before{content:counter(p);position:absolute;left:0;top:-1px;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:800;background:var(--sel-bg,var(--gold-bg,var(--panel2)));color:var(--sel,var(--gold,var(--accent)));border:1px solid var(--sel-bd,var(--gold-bd,var(--border)))}
+.man-dica{background:var(--panel2);border-radius:12px;padding:10px 12px;margin-bottom:12px;font-size:13.5px}
+.man-dica ul{margin:6px 0 0;padding-left:18px;display:grid;gap:5px}
+.man-faq{border-bottom:1px solid var(--border)}.man-faq:last-child{border:0}
+.man-faq summary{padding:13px 2px;font-weight:600;justify-content:space-between}
+.man-faq p{margin:0 2px 14px;color:var(--muted);line-height:1.5}
+.man-gloss{display:grid;gap:10px}.man-gloss div{display:grid;gap:2px}.man-gloss span{color:var(--muted);font-size:13.5px}
+kbd{background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:1px 6px;font-size:12px}
+#tour{position:fixed;inset:0;z-index:9000}
+.tour-furo{position:fixed;border-radius:16px;box-shadow:0 0 0 9999px rgba(0,0,0,.72),0 0 0 3px var(--sel,var(--gold,var(--accent))),0 0 26px var(--sel,var(--gold,var(--accent)));transition:all .3s cubic-bezier(.2,.9,.3,1);pointer-events:none}
+.tour-cx{position:fixed;width:min(320px,calc(100vw - 24px));background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:14px;box-shadow:0 18px 44px rgba(0,0,0,.5);animation:fxCoach .3s ease-out}
 /* ============ BLOQUEIO ============ */
 #lock{position:fixed;inset:0;z-index:9999;background:var(--bg);display:grid;place-items:center;padding:calc(env(safe-area-inset-top) + 20px) 22px calc(env(safe-area-inset-bottom) + 20px);overflow:auto}
 #lock::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 50% 18%,color-mix(in srgb,var(--accent) 22%,transparent),transparent 60%);pointer-events:none}
@@ -562,7 +593,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.13-4';
+const APP_VERSAO='2026.11.13-5';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -713,17 +744,19 @@ const IC={
  bills:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 15l2 2 4-4"/>',
  report:'<path d="M6 2h9l5 5v15H6zM14 2v6h6M9 13h6M9 17h6"/>',
  invest:'<path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/>',
+ manual:'<circle cx="12" cy="12" r="9"/><path d="M9.5 9.2a2.6 2.6 0 1 1 3.6 2.4c-.8.4-1.1 1-1.1 1.9"/><circle cx="12" cy="17" r=".7"/>',
  learn:'<path d="M2 7l10-4 10 4-10 4z"/><path d="M6 9v5c0 1.7 2.7 3 6 3s6-1.3 6-3V9"/><path d="M22 7v6"/>',
  profile:'<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>',
  settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'
 };
+Object.assign(IC,{anual:IC.report,fechar:IC.calendar,dividir:IC.profile,contas:IC.vale});
 const ico=n=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${IC[n]}</svg>`;
 const NAV=[
  ['sep','Visão geral'],['home','Início'],['dashboard','Dashboard'],['review','Revisão do período'],['report','Relatório do mês'],['anual','Ano & assinaturas'],['fechar','Fechar o mês'],['dividir','Dividir despesas'],
  ['sep','Planejamento'],['budget','Renda & Orçamento'],['compare','Planejado × Real'],['expenses','Gastos'],['contas','Contas e saldos'],['bills','Contas fixas'],['vale','Vale-alimentação'],
  ['sep','Compromissos'],['debts','Dívidas & Financiamentos'],['cards','Cartões de crédito'],['goals','Metas & Poupança'],
  ['sep','Coach'],['invest','Investir'],['learn','Aprender'],['profile','Meu perfil'],
- ['sep','Sistema'],['settings','Configurações']
+ ['sep','Sistema'],['manual','Manual'],['settings','Configurações']
 ];
 const TITLES=Object.fromEntries(NAV.filter(n=>n[0]!=='sep'));
 function renderNav(){
@@ -747,7 +780,7 @@ function openMore(){
    ${sec('Visão geral',it('dashboard','Dashboard')+it('review','Revisão do período')+it('report','Relatório do mês')+it('anual','Ano & assinaturas','report')+it('fechar','Fechar o mês','calendar'))}
    ${sec('Planejamento',it('contas','Contas e saldos','vale')+it('budget','Renda & Orçamento')+it('compare','Planejado × Real')+it('bills','Contas fixas'))}
    ${sec('Compromissos',it('debts','Dívidas')+it('cards','Cartões')+it('goals','Metas & Reservas')+it('dividir','Dividir despesas','profile'))}
-   ${sec('Sistema',`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme',state.settings.theme==='dark'?'Tema claro':'Tema escuro','theme','theme')+
+   ${sec('Sistema',it('manual','Manual e ajuda','manual')+`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme',state.settings.theme==='dark'?'Tema claro':'Tema escuro','theme','theme')+
      it('todayM','Ir para o mês atual','calendar','todayM')+(installEvt?it('install','Instalar app','install','installApp'):''))}
   </div></div><footer><button type="button" class="btn" data-act="closeModal">Fechar</button></footer>`;
   f.onsubmit=e=>e.preventDefault();
@@ -3040,6 +3073,181 @@ Object.assign(ACT,{
   fotoDel:async id=>{try{await kvSet('foto:'+id,undefined)}catch(e){}const e=find(state.expenses,id);if(e&&e.foto){delete e.foto;save()}fotoPinta(id)}
 });
 Object.assign(VIEWS,{anual:vAnual,fechar:vFechar,dividir:vDividir});
+
+/* ============================================================
+   MANUAL INTERATIVO — busca, primeiros passos, tópicos, tour guiado e dúvidas
+   Funciona no celular (barra de baixo / Mais) e no computador (menu lateral).
+   ============================================================ */
+const MAN_AREAS=[['todas','Tudo'],['dia','📲 Dia a dia'],['contas','🏦 Contas e cartões'],['plan','📋 Planejamento'],['futuro','🌱 Dívidas, metas e investimentos'],['analise','📊 Análises'],['sistema','⚙️ Sistema e segurança']];
+const manLidos=()=>{try{return JSON.parse(localStorage.getItem('finm_manual'))||{}}catch(e){return{}}};
+const manMenu=()=>isMobile()?'Mais':'Menu lateral';
+const MAN=[
+ {id:'inicio',a:'dia',ic:'🏠',t:'Tela Início: o resumo de tudo',go:['nav','home','Abrir o Início'],onde:['Início'],
+  o:'É o painel do dia: mostra quanto você tem, quanto ainda pode gastar e o que vence em breve.',
+  p:['<b>Seu dinheiro hoje</b>: saldo das contas, do vale e o limite livre de cada cartão. Toque em qualquer linha para editar.','<b>Próximos 30 dias</b>: contas, faturas e rendas em ordem de data.','<b>Ainda pode gastar</b>: o que resta do orçamento de Necessidades + Desejos e quanto dá por dia.','Mais abaixo: contas a pagar, categorias perto do limite, últimos lançamentos, seu perfil e alertas.'],
+  d:['Para trocar de mês use as setas ‹ › no topo. Tocar no nome do mês volta para o mês atual.']},
+ {id:'lancar',a:'dia',ic:'➕',t:'Lançar um gasto em 3 toques',go:['quickAdd','','Lançar um gasto agora'],onde:['botão +'],
+  o:'O gesto mais importante do app. Quanto mais você lança no dia, mais certo fica todo o resto.',
+  p:['Toque no <b>+</b> (no computador: botão <b>+ Lançar gasto</b> no topo).','Digite o <b>valor</b>.','Toque na <b>categoria</b> — as que você mais usa aparecem primeiro.','Toque na <b>forma de pagamento</b>: Pix, Débito, Dinheiro, 🧺 vale ou 💳 um cartão de crédito (com nº de parcelas).','Toque em <b>Salvar</b>. O coach comenta e aparece o botão <b>Desfazer</b>.'],
+  d:['<b>Frase rápida:</b> no campo do topo escreva ou dite “mercado 85 no pix” e toque em ➜.','<b>Colar notificação:</b> copie o aviso do banco e toque em 📋 — o app lê valor e loja.','Com várias contas, o app pergunta de qual conta o dinheiro saiu.','<b>Mais opções</b> abre o formulário completo (descrição, data, grupo).']},
+ {id:'gastos',a:'dia',ic:'🧾',t:'Ver, editar e apagar gastos',go:['nav','expenses','Abrir Gastos'],onde:['Gastos'],
+  o:'A lista de tudo o que foi lançado no mês, agrupada por dia, incluindo as parcelas de cartão que caem naquela fatura.',
+  p:['Use a <b>busca</b> e os filtros de grupo e forma de pagamento.','<b>Toque num lançamento</b> para editar.','Dentro da edição: 🗑 apaga, ⧉ duplica e 📷 anexa a foto do comprovante.'],
+  d:['A foto do comprovante fica só naquele aparelho (não sincroniza), para não pesar os dados.','Apagou sem querer? O aviso que aparece embaixo tem <b>Desfazer</b>.']},
+ {id:'coach',a:'dia',ic:'🤖',t:'Coach: o comentário depois de cada gasto',go:['nav','learn','Abrir Aprender'],onde:[manMenu(),'Aprender'],
+  o:'Depois de salvar, um cartão mostra como ficou a categoria e dá uma dica prática.',
+  p:['🟢 <b>Dentro do budget</b>: quanto resta e quanto dá por dia.','🟡 <b>No limite / ritmo acelerado</b>: você está gastando mais rápido que o mês.','🔴 <b>Acima do budget</b>: quanto passou e o que fazer.','🟠 <b>Fora do orçamento</b>: a categoria não tem valor planejado — há um botão para criar.'],
+  d:['Para ligar ou desligar: '+manMenu()+' › Coach nos gastos.']},
+ {id:'vale',a:'dia',ic:'🧺',t:'Vale-alimentação / refeição',go:['nav','vale','Abrir o Vale'],onde:['Vale'],
+  o:'O vale funciona como uma carteira separada, com recarga automática todo mês.',
+  p:['Cadastre o vale: nome, valor mensal e dia da recarga.','Ao lançar um gasto, escolha <b>🧺 nome do vale</b> como pagamento.','O saldo desce sozinho e o app mostra quanto dá para gastar por dia até a próxima recarga.'],d:[]},
+ {id:'contas',a:'contas',ic:'🏦',t:'Contas e saldos (vários bancos)',go:['nav','contas','Abrir Contas e saldos'],onde:[manMenu(),'Contas e saldos'],
+  o:'Cadastre cada conta — corrente, poupança, carteira digital, dinheiro — com o saldo de hoje.',
+  p:['Toque em <b>+ Conta</b>, escolha o banco e o tipo e digite o saldo que aparece no app do banco.','Marque <b>⭐ Conta principal</b> na que você mais usa: lançamentos sem conta escolhida caem nela.','Com <b>“atualizar sozinho”</b> ligado, o saldo muda com os gastos (Pix/débito/boleto), as rendas com data e as faturas pagas por aquela conta.','De vez em quando, toque na conta e <b>confira com o banco</b> para corrigir diferenças.'],
+  d:['<b>⇄ Transferir</b> move dinheiro entre duas contas sem contar como gasto.','<b>Patrimônio líquido</b> = contas + investimentos + bens − dívidas.']},
+ {id:'cartoes',a:'contas',ic:'💳',t:'Cartões de crédito, limite e faturas',go:['nav','cards','Abrir Cartões'],onde:[manMenu(),'Cartões'],
+  o:'Cada cartão tem limite, dia de fechamento, dia de vencimento e a conta que paga a fatura.',
+  p:['Cadastre o cartão em <b>+ Cartão</b>.','Ao lançar um gasto, escolha <b>💳 Crédito — nome do cartão</b> e o número de parcelas.','A compra <b>desconta do limite</b> e entra na fatura certa, de acordo com a data e o fechamento.','No vencimento, o valor da fatura sai da conta que você indicou.'],
+  d:['No Início, cada cartão mostra o <b>limite livre</b> e uma barra de uso (amarela a partir de 70%, vermelha a partir de 90%).','Toque no cartão para editar ou apagar. Apagar o cartão apaga as compras dele.']},
+ {id:'orcamento',a:'plan',ic:'📋',t:'Renda & Orçamento (as abas)',go:['budTab','renda','Abrir Renda & Orçamento'],onde:[manMenu(),'Renda & Orçamento'],
+  o:'Onde você diz quanto entra e dá um destino para cada real. As abas separam: Renda, Needs, Wants, Savings, Poupança, Investimentos e Reserva.',
+  p:['<b>Renda</b>: cadastre cada fonte (fixa ou variável) e ajuste as porcentagens dos 3 grupos.','<b>Needs / Wants / Savings</b>: crie as categorias com o valor planejado. O gasto real aparece ao lado.','Em cada categoria: <b>＋ Lançar · ✎ Editar · 🗑 Apagar</b>.','Mês novo? Use <b>Copiar do mês anterior</b>.'],
+  d:['Categoria marcada <b>“não orçado”</b> veio de um gasto com nome diferente: use <b>Editar</b> para juntar com a categoria certa.','Renomear uma categoria pode valer para todo o histórico (opção já marcada).','<b>💡 Sugerir valores</b> usa a média dos seus últimos meses.']},
+ {id:'fixas',a:'plan',ic:'📅',t:'Contas fixas e vencimentos',go:['nav','bills','Abrir Contas fixas'],onde:[manMenu(),'Contas fixas'],
+  o:'Aluguel, internet, luz: contas que se repetem. O app avisa o que está para vencer.',
+  p:['Cadastre a conta com valor, dia do vencimento e categoria.','Quando pagar, toque em <b>Pagar</b>: o gasto é lançado sozinho na categoria.','As contas em aberto aparecem no Início e em <b>Próximos 30 dias</b>.'],d:[]},
+ {id:'fechar',a:'plan',ic:'🗓',t:'Fechar o mês em 5 minutos',go:['nav','fechar','Abrir Fechar o mês'],onde:[manMenu(),'Fechar o mês'],
+  o:'Um roteiro de 5 passos para encerrar o mês e preparar o próximo.',
+  p:['Veja como foi: renda, gastos, poupado e o que sobrou.','Confira onde passou do planejado e, se quiser, ajuste o orçamento do mês seguinte com um toque.','Resolva as pendências (contas sem pagamento, gastos fora do orçamento).','Copie as categorias e rendas fixas para o próximo mês.','Guarde uma cópia e toque em <b>Concluir</b>.'],
+  d:['Nos primeiros 10 dias do mês, o Início lembra você de fechar o mês anterior.']},
+ {id:'dividas',a:'futuro',ic:'⛓',t:'Dívidas e financiamentos',go:['nav','debts','Abrir Dívidas'],onde:[manMenu(),'Dívidas'],
+  o:'Cadastre cada dívida com parcela, total de parcelas, juros e, se for um bem (carro, casa), o valor dele.',
+  p:['Cadastre a dívida e vá marcando as parcelas pagas.','Em <b>Investir › Programa › Plano de quitação</b>, simule quanto tempo e juros você economiza pagando um pouco a mais.'],d:[]},
+ {id:'metas',a:'futuro',ic:'🎯',t:'Metas e reservas com destino',go:['nav','goals','Abrir Metas'],onde:[manMenu(),'Metas & Reservas'],
+  o:'Metas têm valor e prazo. Reservas com destino guardam um pouco por mês para gastos que você sabe que virão (IPVA, revisão do carro).',
+  p:['Crie a meta com valor-alvo e prazo: o app calcula quanto guardar por mês.','Use <b>+ Aporte</b> sempre que guardar dinheiro.','Uma meta com “reserva” ou “emergência” no nome conta como sua reserva de emergência.'],d:[]},
+ {id:'investir',a:'futuro',ic:'📈',t:'Investir e o programa “Para onde foi meu dinheiro?”',go:['invTab','prog','Abrir Investir'],onde:[manMenu(),'Investir'],
+  o:'Seis abas: Programa, Guia, Perfil, Carteira, Simular e Segurança.',
+  p:['<b>Programa</b>: 7 etapas, do diagnóstico à aposentadoria. O app marca sozinho o que você já cumpriu.','<b>Guia</b>: os tipos de investimento do Brasil, com risco, imposto, FGC e cuidados.','<b>Perfil</b>: 7 perguntas definem se você é conservador, moderado ou arrojado.','<b>Carteira</b>: registre seus investimentos; o app avisa sobre FGC, vencimentos e distribuição.','<b>Simular</b>: juros compostos e aposentadoria.','<b>Segurança</b>: sinais de golpe e checklist antes de investir.'],
+  d:['O conteúdo é educativo. Não é recomendação individual de investimento.']},
+ {id:'aprender',a:'futuro',ic:'🎓',t:'Aprender e Meu perfil',go:['nav','profile','Abrir Meu perfil'],onde:[manMenu(),'Aprender / Meu perfil'],
+  o:'Aulas curtas com os seus números e uma nota de 0 a 100 para a sua saúde financeira.',
+  p:['<b>Aprender</b>: 12 aulas de 2 a 4 minutos, cada uma com um exercício.','<b>Meu perfil</b>: nota em 5 pilares (poupar, gastos, dívidas, proteção, planejamento), o que mudou nos últimos meses e próximos passos.'],d:[]},
+ {id:'analises',a:'analise',ic:'📊',t:'Dashboard, Revisão e Relatório do mês',go:['nav','dashboard','Abrir o Dashboard'],onde:[manMenu(),'Visão geral'],
+  o:'Três formas de olhar os números do mês.',
+  p:['<b>Dashboard</b>: gráficos de renda, gastos e categorias.','<b>Revisão do período</b>: como foi o dia, a semana, a quinzena ou o mês.','<b>Relatório do mês</b>: nota de 0 a 100, indicadores, dicas e opção de imprimir.','<b>Planejado × Real</b>: categoria por categoria.'],d:[]},
+ {id:'anual',a:'analise',ic:'📆',t:'Ano, assinaturas e patrimônio',go:['nav','anual','Abrir Ano & assinaturas'],onde:[manMenu(),'Ano & assinaturas'],
+  o:'A visão do ano inteiro e os gastos que se repetem todo mês.',
+  p:['Veja renda, gastos e poupança mês a mês e as maiores categorias do ano.','<b>Assinaturas</b>: gastos com o mesmo nome em 3 meses ou mais, com o custo por ano.','<b>Patrimônio líquido</b>: o app guarda um retrato por mês e desenha a evolução.'],
+  d:['Para o app reconhecer uma assinatura, lance sempre com o mesmo nome.']},
+ {id:'dividir',a:'analise',ic:'🤝',t:'Dividir despesas com alguém',go:['nav','dividir','Abrir Dividir despesas'],onde:[manMenu(),'Dividir despesas'],
+  o:'Um caderno de “quem deve quem”.',
+  p:['Toque em <b>+ Despesa</b>: com quem, o que foi, valor total, quem pagou e a sua parte em %.','O app soma e mostra o saldo com cada pessoa.','Quando acertarem, toque em <b>Acertar</b>.'],
+  d:['É separado do orçamento: a sua parte do gasto você lança normalmente no +.']},
+ {id:'sync',a:'sistema',ic:'☁️',t:'Sincronizar celular e computador',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Configurações','Sincronização'],
+  o:'Com um token do GitHub, todos os seus aparelhos mostram os mesmos dados, automaticamente.',
+  p:['Em Configurações, toque no link que abre o GitHub (já com <b>gist</b> marcado).','Escolha <b>No expiration</b>, confira que só <b>gist</b> está marcado e gere o token.','Copie o código <code>ghp_…</code>, cole no app e toque em <b>Conectar</b>.','Nos outros aparelhos, abra o mesmo endereço do app e conecte com o <b>mesmo token</b>.'],
+  d:['☁️✓ no topo = em dia. ☁️⚠️ = erro (toque para ver).','O token é como uma senha: não mande por WhatsApp ou e-mail. Se vazar, apague no GitHub e gere outro.','Sincroniza ao abrir, ao voltar ao app, a cada minuto e logo depois de cada alteração.']},
+ {id:'backup',a:'sistema',ic:'💾',t:'Onde os dados ficam e como fazer backup',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Configurações'],
+  o:'Os dados ficam no seu aparelho, dentro do navegador. O GitHub guarda só o programa.',
+  p:['Cada alteração é salva na hora.','<b>Compartilhar backup</b> gera um arquivo .json que você pode mandar para o Google Drive.','<b>Importar backup</b> traz os dados de volta, juntando sem duplicar.'],
+  d:['Cada navegador tem a sua “gaveta”: os dados do Firefox não aparecem no Chrome. Use a sincronização ou o backup para levar de um para o outro.','Sem sincronização, faça backup toda semana — o Início lembra você.']},
+ {id:'bloqueio',a:'sistema',ic:'🔒',t:'Bloqueio: senha, padrão e digital',go:['lockMenu','','Abrir Bloqueio'],onde:[manMenu(),'Bloqueio'],
+  o:'Tranca o app para quem pegar o seu aparelho.',
+  p:['Faça um backup (ou ligue a sincronização) antes.','Escolha <b>Usar senha</b> ou <b>Usar padrão</b> e confirme duas vezes.','Se quiser, ative a <b>👆 Digital</b>: ela é pedida sozinha ao abrir.','Escolha quando bloquear: ao sair do app, após 1 ou 5 minutos.'],
+  d:['<b>Esqueceu?</b> Não há recuperação: o botão “Esqueci” apaga os dados do aparelho. Com a sincronização ligada, basta conectar o token de novo.','O bloqueio vale só naquele aparelho e não protege o arquivo de backup.']},
+ {id:'instalar',a:'sistema',ic:'📲',t:'Instalar, atualizar e trocar o ícone',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Atualizar o app'],
+  o:'O app pode ser instalado na tela inicial e funciona sem internet.',
+  p:['<b>Celular:</b> abra o endereço no navegador › menu ⋮ › <b>Instalar</b> (ou “Adicionar à tela inicial”).','<b>Computador:</b> é só abrir o endereço; no Chrome/Edge há um ícone de instalar na barra de endereço.','<b>Atualizar:</b> '+manMenu()+' › 🔄 Atualizar o app. Seus dados não são apagados.'],
+  d:['Use sempre pelo ícone instalado: a aba comum do navegador guarda os dados separados.']},
+ {id:'aparencia',a:'sistema',ic:'🎨',t:'Tema, animações e gestos',go:['theme','','Trocar o tema agora'],onde:[manMenu()],
+  o:'Deixe o app do seu jeito.',
+  p:['<b>Tema claro/escuro</b>: '+manMenu()+' › Tema.','<b>Animações 3D</b>: '+manMenu()+' › ✨ Animações 3D (ligar/desligar).','<b>Fechar telas</b>: arraste a folha para baixo, use o botão voltar ou toque fora dela.'],d:[]}
+];
+const MAN_FAQ=[
+ ['Lancei um gasto e ele não apareceu.','Confira o mês no topo: o gasto aparece no mês da data dele. Compras no cartão aparecem no mês da <b>fatura</b>, não no da compra.'],
+ ['Uma categoria aparece duas vezes, uma delas como “não orçado”.','Os nomes estão diferentes (um espaço, um hífen). Em Renda & Orçamento, toque em <b>Editar</b> na “não orçado” e escolha o nome da categoria certa — os gastos passam para ela.'],
+ ['O saldo da conta não bate com o banco.','O saldo é uma estimativa feita com o que você lança. Toque na conta, digite o saldo real do banco e salve: a conta recomeça dali.'],
+ ['O celular não mostra a versão nova.','Vá em '+manMenu()+' › 🔄 Atualizar o app. Se o botão não aparecer, abra o endereço no navegador comum, recarregue a página e tente de novo.'],
+ ['Troquei de navegador e os dados sumiram.','Eles continuam no navegador antigo. Ligue a sincronização nos dois (mesmo token) ou faça backup em um e importe no outro.'],
+ ['Posso usar no computador?','Sim, é o mesmo endereço. No computador o menu fica na lateral e as tabelas ficam largas; no celular, o menu fica embaixo e as tabelas viram cartões.'],
+ ['Meus dados ficam públicos no GitHub?','Não. O repositório guarda só o programa. Com a sincronização, os dados vão para um Gist <b>privado</b> da sua conta.'],
+ ['Esqueci a senha do bloqueio.','Use “Esqueci” na tela de bloqueio: apaga os dados daquele aparelho. Depois conecte a sincronização de novo ou importe o backup.'],
+ ['A digital não é pedida.','Depende de o navegador liberar o leitor para sites. Se não liberar, use a senha ou o padrão; no Chrome o suporte costuma ser melhor.']
+];
+const MAN_GLOSS=[['Needs (Necessidades)','O que não dá para cortar sem prejuízo: moradia, mercado, contas, transporte.'],['Wants (Desejos)','O que é opcional: lazer, restaurante, assinaturas, compras.'],['Savings (Poupança)','O que você guarda: reserva, metas, investimentos.'],['Budget','O valor planejado para uma categoria no mês.'],['Fatura','A conta mensal do cartão, com as compras feitas até o dia do fechamento.'],['Limite livre','Limite do cartão menos tudo o que ainda falta pagar (incluindo parcelas futuras).'],['Reserva de emergência','De 3 a 6 meses das suas Necessidades, guardados para imprevistos.'],['Token','Código gerado no GitHub que autoriza o app a guardar seus dados na sua conta.']];
+function manPassos(){
+  const ym=todayYM();let inst=false;try{inst=standalone()}catch(e){}
+  return[
+   ['Cadastrar sua renda',incomeTotal(ym)>0,'budTab','renda','Renda & Orçamento › Renda'],
+   ['Montar o orçamento do mês',!!(state.months[ym]&&month(ym).budget.length),'budTab','needs','Crie as categorias de Needs, Wants e Savings'],
+   ['Cadastrar suas contas e saldos',(state.contas||[]).length>0,'nav','contas','Uma para cada banco'],
+   ['Cadastrar seus cartões',state.cards.length>0,'nav','cards','Com limite, fechamento e vencimento'],
+   ['Lançar o primeiro gasto',state.expenses.length>0,'quickAdd','','Pelo botão +'],
+   ['Ligar a sincronização (ou fazer um backup)',!!SY.cfg||!!meta.exportAt,'nav','settings','Para nunca perder os dados'],
+   ['Proteger com bloqueio',!!lkGet(),'lockMenu','','Senha, padrão ou digital'],
+   ['Instalar o app neste aparelho',inst,'manAbre','instalar','Ícone na tela inicial']];
+}
+function vManual(){
+  const L=manLidos(),area=ui.manArea||'todas',P=manPassos(),feitos=P.filter(p=>p[1]).length,lidos=MAN.filter(t=>L[t.id]).length,prox=P.find(p=>!p[1]);
+  const topico=t=>`<details class="man-t" id="man-${t.id}" data-k="${esc(norm(t.t+' '+t.o+' '+t.p.join(' ')+' '+t.d.join(' ')).replace(/<[^>]+>/g,''))}" ontoggle="if(this.open)manLeu('${t.id}')">
+    <summary><span class="man-ic">${t.ic}</span><span class="man-tt"><b>${t.t}</b><small>${t.onde.map(x=>`<i>${x}</i>`).join(' › ')}</small></span>${L[t.id]?'<span class="man-ok" title="Lido">✓</span>':''}<span class="man-ch">›</span></summary>
+    <div class="man-b"><p>${t.o}</p><ol class="man-ol">${t.p.map(x=>`<li>${x}</li>`).join('')}</ol>${t.d.length?`<div class="man-dica"><b>💡 Dicas</b><ul>${t.d.map(x=>`<li>${x}</li>`).join('')}</ul></div>`:''}
+    <button class="btn primary" data-act="${t.go[0]}" data-id="${t.go[1]}">${t.go[2]} ›</button></div></details>`;
+  return`<div class="card hero man-hero"><div class="lbl">📖 Manual do Minhas Finanças</div><div class="big" style="font-size:24px">Como posso ajudar?</div>
+    <input type="search" id="manBusca" placeholder="🔎 Buscar: cartão, sincronizar, categoria…" oninput="manFiltra(this.value)" autocomplete="off">
+    <div class="row" style="margin-top:12px"><button class="btn" data-act="tour">🧭 Fazer o tour guiado (1 min)</button><span class="mini" style="margin:0"><span>${lidos} de ${MAN.length} tópicos lidos</span></span></div></div>
+  <div class="card man-sec"><div class="card-head"><div><h3>🚀 Comece por aqui</h3><div class="sub" style="margin:0">${feitos} de ${P.length} passos concluídos${prox?' · próximo: <b>'+prox[0]+'</b>':' 🎉'}</div></div></div>${bar(feitos/P.length*100,'ok')}
+    <div class="man-passos">${P.map((p,i)=>`<div class="mrow ${p===prox?'sel':''}" data-act="${p[2]}" data-id="${p[3]}"><div class="ic" style="background:${p[1]?'color-mix(in srgb,var(--ok) 22%,transparent)':'var(--panel2)'}">${p[1]?'✓':i+1}</div><div class="tx"><b>${p[0]}</b><small>${p[4]}</small></div><div class="vl">${p[1]?'':'›'}</div></div>`).join('')}</div></div>
+  <div class="chips man-sec" style="flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px">${MAN_AREAS.map(([k,l])=>`<button class="chip ${area===k?'on':''}" data-act="manArea" data-id="${k}" style="flex:none">${l}</button>`).join('')}</div>
+  <div class="man-grid" id="manGrid">${MAN.filter(t=>area==='todas'||t.a===area).map(topico).join('')}</div>
+  <div id="manVazio" class="card empty" hidden>Nada encontrado. Tente outra palavra — ou veja as dúvidas frequentes abaixo.</div>
+  <div class="card man-sec"><h3>❓ Dúvidas frequentes</h3>${MAN_FAQ.map(([q,r])=>`<details class="man-faq" data-k="${esc(norm(q+' '+r).replace(/<[^>]+>/g,''))}"><summary>${q}<span class="man-ch">›</span></summary><p>${r}</p></details>`).join('')}</div>
+  <div class="card man-sec"><h3>🔤 Palavras que o app usa</h3><div class="man-gloss">${MAN_GLOSS.map(([a,b])=>`<div><b>${a}</b><span>${b}</span></div>`).join('')}</div></div>
+  <div class="muted man-sec" style="font-size:12px;padding:0 4px">Versão ${APP_VERSAO} · O manual acompanha o aparelho: no celular os caminhos começam em “Mais”; no computador, no menu lateral.</div>`;
+}
+function manLeu(id){const L=manLidos();if(L[id])return;L[id]=1;try{localStorage.setItem('finm_manual',JSON.stringify(L))}catch(e){}const s=document.querySelector('#man-'+id+' summary .man-ch');if(s&&!s.previousElementSibling.classList.contains('man-ok'))s.insertAdjacentHTML('beforebegin','<span class="man-ok">✓</span>')}
+function manFiltra(q){q=norm(q);let n=0;document.querySelectorAll('#manGrid .man-t,.man-faq').forEach(e=>{const ok=!q||q.split(/\s+/).every(w=>e.dataset.k.includes(w));e.hidden=!ok;if(ok&&e.classList.contains('man-t'))n++});
+  const v=$('#manVazio');if(v)v.hidden=n>0||!q;document.querySelectorAll('.man-passos,.man-gloss').forEach(e=>e.closest('.card').hidden=!!q)}
+/* ---------- tour guiado: destaca cada parte da tela ---------- */
+let TOUR=null;
+function tourPassos(){return isMobile()?[
+  ['.card.money','Seu dinheiro hoje','Saldo das contas, do vale e limite livre dos cartões. Toque numa linha para editar.'],
+  ['.card.hero','Quanto ainda pode gastar','O que resta do orçamento do mês e quanto dá por dia.'],
+  ['.bnav .fab','Lançar gasto','O botão mais importante: valor, categoria, pagamento e Salvar.'],
+  ['.bnav button[data-id=expenses]','Gastos','Tudo o que foi lançado no mês. Toque num item para editar.'],
+  ['.bnav button[data-act=more]','Mais','Todas as outras telas: contas, orçamento, investir, configurações e este manual.'],
+  ['.month-nav','Mês','Use as setas para ver outro mês. Toque no nome para voltar ao atual.'],
+  ['#saveStatus','Salvamento','A bolinha mostra que está salvo. A nuvem ☁️ aparece quando a sincronização está ligada.']]
+ :[['.sidebar','Menu lateral','Todas as telas ficam aqui, separadas por assunto.'],
+  ['.card.money','Seu dinheiro hoje','Saldo das contas, do vale e limite livre dos cartões. Clique numa linha para editar.'],
+  ['.card.hero','Quanto ainda pode gastar','O que resta do orçamento do mês e quanto dá por dia.'],
+  ['.topbar [data-act=addExpense]','Lançar gasto','Abre o lançamento: valor, categoria, pagamento e Salvar.'],
+  ['.month-nav','Mês','Use as setas para ver outro mês.'],
+  ['#saveStatus','Salvamento','Mostra que está salvo. Clique para ver backup, sincronização e bloqueio.']]}
+function tourMostra(){
+  const T=TOUR;if(!T)return;let alvo=null;
+  for(;T.i<T.p.length;T.i++){const e=document.querySelector(T.p[T.i][0]);if(e&&e.getClientRects().length){alvo=e;break}}
+  if(!alvo){tourFim(true);return}
+  alvo.scrollIntoView({block:'center',behavior:'instant'});
+  const r=alvo.getBoundingClientRect(),m=6,o=$('#tour'),[,tit,txt]=T.p[T.i];
+  const top=Math.max(4,r.top-m),h=Math.min(innerHeight-8,r.height+2*m),left=Math.max(4,r.left-m),w=Math.min(innerWidth-8,r.width+2*m),embaixo=top+h+190<innerHeight||top<200;
+  o.innerHTML=`<div class="tour-furo" style="top:${top}px;left:${left}px;width:${w}px;height:${Math.min(h,innerHeight-top-4)}px"></div>
+   <div class="tour-cx" style="${embaixo?'top:'+Math.min(innerHeight-200,top+h+12)+'px':'bottom:'+(innerHeight-top+12)+'px'};left:${Math.max(12,Math.min(innerWidth-332,left))}px">
+    <div class="muted" style="font-size:12px">Passo ${T.i+1} de ${T.p.length}</div><h3 style="margin:2px 0 6px">${tit}</h3><p style="margin:0 0 12px;font-size:14px;line-height:1.45">${txt}</p>
+    <div class="row" style="justify-content:space-between"><button class="lk-link" data-act="tourFim" style="padding:6px 0">Pular</button><div class="row">${T.i?'<button class="btn sm" data-act="tourVolta">‹ Voltar</button>':''}<button class="btn sm primary" data-act="tourProx">${T.i===T.p.length-1?'Concluir ✓':'Próximo ›'}</button></div></div></div>`;
+}
+function tourFim(ok){const o=$('#tour');if(o)o.remove();if(TOUR&&ok===true)toast('Tour concluído ✓ O manual fica em '+manMenu()+' › Manual');TOUR=null;removeEventListener('resize',tourMostra)}
+Object.assign(ACT,{
+  manArea:id=>{ui.manArea=id;render()},
+  manAbre:id=>{view='manual';ui.manArea='todas';render();setTimeout(()=>{const e=$('#man-'+id);if(e){e.open=true;e.scrollIntoView({block:'start',behavior:'smooth'})}},80)},
+  tour:()=>{closeModal();curMonth=todayYM();view='home';render();window.scrollTo(0,0);let o=$('#tour');if(!o){o=document.createElement('div');o.id='tour';document.body.appendChild(o)}TOUR={i:0,p:tourPassos()};addEventListener('resize',tourMostra);setTimeout(tourMostra,isMobile()?900:300)},
+  tourProx:()=>{if(!TOUR)return;TOUR.i++;if(TOUR.i>=TOUR.p.length)tourFim(true);else tourMostra()},
+  tourVolta:()=>{if(TOUR&&TOUR.i>0){TOUR.i--;tourMostra()}},
+  tourFim:()=>tourFim(false)
+});
+VIEWS.manual=vManual;
+addEventListener('keydown',e=>{if(e.key==='/'&&view==='manual'&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)){e.preventDefault();const b=$('#manBusca');b&&b.focus()}if(e.key==='Escape'&&TOUR)tourFim(false)});
 
 /* ============================================================
    BLOQUEIO DO APP — senha, padrão desenhado ou impressão digital
