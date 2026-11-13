@@ -562,7 +562,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.13-1';
+const APP_VERSAO='2026.11.13-2';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -2328,7 +2328,9 @@ function vDinheiroHoje(){
     +(contas.length>mostrar.length?`<div class="mrow" data-act="nav" data-id="contas"><div class="ic" style="background:var(--panel2)">＋</div><div class="tx"><b>Mais ${contas.length-mostrar.length} conta(s)</b><small>${brl(sum(contas.filter(x=>!mostrar.includes(x)),x=>x.s.v))} · ver todas</small></div><div class="vl">›</div></div>`:'')
     :`<div class="mrow" data-act="editConta"><div class="ic" style="background:var(--panel2)">🏦</div><div class="tx"><b>Saldo em conta</b><small>Toque para informar o saldo do banco</small></div><div class="vl">—</div></div>`;
   h+=vales.map(({b,v})=>{const nx=benNext(b,ref);return`<div class="mrow" data-act="nav" data-id="vale"><div class="ic" style="background:${(b.cor||'#22c58b')}22">🧺</div><div class="tx"><b>${esc(b.nome)}</b><small>Recarga em ${fmtDate(nx)} · ${brl(Math.max(0,v)/Math.max(1,dDiff(ref,nx)))}/dia</small></div><div class="vl ${v<0?'neg':''}">${brl(v)}</div></div>`}).join('');
-  h+=cards.map(x=>`<div class="mrow" data-act="nav" data-id="cards"><div class="ic" style="background:${(x.c.cor||'#ff7a7a')}22">💳</div><div class="tx"><b>${esc(x.c.nome)}</b><small>Fatura vence ${fmtDate(x.venc)} · total em aberto ${brl(x.aberto)}${x.c.limite?' · limite livre '+brl(Math.max(0,x.c.limite-x.aberto)):''}</small></div><div class="vl neg">${brl(x.v)}</div></div>`).join('');
+  const totLim=sum(cards,x=>+x.c.limite||0),totLivre=sum(cards,x=>Math.max(0,(+x.c.limite||0)-x.aberto));
+  if(cards.length)h+=`<div class="stat-line" style="margin:12px 0 2px"><span>💳 Limite disponível nos cartões</span><b class="pos" style="font-size:17px">${brl(totLivre)}</b></div>`;
+  h+=cards.map(x=>{const lim=+x.c.limite||0,lv=Math.max(0,lim-x.aberto),uso=lim?x.aberto/lim*100:0;return`<div class="mrow" data-act="editCard" data-id="${x.c.id}" style="flex-wrap:wrap"><div class="ic" style="background:${(x.c.cor||'#ff7a7a')}22">💳</div><div class="tx"><b>${esc(x.c.nome)} <span class="muted" style="font-size:12px;font-weight:400">✎</span></b><small>Usado ${brl(x.aberto)} de ${brl(lim)} · fatura ${brl(x.v)} vence ${fmtDate(x.venc)}</small></div><div class="vl" style="text-align:right"><span class="${lv<=0?'neg':'pos'}">${brl(lv)}</span><div class="muted" style="font-size:11px;font-weight:600">livre</div></div><div style="flex:1 1 100%;padding-left:50px">${bar(uso,uso>=90?'bad':uso>=70?'warn':'ok')}</div></div>`}).join('');
   if(C.length&&cards.length)h+=`<div class="stat-line" style="margin-top:8px"><span>Saldo em conta − próximas faturas</span><b class="${totC-totFat<0?'neg':'pos'}">${brl(totC-totFat)}</b></div>`;
   if(cards.length>1)h+=`<div class="stat-line"><span>Dívida total nos cartões (com parcelas futuras)</span><b class="neg">${brl(totAb)}</b></div>`;
   return h+'</div>';
@@ -2513,6 +2515,7 @@ function cardForm(c){
     {name:'vencimento',label:'Dia de vencimento',type:'number',min:1,step:'1',value:c.vencimento},
     {name:'cor',label:'Cor',type:'color',value:c.cor}
   ],onRender:f=>{const n=f.elements.nome,cr=f.elements.cor;n.addEventListener('change',()=>{const b=BANCOS.find(x=>norm(n.value).startsWith(norm(x[0])));if(b&&isNew)cr.value=b[1]})},
+  extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelCard" data-id="${c.id}" title="Apagar cartão">🗑</button><button type="button" class="btn" data-act="nav" data-id="cards" title="Compras e faturas">Compras</button>`,
   onSave:d=>{if(isNew)state.cards.push({id:uid(),...d});else Object.assign(c,d);toast('Cartão salvo')}});
 }
 function purchaseForm(p,preset){
@@ -2645,6 +2648,7 @@ const ACT={
     {name:'valor',label:'Valor pago (R$)',type:'number',step:'0.01',value:d.parcela},{name:'date',label:'Data',type:'date',value:curMonth===todayYM()?todayISO():isoOf(curMonth,10)},
     {name:'qtd',label:'Quantidade de parcelas',type:'number',min:1,step:'1',value:1},{name:'lancar',label:'Lançar também como gasto do mês (categoria: '+(d.cat||'Dívidas')+')',type:'checkbox',value:true}],
     onSave:x=>{d.parcelasPagas=Math.min(+d.totalParcelas,(+d.parcelasPagas)+Math.max(1,x.qtd));if(x.lancar)state.expenses.push({id:uid(),desc:'Parcela — '+d.nome,valor:x.valor*Math.max(1,x.qtd),date:x.date,cat:d.cat||'Dívidas e financiamentos',tipo:tipoOfCat(d.cat)||'needs',pay:'Boleto'});toast('Parcela registrada')}})},
+  mDelCard:id=>{closeModal();setTimeout(()=>ACT.delCard(id),60)},
   addCard:()=>cardForm(),editCard:id=>cardForm(find(state.cards,id)),
   delCard:id=>confirmBox('Excluir este cartão e todas as compras dele?',()=>{tomb(id,...state.cardPurchases.filter(p=>p.cardId===id).map(p=>p.id));state.cards=state.cards.filter(x=>x.id!==id);state.cardPurchases=state.cardPurchases.filter(p=>p.cardId!==id)}),
   addPurchase:()=>purchaseForm(),editPurchase:id=>purchaseForm(find(state.cardPurchases,id)),
@@ -2792,7 +2796,7 @@ let LKS=null,lkBioBusy=false,lkSaiu=0;
 const lkTravado=()=>!!(LKS&&LKS.modo==='abrir');
 function lkHide(){const o=$('#lock');if(o)o.remove();LKS=null}
 function lkShow(modo,tipo,cb){LKS={modo,tipo,cb,first:null};lkDraw()}
-function lkLock(){const c=lkGet();if(!c||lkTravado())return;try{closeModal()}catch(e){}lkShow('abrir',c.tipo);if(c.bio)setTimeout(()=>lkBio(true),350)}
+function lkLock(){const c=lkGet();if(!c||lkTravado())return;try{closeModal()}catch(e){}lkShow('abrir',c.tipo);if(c.bio&&document.visibilityState==='visible')setTimeout(()=>lkBio(true),350)}
 function lkDraw(msg,erro){
   const c=lkGet()||{},S=LKS;let o=$('#lock');if(!o){o=document.createElement('div');o.id='lock';document.body.appendChild(o)}
   const T={abrir:['Minhas Finanças',S.tipo==='padrao'?'Desenhe seu padrão para entrar':'Digite sua senha para entrar'],
@@ -2810,7 +2814,7 @@ function lkDraw(msg,erro){
   else corpo=`<form id="lkForm" autocomplete="off"><input id="lkSenha" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Senha" enterkeyhint="go"><button class="btn primary" type="submit" style="width:100%;justify-content:center;margin-top:10px">${S.modo==='abrir'?'Entrar':'Continuar'}</button></form>`;
   o.innerHTML=`<div class="lk-box"><img src="icons/icon-192.png?v=7" alt="" class="lk-logo"><h2>${T[0]}</h2>
     <p class="lk-msg ${erro?'lk-erro':''}" id="lkMsg">${espera?'':msg||T[1]}</p>${corpo}
-    <div class="lk-links">${S.modo==='abrir'&&c.bio&&!espera?'<button class="btn" data-act="lkBio">👆 Usar impressão digital</button>':''}
+    <div class="lk-links">${S.modo==='abrir'&&c.bio&&!espera?'<button class="btn primary" data-act="lkBio" style="font-size:15px;padding:13px 18px">👆 Usar impressão digital</button>':''}
     ${S.modo==='abrir'||S.modo==='verifica'?'<button class="lk-link" data-act="lkEsqueci">Esqueci</button>':''}
     ${S.modo!=='abrir'&&S.modo!=='esqueci'?'<button class="lk-link" data-act="lkCancelar">Cancelar</button>':''}</div></div>`;
   if(erro){const b=o.querySelector('.lk-box');b.classList.add('lk-treme');try{navigator.vibrate&&navigator.vibrate(60)}catch(e){}}
@@ -2848,7 +2852,7 @@ async function lkBio(silencioso){
   const c=lkGet();if(!c||!c.bio||!lkTravado()||lkBioBusy)return;lkBioBusy=true;
   try{await navigator.credentials.get({publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)),allowCredentials:[{type:'public-key',id:unb64(c.bio)}],userVerification:'required',timeout:60000}});
     c.erros=0;c.ate=0;lkSet(c);lkHide()}
-  catch(e){if(!silencioso&&lkTravado())lkDraw('Não foi possível ler a digital. Use '+(c.tipo==='padrao'?'o padrão':'a senha')+'.',true)}
+  catch(e){if(lkTravado()){lkDraw(silencioso?(c.tipo==='padrao'?'Desenhe seu padrão — ou toque em "Usar impressão digital"':'Digite sua senha — ou toque em "Usar impressão digital"'):'Não foi possível ler a digital. Use '+(c.tipo==='padrao'?'o padrão':'a senha')+'.',!silencioso);const i=$('#lkSenha');i&&i.focus()}}
   finally{setTimeout(()=>lkBioBusy=false,600)}
 }
 async function lkBioAtivar(){
@@ -2866,7 +2870,7 @@ async function lkBioAtivar(){
 /* bloqueia ao sair do app */
 document.addEventListener('visibilitychange',()=>{const c=lkGet();if(!c)return;
   if(document.visibilityState==='hidden'){lkSaiu=Date.now();if(!(c.auto>0)&&!lkBioBusy)lkLock()}
-  else if(c.auto>0&&lkSaiu&&Date.now()-lkSaiu>=c.auto*60000)lkLock()});
+  else{if(c.auto>0&&lkSaiu&&Date.now()-lkSaiu>=c.auto*60000)lkLock();else if(lkTravado()&&c.bio&&!lkBioBusy)setTimeout(()=>lkBio(true),250)}});
 function lkCard(){
   const c=lkGet(),auto=c?c.auto||0:0;
   return`<div class="card"><div class="card-head"><div><h3>🔒 Bloqueio do app</h3><div class="sub">${c?'Ativo com <b>'+(c.tipo==='padrao'?'padrão desenhado':'senha')+'</b>'+(c.bio?' + <b>impressão digital</b>':''):'Desligado — qualquer pessoa com o celular desbloqueado abre o app'}</div></div>${c?'<span class="badge ok">Ativo</span>':'<span class="badge warn">Desligado</span>'}</div>
