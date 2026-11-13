@@ -562,7 +562,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.11-3';
+const APP_VERSAO='2026.11.13-1';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -2422,7 +2422,8 @@ function vSettings(){
    ============================================================ */
 function expenseForm(e,preset){
   const isNew=!e;e=e||Object.assign({date:curMonth===todayYM()?todayISO():isoOf(curMonth,1),tipo:'needs',pay:'Pix'},preset);
-  const payOpts=PAY.map(x=>[x,x]).concat(state.benefits.map(b=>['ben:'+b.id,'🧺 '+b.nome]));const payVal=e.benefitId?'ben:'+e.benefitId:e.pay;
+  const livre=c=>Math.max(0,(+c.limite||0)-cardUsed(c.id,todayYM()));
+  const payOpts=PAY.map(x=>[x,x]).concat(state.cards.length?state.cards.map(c=>['card:'+c.id,'💳 Crédito — '+c.nome]):[['card:new','💳 Cartão de crédito (cadastrar…)']],state.benefits.map(b=>['ben:'+b.id,'🧺 '+b.nome]));const payVal=e.benefitId?'ben:'+e.benefitId:e.pay;
   openForm({title:isNew?'Lançar gasto':'Editar gasto',fields:[
     {name:'desc',label:'Descrição',value:e.desc,required:true,full:true,placeholder:'Ex.: Conta do celular'},
     {name:'valor',label:'Valor (R$)',type:'number',step:'0.01',min:0,value:e.valor,required:true},
@@ -2431,8 +2432,19 @@ function expenseForm(e,preset){
     {name:'tipo',label:'Grupo',type:'select',options:tipoOpts,value:e.tipo},
     {name:'pay',label:'Forma de pagamento',type:'select',options:payOpts,value:payVal},
     ...((state.contas||[]).length>1?[{name:'contaId',label:'Saiu de qual conta?',type:'select',options:[['','⭐ Conta principal']].concat(state.contas.map(x=>[x.id,x.nome])),value:e.contaId||''}]:[]),
-    {type:'html',html:`<div class="muted" style="font-size:12px">Compras no cartão de crédito: lance em <b>Cartões</b> para que as parcelas caiam nas faturas certas.${state.benefits.length?' Pagou com o vale? Escolha 🧺 na forma de pagamento — desconta do saldo do vale.':''}</div>`}
-  ],onSave:d=>{if(e.fundId&&!isNew){const g=find(state.goals,e.fundId);if(g)g.guardado=Math.round(((+g.guardado)+(+e.valor)-(+d.valor))*100)/100;d.pay=e.pay}
+    {name:'parcelas',label:'Nº de parcelas (cartão de crédito)',type:'number',step:'1',min:1,value:1},
+    {type:'html',html:`<div id="payInfo" class="alert info" hidden style="margin:0"></div><div class="muted" style="font-size:12px">💳 Escolhendo um cartão de crédito, a compra desconta do <b>limite</b> e entra na fatura certa (com parcelas).${state.benefits.length?' 🧺 Vale: desconta do saldo do vale.':''}</div>`}
+  ],onRender:f=>{const pay=f.elements.pay,par=f.elements.parcelas,info=f.querySelector('#payInfo'),ct=f.elements.contaId;
+    const upd=()=>{const isC=pay.value.startsWith('card:'),c=isC?find(state.cards,pay.value.slice(5)):null;par.closest('label').hidden=!isC;if(ct)ct.closest('label').hidden=isC||pay.value.startsWith('ben:');
+      info.hidden=!c;if(c){const v=parseNum(f.elements.valor.value),l=livre(c),n=Math.max(1,Math.round(parseNum(par.value)||1)),ft=faturaDe(c.id,f.elements.date.value||todayISO());
+        info.className='alert '+(v>l?'bad':'info');info.innerHTML=`<div><b>${esc(c.nome)}</b> · limite livre <b>${brl(l)}</b> de ${brl(c.limite)}${v>0?`<br>Depois desta compra: <b>${brl(l-v)}</b>${v>l?' — passa do limite!':''}`:''}<br>1ª fatura: ${mLabel(ft,true)}${n>1&&v>0?' · '+n+'× de '+brl(v/n):''}</div>`}};
+    [pay,par,f.elements.valor,f.elements.date].forEach(x=>{x.addEventListener('input',upd);x.addEventListener('change',upd)});upd()},
+  onSave:d=>{const parc=Math.max(1,Math.round(d.parcelas||1));delete d.parcelas;
+    if(String(d.pay)==='card:new'){toast('Cadastre o cartão primeiro','err');setTimeout(()=>cardForm(),80);return false}
+    if(String(d.pay).startsWith('card:')&&!(e.fundId&&!isNew)){const cid=d.pay.slice(5),ft=faturaDe(cid,d.date),p={id:uid(),cardId:cid,desc:d.desc,valorTotal:d.valor,parcelas:parc,dataCompra:d.date,primeiraFatura:ft,cat:d.cat,tipo:d.tipo};
+      state.cardPurchases.push(p);if(!isNew){tomb(e.id);state.expenses=state.expenses.filter(y=>y!==e)}
+      const c=find(state.cards,cid);setTimeout(()=>{coachShow({cat:d.cat,tipo:d.tipo,valor:d.valor,date:d.date,ym:ft,valorMes:d.valor/parc,parcelas:parc},isNew?()=>{tomb(p.id);state.cardPurchases=state.cardPurchases.filter(y=>y!==p);save();render();toast('Lançamento desfeito')}:null,brl(d.valor)+' no '+(c?c.nome:'cartão'));if(c)toast('Limite livre do '+c.nome+': '+brl(livre(c)))},60);return}
+    if(e.fundId&&!isNew){const g=find(state.goals,e.fundId);if(g)g.guardado=Math.round(((+g.guardado)+(+e.valor)-(+d.valor))*100)/100;d.pay=e.pay}
     else if(String(d.pay).startsWith('ben:')){const b=find(state.benefits,d.pay.slice(4));d.benefitId=b?b.id:undefined;d.pay=b?b.nome:'Vale'}else d.benefitId=undefined;
     if(isNew){const x={id:uid(),criado:Date.now(),...d};state.expenses.push(x);setTimeout(()=>coachShow(x,()=>{tomb(x.id);state.expenses=state.expenses.filter(y=>y!==x);save();render();toast('Lançamento desfeito')},brl(x.valor)+' lançado'),60)}else{Object.assign(e,d);toast('Gasto salvo')}},
     extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelExpense" data-id="${e.id}" title="Excluir">🗑</button><button type="button" class="btn" data-act="dupExpense" data-id="${e.id}" title="Duplicar">⧉</button>`});
