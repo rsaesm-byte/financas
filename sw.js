@@ -1,7 +1,7 @@
 /* Service worker — Minhas Finanças (celular)
    Deixa o app abrir sem internet. Os DADOS não passam por aqui: ficam no IndexedDB/localStorage do aparelho.
    Ao publicar uma versão nova do app, troque o número de VERSAO para o celular baixar os arquivos novos. */
-const VERSAO = 'financas-celular-v20';
+const VERSAO = 'financas-celular-v21';
 const ARQUIVOS = [
   './', './index.html', './manifest.json',
   './icons/icon-192.png?v=7', './icons/icon-512.png?v=7', './icons/icon-maskable-512.png?v=7', './icons/apple-touch-icon.png?v=7',
@@ -24,7 +24,7 @@ self.addEventListener('fetch', e => {
   }
   // demais arquivos (ícones, Chart.js): cache primeiro
   e.respondWith(caches.match(req).then(hit => hit || fetch(req).then(r => {
-    if (r.ok && (req.url.startsWith(self.location.origin) || req.url.includes('cdn.jsdelivr.net'))) { const cp = r.clone(); caches.open(VERSAO).then(c => c.put(req, cp)); }
+    if (r.ok && (req.url.startsWith(self.location.origin) || req.url.includes('cdn.jsdelivr.net') || req.url.includes('fonts.googleapis.com') || req.url.includes('fonts.gstatic.com'))) { const cp = r.clone(); caches.open(VERSAO).then(c => c.put(req, cp)); }
     return r;
   })));
 });

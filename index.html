@@ -216,24 +216,54 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 @media(max-width:820px){.coach{left:10px;right:10px;width:auto;bottom:calc(80px + env(safe-area-inset-bottom))}}
 /* ===== Modo claro: seleção em caixa verde-dólar translúcida ===== */
 [data-theme=light]{--sel:#1f7a3f;--sel-bg:rgba(46,139,87,.12);--sel-bd:rgba(46,139,87,.55)}
-[data-theme=light] .chip.on,[data-theme=light] .more-item.on,[data-theme=light] .nav-btn.active{background:var(--sel-bg);border-color:var(--sel-bd);color:var(--sel);box-shadow:0 0 0 1px var(--sel-bd) inset,0 2px 10px rgba(46,139,87,.15)}
+[data-theme=light] .chip.on,[data-theme=light] .more-item.on,[data-theme=light] .nav-btn.active{background:var(--sel-bg);border-color:var(--sel-bd);color:var(--sel);box-shadow:0 0 0 1px var(--sel-bd) inset,0 2px 10px color-mix(in srgb,var(--sel) 15%,transparent)}
 [data-theme=light] .nav-btn.active{border:1px solid var(--sel-bd)}
 [data-theme=light] .nav-btn.active svg,[data-theme=light] .more-item.on svg{color:var(--sel)}
 [data-theme=light] .bnav button{position:relative}
 [data-theme=light] .bnav button.on{color:var(--sel)}
-[data-theme=light] .bnav button.on::before{content:'';position:absolute;inset:2px 6px;border-radius:14px;background:var(--sel-bg);border:1px solid var(--sel-bd);box-shadow:0 2px 10px rgba(46,139,87,.15);pointer-events:none}
+[data-theme=light] .bnav button.on::before{content:'';position:absolute;inset:2px 6px;border-radius:14px;background:var(--sel-bg);border:1px solid var(--sel-bd);box-shadow:0 2px 10px color-mix(in srgb,var(--sel) 15%,transparent);pointer-events:none}
 [data-theme=light] .mrow.sel{background:var(--sel-bg);box-shadow:0 0 0 1px var(--sel-bd) inset;border-radius:12px}
 /* ===== Modo noturno: seleção em caixa dourada translúcida ===== */
 [data-theme=dark]{--gold:#f2c14e;--gold-bg:rgba(242,193,78,.13);--gold-bd:rgba(242,193,78,.55)}
-[data-theme=dark] .chip.on,[data-theme=dark] .more-item.on,[data-theme=dark] .nav-btn.active{background:var(--gold-bg);border-color:var(--gold-bd);color:var(--gold);box-shadow:0 0 0 1px var(--gold-bd) inset,0 0 14px rgba(242,193,78,.18)}
+[data-theme=dark] .chip.on,[data-theme=dark] .more-item.on,[data-theme=dark] .nav-btn.active{background:var(--gold-bg);border-color:var(--gold-bd);color:var(--gold);box-shadow:0 0 0 1px var(--gold-bd) inset,0 0 14px color-mix(in srgb,var(--gold) 18%,transparent)}
 [data-theme=dark] .nav-btn.active{border:1px solid var(--gold-bd)}
 [data-theme=dark] .nav-btn.active svg,[data-theme=dark] .more-item.on svg{color:var(--gold)}
 [data-theme=dark] .bnav button{position:relative}
 [data-theme=dark] .bnav button.on{color:var(--gold)}
-[data-theme=dark] .bnav button.on::before{content:'';position:absolute;inset:2px 6px;border-radius:14px;background:var(--gold-bg);border:1px solid var(--gold-bd);box-shadow:0 0 14px rgba(242,193,78,.2);pointer-events:none}
-[data-theme=dark] .bnav button.on svg{filter:drop-shadow(0 0 6px rgba(242,193,78,.45))}
+[data-theme=dark] .bnav button.on::before{content:'';position:absolute;inset:2px 6px;border-radius:14px;background:var(--gold-bg);border:1px solid var(--gold-bd);box-shadow:0 0 14px color-mix(in srgb,var(--gold) 20%,transparent);pointer-events:none}
+[data-theme=dark] .bnav button.on svg{filter:drop-shadow(0 0 6px color-mix(in srgb,var(--gold) 45%,transparent))}
 [data-theme=dark] .mrow.sel{background:var(--gold-bg);box-shadow:0 0 0 1px var(--gold-bd) inset;border-radius:12px}
 [data-theme=dark] .chip.on .dot{box-shadow:0 0 0 2px rgba(0,0,0,.25)}
+/* ============ TEMAS (skins) ============ */
+body::before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;background:var(--bg-img,none)}
+h1,h2,h3,.hero .big,.kpi .value,.brand,.lk-box h2{font-family:var(--font-h,var(--font))}
+.card,.man-t,.coach{border-radius:var(--r-card,16px)}
+[data-skin=onix]{--bg:#000;--panel:#0b0b0c;--panel2:#151517;--border:#27272b;--text:#f5f5f6;--muted:#8d8d96;--accent:#2fd39a;--accent2:#12b981;--needs:#5aa9ff;--wants:#ff6fb1;--savings:#2fd39a;--ok:#2fd39a;--gold:#f1f1f3;--gold-bg:rgba(255,255,255,.08);--gold-bd:rgba(255,255,255,.55);--shadow:0 0 0 1px #1c1c1f;--font:'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;--r-card:12px;--hero:linear-gradient(140deg,#0c3b2c,#0b0b0c 75%)}
+[data-skin=onix] .card.hero{border:1px solid #1d5a45}
+[data-skin=onix] .btn.primary,[data-skin=onix] .bnav .fab i{color:#04130d!important}
+[data-skin=onix] .bnav .fab i{background:linear-gradient(135deg,#2fd39a,#9af2cf)}
+[data-skin=pergaminho]{--bg:#f3eee4;--panel:#fffdf8;--panel2:#f6f0e4;--border:#e2d8c6;--text:#2a2420;--muted:#7b7064;--accent:#b4532a;--accent2:#8f3f1e;--needs:#35618f;--wants:#b4532a;--savings:#4f7a4a;--ok:#4f7a4a;--warn:#b7791f;--bad:#b3362f;--sel:#8f3f1e;--sel-bg:rgba(180,83,42,.1);--sel-bd:rgba(180,83,42,.5);--shadow:0 6px 22px rgba(90,65,30,.1);--font-h:'Fraunces',Georgia,'Noto Serif',serif;--r-card:10px;--hero:linear-gradient(135deg,#2f241c,#7a3b1f);
+  --bg-img:radial-gradient(1200px 500px at 10% -10%,rgba(180,83,42,.07),transparent 60%),repeating-linear-gradient(0deg,rgba(90,65,30,.018) 0 1px,transparent 1px 4px)}
+[data-skin=pergaminho] h1,[data-skin=pergaminho] h2,[data-skin=pergaminho] h3{letter-spacing:-.01em}
+[data-skin=pergaminho] .bnav .fab i{background:linear-gradient(135deg,#b4532a,#7a3b1f)}
+[data-skin=aurora]{--bg:#0c0920;--panel:#16112d;--panel2:#201941;--border:#33295f;--text:#f0ebff;--muted:#a79dd0;--accent:#8b7bff;--accent2:#6a55f0;--needs:#5cc8ff;--wants:#ff7ad9;--savings:#5eead4;--ok:#5eead4;--gold:#7ef0e0;--gold-bg:rgba(126,240,224,.12);--gold-bd:rgba(126,240,224,.55);--shadow:0 10px 34px rgba(60,30,160,.35);--font:'Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;--r-card:20px;--hero:linear-gradient(135deg,#6a55f0,#c93fe0 55%,#22c5e0);
+  --bg-img:radial-gradient(700px 420px at 85% -5%,rgba(201,63,224,.22),transparent 65%),radial-gradient(620px 420px at -10% 30%,rgba(34,197,224,.16),transparent 65%),radial-gradient(700px 500px at 60% 110%,rgba(106,85,240,.25),transparent 65%)}
+[data-skin=aurora] .card:not(.hero){background:color-mix(in srgb,var(--panel) 86%,transparent);backdrop-filter:blur(10px)}
+[data-skin=aurora] .bnav .fab i{background:linear-gradient(135deg,#8b7bff,#ff7ad9)}
+[data-skin=dolar]{--accent:#1f8a4c;--accent2:#166c3a;--needs:#2f6fef;--savings:#1f8a4c;--hero:linear-gradient(135deg,#14532d,#1f8a4c 60%,#3fbf7a);--bg-img:radial-gradient(900px 420px at 100% -10%,rgba(31,138,76,.08),transparent 60%)}
+[data-skin=dolar] .bnav .fab i{background:linear-gradient(135deg,#1f8a4c,#3fbf7a)}
+[data-skin] .card.hero{background:var(--hero,linear-gradient(135deg,color-mix(in srgb,var(--accent) 85%,#000),color-mix(in srgb,var(--wants) 80%,#000)))}
+.skin-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:12px}
+.skin-card{all:unset;box-sizing:border-box;cursor:pointer;display:grid;gap:6px;padding:8px;border-radius:16px;border:2px solid var(--border);background:var(--panel2);transition:transform .15s,border-color .15s;-webkit-tap-highlight-color:transparent}
+.skin-card:active{transform:scale(.97)}
+.skin-card.on{border-color:var(--sel,var(--gold,var(--accent)));box-shadow:0 0 0 3px var(--sel-bg,var(--gold-bg,transparent))}
+.skin-pv{background:var(--b);border-radius:11px;padding:8px;display:grid;gap:6px;border:1px solid var(--d);overflow:hidden}
+.skin-hero{background:var(--h);border-radius:8px;padding:8px 9px;color:#fff;font-weight:800;font-size:14px;letter-spacing:-.02em;display:grid;gap:5px}
+.skin-hero i{height:4px;border-radius:9px;background:rgba(255,255,255,.3);position:relative;overflow:hidden}.skin-hero i::after{content:'';position:absolute;inset:0 38% 0 0;background:#fff;border-radius:9px}
+.skin-ln{background:var(--p);border:1px solid var(--d);border-radius:8px;padding:6px 8px;display:flex;justify-content:space-between;align-items:center;font-size:10.5px;color:var(--t)}
+.skin-ln em{font-style:normal;color:var(--m)}
+.skin-nv{display:flex;gap:5px;justify-content:center}.skin-nv i{width:22px;height:12px;border-radius:5px;background:var(--p);border:1px solid var(--d)}.skin-nv i.on{background:color-mix(in srgb,var(--s) 22%,transparent);border-color:var(--s)}.skin-nv i.fab{background:var(--a);border-color:var(--a);border-radius:50%;width:14px;height:14px;margin-top:-1px}
+.skin-card>b{font-size:14px;padding:0 4px;display:flex;justify-content:space-between;align-items:center}.skin-card>small{color:var(--muted);font-size:11.5px;padding:0 4px 4px;line-height:1.3}
 /* ============ MANUAL ============ */
 .man-hero input{width:100%;margin-top:6px;font-size:16px;padding:13px 14px;border-radius:14px;border:0;background:rgba(255,255,255,.95);color:#162033;outline:none}
 .man-hero .btn{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.4);color:#fff}
@@ -366,7 +396,7 @@ kbd{background:var(--panel2);border:1px solid var(--border);border-radius:6px;pa
       <button class="btn sm" data-act="todayM">Mês atual</button>
       <span id="syDot" data-act="nav" data-id="settings" style="cursor:pointer;font-size:13px;white-space:nowrap"></span><span id="saveStatus" class="pill" data-act="nav" data-id="settings" style="cursor:pointer">● Carregando…</span>
       <button class="btn sm" id="reconnectBtn" data-act="reconnectFile" hidden>🔌 Reconectar arquivo</button>
-      <button class="btn sm" data-act="theme" title="Alternar tema claro/escuro" id="themeBtn">☾ Tema</button>
+      <button class="btn sm" data-act="theme" title="Escolher tema" id="themeBtn">🎨 Tema</button>
       <button class="btn primary" data-act="addExpense">+ Lançar gasto</button>
     </header>
     <section id="view"></section>
@@ -593,7 +623,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.13-5';
+const APP_VERSAO='2026.11.13-6';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -780,7 +810,7 @@ function openMore(){
    ${sec('Visão geral',it('dashboard','Dashboard')+it('review','Revisão do período')+it('report','Relatório do mês')+it('anual','Ano & assinaturas','report')+it('fechar','Fechar o mês','calendar'))}
    ${sec('Planejamento',it('contas','Contas e saldos','vale')+it('budget','Renda & Orçamento')+it('compare','Planejado × Real')+it('bills','Contas fixas'))}
    ${sec('Compromissos',it('debts','Dívidas')+it('cards','Cartões')+it('goals','Metas & Reservas')+it('dividir','Dividir despesas','profile'))}
-   ${sec('Sistema',it('manual','Manual e ajuda','manual')+`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme',state.settings.theme==='dark'?'Tema claro':'Tema escuro','theme','theme')+
+   ${sec('Sistema',it('manual','Manual e ajuda','manual')+`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme','Temas','theme','theme')+
      it('todayM','Ir para o mês atual','calendar','todayM')+(installEvt?it('install','Instalar app','install','installApp'):''))}
   </div></div><footer><button type="button" class="btn" data-act="closeModal">Fechar</button></footer>`;
   f.onsubmit=e=>e.preventDefault();
@@ -3160,9 +3190,9 @@ const MAN=[
   o:'O app pode ser instalado na tela inicial e funciona sem internet.',
   p:['<b>Celular:</b> abra o endereço no navegador › menu ⋮ › <b>Instalar</b> (ou “Adicionar à tela inicial”).','<b>Computador:</b> é só abrir o endereço; no Chrome/Edge há um ícone de instalar na barra de endereço.','<b>Atualizar:</b> '+manMenu()+' › 🔄 Atualizar o app. Seus dados não são apagados.'],
   d:['Use sempre pelo ícone instalado: a aba comum do navegador guarda os dados separados.']},
- {id:'aparencia',a:'sistema',ic:'🎨',t:'Tema, animações e gestos',go:['theme','','Trocar o tema agora'],onde:[manMenu()],
+ {id:'aparencia',a:'sistema',ic:'🎨',t:'Tema, animações e gestos',go:['theme','','Escolher um tema agora'],onde:[manMenu()],
   o:'Deixe o app do seu jeito.',
-  p:['<b>Tema claro/escuro</b>: '+manMenu()+' › Tema.','<b>Animações 3D</b>: '+manMenu()+' › ✨ Animações 3D (ligar/desligar).','<b>Fechar telas</b>: arraste a folha para baixo, use o botão voltar ou toque fora dela.'],d:[]}
+  p:['<b>Temas</b>: '+manMenu()+' › Temas. São 5 visuais (Oceano, Dólar, Ônix, Pergaminho e Aurora), cada um com cores, fundo e fonte próprios.','<b>Animações 3D</b>: '+manMenu()+' › ✨ Animações 3D (ligar/desligar).','<b>Fechar telas</b>: arraste a folha para baixo, use o botão voltar ou toque fora dela.'],d:[]}
 ];
 const MAN_FAQ=[
  ['Lancei um gasto e ele não apareceu.','Confira o mês no topo: o gasto aparece no mês da data dele. Compras no cartão aparecem no mês da <b>fatura</b>, não no da compra.'],
@@ -3429,6 +3459,36 @@ function fxMoeda(tipo){
 {const _tema=ACT.theme;ACT.theme=()=>{if(!fxOn())return _tema();const v=$('#view');v.classList.add('fx-flipout');
   setTimeout(()=>{_tema();v.classList.remove('fx-flipout');v.classList.add('fx-flipin');setTimeout(()=>v.classList.remove('fx-flipin'),420)},210)};}
 ACT.toggleFx=()=>{closeModal();state.settings.fx=state.settings.fx===false;save();fxKey='';render();toast('Animações 3D '+(state.settings.fx?'ligadas':'desligadas'))};
+
+/* ============================================================
+   TEMAS — 5 visuais completos (cores, fundo, fonte, cantos)
+   ============================================================ */
+const SKINS={
+ oceano:{n:'Oceano',d:'Azul-marinho com dourado. O clássico.',base:'dark',b:'#0b0f17',p:'#131a25',dd:'#253043',t:'#e7edf5',m:'#8a97aa',a:'#4f8cff',s:'#f2c14e',h:'linear-gradient(135deg,#3f73d9,#7e56c9)',f:"system-ui,sans-serif"},
+ dolar:{n:'Dólar',d:'Claro e limpo, em verde-nota.',base:'light',b:'#f3f5fa',p:'#ffffff',dd:'#e2e7f0',t:'#162033',m:'#66738a',a:'#1f8a4c',s:'#1f7a3f',h:'linear-gradient(135deg,#14532d,#1f8a4c 60%,#3fbf7a)',f:"system-ui,sans-serif"},
+ onix:{n:'Ônix',d:'Preto puro, minimalista. Economiza bateria em tela OLED.',base:'dark',b:'#000',p:'#0b0b0c',dd:'#27272b',t:'#f5f5f6',m:'#8d8d96',a:'#2fd39a',s:'#f1f1f3',h:'linear-gradient(140deg,#0c3b2c,#0b0b0c 75%)',f:"'Space Grotesk',system-ui,sans-serif",font:'Space+Grotesk:wght@400;500;700'},
+ pergaminho:{n:'Pergaminho',d:'Papel creme e títulos com serifa. Elegante para ler.',base:'light',b:'#f3eee4',p:'#fffdf8',dd:'#e2d8c6',t:'#2a2420',m:'#7b7064',a:'#b4532a',s:'#8f3f1e',h:'linear-gradient(135deg,#2f241c,#7a3b1f)',f:"'Fraunces',Georgia,serif",font:'Fraunces:opsz,wght@9..144,600;9..144,700'},
+ aurora:{n:'Aurora',d:'Roxo profundo com luzes coloridas e cantos bem redondos.',base:'dark',b:'#0c0920',p:'#16112d',dd:'#33295f',t:'#f0ebff',m:'#a79dd0',a:'#8b7bff',s:'#7ef0e0',h:'linear-gradient(135deg,#6a55f0,#c93fe0 55%,#22c5e0)',f:"'Plus Jakarta Sans',system-ui,sans-serif",font:'Plus+Jakarta+Sans:wght@400;600;800'}
+};
+const skinAtual=()=>SKINS[state.settings.skin]?state.settings.skin:(state.settings.theme==='light'?'dolar':'oceano');
+function skinFonte(id){const k=SKINS[id];if(!k||!k.font||document.getElementById('fonte-'+id))return;const l=document.createElement('link');l.id='fonte-'+id;l.rel='stylesheet';l.crossOrigin='anonymous';l.href='https://fonts.googleapis.com/css2?family='+k.font+'&display=swap';document.head.appendChild(l)}
+function skinPinta(id){id=id||skinAtual();const k=SKINS[id],h=document.documentElement;h.dataset.skin=id;h.dataset.theme=k.base;skinFonte(id);
+  const tc=document.querySelector('meta[name=theme-color]');if(tc)tc.content=k.b;try{localStorage.setItem('finm_skin',id)}catch(e){}}
+function skinCards(){const at=skinAtual();return`<div class="skin-grid">${Object.entries(SKINS).map(([id,k])=>`<button type="button" class="skin-card ${at===id?'on':''}" data-act="skin" data-id="${id}" style="--b:${k.b};--p:${k.p};--d:${k.dd};--t:${k.t};--m:${k.m};--a:${k.a};--s:${k.s};--h:${k.h}">
+   <div class="skin-pv" style="font-family:${k.f}"><div class="skin-hero">R$ 1.250,00<i></i></div><div class="skin-ln"><span>Mercado</span><em>R$ 85,00</em></div><div class="skin-ln"><span>Lazer</span><em>R$ 40,00</em></div><div class="skin-nv"><i class="on"></i><i></i><i class="fab"></i><i></i><i></i></div></div>
+   <b>${k.n}${at===id?'<span style="color:var(--ok);font-size:12px">✓ em uso</span>':''}</b><small>${k.d}</small></button>`).join('')}</div>`}
+function abrirTemas(){Object.keys(SKINS).forEach(skinFonte);const f=$('#modalForm');
+  f.innerHTML=`<header>🎨 Temas</header><div class="body"><div class="full"><p class="muted" style="margin:0 0 12px">Toque para experimentar — muda na hora. Cada tema troca cores, fundo, fonte e formato dos cartões.</p><div id="skinBox">${skinCards()}</div></div></div><footer><button type="button" class="btn primary" data-act="closeModal">Pronto</button></footer>`;
+  f.onsubmit=e=>e.preventDefault();f.onclick=null;$('#modal').classList.remove('hidden')}
+{const _r=render;render=function(){_r();skinPinta();const b=$('#themeBtn');if(b)b.textContent='🎨 Tema'};}
+{const _vs=VIEWS.settings;VIEWS.settings=()=>`<div class="card"><div class="card-head"><div><h3>🎨 Temas</h3><div class="sub">Escolha o visual do app</div></div></div>${skinCards()}</div>`+_vs();}
+Object.assign(ACT,{
+  theme:()=>{closeModal();abrirTemas()},
+  skin:id=>{if(!SKINS[id]||id===skinAtual())return;const aplica=()=>{state.settings.skin=id;state.settings.theme=SKINS[id].base;save();render();const b=$('#skinBox');if(b)b.innerHTML=skinCards()};
+    let anima=false;try{anima=fxOn()}catch(e){}if(!anima){aplica();return}
+    const v=$('#view');v.classList.add('fx-flipout');setTimeout(()=>{aplica();v.classList.remove('fx-flipout');v.classList.add('fx-flipin');setTimeout(()=>v.classList.remove('fx-flipin'),420)},210)}
+});
+try{const k=localStorage.getItem('finm_skin');if(SKINS[k]){document.documentElement.dataset.skin=k;document.documentElement.dataset.theme=SKINS[k].base;skinFonte(k)}}catch(e){}
 
 (async()=>{
   if(isMobile())view='home';
