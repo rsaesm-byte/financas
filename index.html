@@ -333,7 +333,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
         <button class="icon-btn" data-act="nextM" title="Próximo mês">›</button>
       </div>
       <button class="btn sm" data-act="todayM">Mês atual</button>
-      <span id="saveStatus" class="pill" data-act="nav" data-id="settings" style="cursor:pointer">● Carregando…</span>
+      <span id="syDot" data-act="nav" data-id="settings" style="cursor:pointer;font-size:13px;white-space:nowrap"></span><span id="saveStatus" class="pill" data-act="nav" data-id="settings" style="cursor:pointer">● Carregando…</span>
       <button class="btn sm" id="reconnectBtn" data-act="reconnectFile" hidden>🔌 Reconectar arquivo</button>
       <button class="btn sm" data-act="theme" title="Alternar tema claro/escuro" id="themeBtn">☾ Tema</button>
       <button class="btn primary" data-act="addExpense">+ Lançar gasto</button>
@@ -363,7 +363,7 @@ const MN=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez
 const MNF=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const PALETTE=['#4f8cff','#a970ff','#22c58b','#f5a524','#f2555a','#2ec4d6','#ff7ab6','#9bd04b','#ff9f43','#7f8cff'];
 
-function defaultState(){return{settings:{theme:'dark',pct:{needs:50,wants:30,savings:20}},months:{},expenses:[],debts:[],cards:[],cardPurchases:[],goals:[],bills:[],benefits:[],deleted:{},profile:{},learn:{done:{}},investimentos:[],invest:{},contas:[]}}
+function defaultState(){return{settings:{theme:'dark',pct:{needs:50,wants:30,savings:20}},months:{},expenses:[],debts:[],cards:[],cardPurchases:[],goals:[],bills:[],benefits:[],deleted:{},profile:{},learn:{done:{}},investimentos:[],invest:{},contas:[],transfers:[]}}
 let state=defaultState();
 let curMonth=todayYM();
 let view='dashboard';
@@ -405,7 +405,7 @@ function mergeStates(p,s){
   p=Object.assign(defaultState(),p);s=Object.assign(defaultState(),s);
   const dead=Object.assign({},s.deleted,p.deleted);
   const o=Object.assign(defaultState(),s,p);o.deleted=dead;o.settings=p.settings;
-  ['expenses','debts','cards','cardPurchases','goals','bills','benefits','investimentos','contas'].forEach(k=>o[k]=mergeById(p[k],s[k],dead));
+  ['expenses','debts','cards','cardPurchases','goals','bills','benefits','investimentos','contas','transfers'].forEach(k=>o[k]=mergeById(p[k],s[k],dead));
   o.months={};
   new Set([...Object.keys(s.months),...Object.keys(p.months)]).forEach(ym=>{
     const a=p.months[ym],b=s.months[ym];
@@ -562,7 +562,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.13-2';
+const APP_VERSAO='2026.11.13-3';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -1200,7 +1200,7 @@ function vHome(){
   const base=planNW||inc,livre=base-spent,use=base?spent/base*100:0;
   let h='';
   if(backupDue())h+=`<div class="alert warn"><div class="row"><span>💾 ${meta.exportAt?'Seu último backup foi em '+new Date(meta.exportAt).toLocaleDateString('pt-BR'):'Você ainda não fez backup neste celular'}. Guarde uma cópia no Google Drive.</span><span class="spacer"></span><button class="btn sm primary" data-act="shareBackup">Fazer backup</button></div></div>`;
-  try{h+=vDinheiroHoje()}catch(e){console.warn(e)}
+  try{h+=vDinheiroHoje()+vCalendario()}catch(e){console.warn(e)}
   if(month()._empty)h+=emptyMonthBanner();
   h+=`<div class="card hero"><div class="lbl">${planNW?'Ainda pode gastar (Needs + Wants)':'Renda − gastos'} · ${mLabel(curMonth,true)}</div>
    <div class="big">${livre<0?'−':''}${brl(Math.abs(livre))}</div>${bar(use)}
@@ -1244,6 +1244,7 @@ function quickAdd(preset={}){
   const pays=['Pix','Débito','Dinheiro'].map(p=>({v:p,l:p})).concat(state.benefits.map(b=>({v:'ben:'+b.id,l:'🧺 '+b.nome})),state.cards.map(c=>({v:'card:'+c.id,l:'💳 '+c.nome})),[{v:'Boleto',l:'Boleto'},{v:'Transferência',l:'Transferência'}]);
   const CT=state.contas||[];let sel={cat:preset.cat?preset.tipo+'|'+preset.cat:'',pay:preset.pay||(pays.some(p=>p.v===meta.lastPay)?meta.lastPay:'Pix'),conta:(CT.find(c=>c.id===meta.lastConta)||contaPrincipal()||CT[0]||{}).id||''};
   f.innerHTML=`<header>Lançar gasto</header><div class="body">
+   <div class="q-sec" style="text-align:center"><button type="button" class="chip" data-act="colarNotif" style="font-size:13px;padding:7px 12px">📋 Colar notificação do banco</button></div>
    <div class="q-sec"><input class="q-valor" name="valor" type="text" inputmode="decimal" placeholder="R$ 0,00" autocomplete="off" value="${preset.valor?String(preset.valor).replace('.',','):''}"></div>
    <div class="q-sec"><div class="q-label">Categoria</div><div class="chips" id="qCats">${cats.map(c=>`<button type="button" class="chip" data-q="cat" data-v="${esc(c.tipo+'|'+c.cat)}"><span class="dot" style="background:${BUCKETS[c.tipo].color}"></span>${esc(c.cat)}</button>`).join('')}<button type="button" class="chip" data-q="cat" data-v="__outra">＋ Outra</button></div>
     <div id="qOutra" hidden style="display:grid;gap:8px;margin-top:10px"><input type="text" name="catNova" list="dl_qcat" placeholder="Nome da categoria"><datalist id="dl_qcat">${categoriesList().map(o=>`<option value="${esc(o)}">`).join('')}</datalist><select name="tipoNovo">${tipoOpts.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select></div></div>
@@ -2307,13 +2308,14 @@ const tipoContaLbl=t=>(TIPOS_CONTA.find(x=>x[0]===t)||[0,'Conta'])[1];
 function contaPrincipal(){const C=state.contas||[];return C.find(c=>c.principal)||C.find(c=>c.auto)||null}
 const contaDe=x=>x&&x.contaId&&find(state.contas||[],x.contaId)?x.contaId:(contaPrincipal()||{}).id;
 function contaSaldo(c){
-  if(!c.auto)return{v:+c.saldo||0,ent:0,sai:0,fat:0};
+  const _tr=(()=>{const d0=(c.data||todayISO()).slice(0,10),ts0=Date.parse(c.data)||0,hoje=todayISO();return sum((state.transfers||[]).filter(t=>t.date<=hoje&&(t.date>d0||(t.date===d0&&(t.criado||0)>ts0))),t=>(t.para===c.id?+t.valor:0)-(t.de===c.id?+t.valor:0))})();
+  if(!c.auto)return{v:(+c.saldo||0)+_tr,ent:0,sai:0,fat:0};
   const d0=(c.data||todayISO()).slice(0,10),ts0=Date.parse(c.data)||0,hoje=todayISO(),dentro=(d,x)=>d&&d<=hoje&&(d>d0||(d===d0&&x&&(x.criado||0)>ts0));
   const minha=x=>contaDe(x)===c.id;
   let ent=0;Object.values(state.months).forEach(m=>(m.income||[]).forEach(i=>{if(dentro(i.date,i)&&minha(i))ent+=+i.valor||0}));
   const sai=sum(state.expenses.filter(e=>dentro(e.date,e)&&minha(e)&&(PAY_CONTA.includes(e.pay)||(e.contaId&&e.pay==='Dinheiro'))&&!e.benefitId&&!e.fundId),e=>+e.valor||0);
   let fat=0;state.cards.filter(cc=>contaDe(cc)===c.id).forEach(cc=>{for(let ym=d0.slice(0,7);ym<=hoje.slice(0,7);ym=addM(ym,1)){if(dentro(isoOf(ym,+cc.vencimento||10)))fat+=cardFatura(cc.id,ym)}});
-  return{v:(+c.saldo||0)+ent-sai-fat,ent,sai,fat};
+  return{v:(+c.saldo||0)+ent-sai-fat+_tr,ent,sai,fat};
 }
 function proxFatura(c){const hoje=todayISO();let ym=todayYM();if(isoOf(ym,+c.vencimento||10)<hoje)ym=addM(ym,1);return{ym,venc:isoOf(ym,+c.vencimento||10),v:cardFatura(c.id,ym),aberto:cardUsed(c.id,ym)}}
 function vDinheiroHoje(){
@@ -2359,10 +2361,15 @@ function vContas(){
   const porBanco={};C.forEach(x=>{const b=x.c.banco||'Outro';(porBanco[b]=porBanco[b]||[]).push(x)});
   const cards=state.cards.map(c=>({c,...proxFatura(c)}));
   let h=`<div class="grid g4">${kpi('Total em contas',brl(tot),C.length+' conta(s)',null,tot<0?'neg':'pos')}${TIPOS_CONTA.filter(([k])=>porTipo[k]!=null).map(([k,l])=>kpi(l,brl(porTipo[k]),'')).join('')}${cards.length?kpi('Faturas a vencer',brl(sum(cards,x=>x.v)),'total em aberto '+brl(sum(cards,x=>x.aberto)),null,'neg'):''}</div>`;
-  h+=`<div class="card"><div class="card-head"><div><h3>🏦 Contas e saldos</h3><div class="sub">Toque numa conta para conferir/atualizar o saldo</div></div><button class="btn sm primary" data-act="editConta">+ Conta</button></div>`;
+  h+=`<div class="card"><div class="card-head"><div><h3>🏦 Contas e saldos</h3><div class="sub">Toque numa conta para conferir/atualizar o saldo</div></div><div class="row"><button class="btn sm" data-act="transferir">⇄ Transferir</button><button class="btn sm primary" data-act="editConta">+ Conta</button></div></div>`;
   if(!C.length)h+=`<div class="empty">Cadastre suas contas — corrente, poupança, carteiras digitais — com o saldo de hoje.<br><br><div class="chips" style="justify-content:center">${BANCOS.slice(0,10).map(b=>`<button class="chip" data-act="contaBanco" data-id="${esc(b[0])}"><span class="dot" style="background:${b[1]}"></span>${b[0]}</button>`).join('')}</div></div>`;
   else h+=Object.entries(porBanco).map(([b,L])=>`<div class="mday"><span><span class="dot" style="background:${corBanco(b)}"></span> ${esc(b)}</span><span>${brl(sum(L,x=>x.s.v))}</span></div>${L.map(({c,s})=>`<div class="mrow" data-act="editConta" data-id="${c.id}"><div class="ic" style="background:${c.cor||corBanco(b)}26;color:${c.cor||corBanco(b)}">${c.tipo==='poupanca'?'🐷':c.tipo==='carteira'?'💵':'🏦'}</div><div class="tx"><b>${esc(c.nome)}${c.principal?' ⭐':''}</b><small>${tipoContaLbl(c.tipo)} · ${c.auto?'estimado · ':''}conferido ${fmtDate((c.data||'').slice(0,10))}</small></div><div class="vl ${s.v<0?'neg':''}">${brl(s.v)}</div></div>`).join('')}`).join('');
-  h+=`</div><div class="card"><div class="card-head"><div><h3>💳 Cartões de crédito</h3><div class="sub">Cadastre quantos quiser — cada um com limite, fechamento, vencimento e a conta que paga a fatura</div></div><button class="btn sm primary" data-act="addCard">+ Cartão</button></div>
+  const TR=[...(state.transfers||[])].sort((a,b)=>b.date.localeCompare(a.date)||(b.criado||0)-(a.criado||0)).slice(0,8),nm=id=>(find(state.contas,id)||{nome:'(conta removida)'}).nome;
+  h+='</div>';
+  {const inv=carteiraTotal(),bens=sum(state.debts,d=>+d.valorBem||0),div=totalDebt(todayYM()),pl=tot+inv+bens-div;
+   h+=`<div class="card"><h3>🏛 Patrimônio líquido</h3><div class="sub">Tudo o que você tem menos tudo o que deve</div><div class="stat-line"><span>Contas</span><b>${brl(tot)}</b></div><div class="stat-line"><span>Investimentos</span><b>${brl(inv)}</b></div>${bens?`<div class="stat-line"><span>Bens financiados (valor do bem)</span><b>${brl(bens)}</b></div>`:''}<div class="stat-line"><span>Dívidas e cartões</span><b class="neg">− ${brl(div)}</b></div><div class="stat-line" style="border-top:1px solid var(--border);margin-top:6px;padding-top:8px"><span><b>Patrimônio líquido</b></span><b class="${pl<0?'neg':'pos'}" style="font-size:18px">${brl(pl)}</b></div></div>`}
+  if(TR.length)h+=`<div class="card"><h3>⇄ Últimas transferências</h3><div class="mlist">${TR.map(t=>`<div class="mrow" style="cursor:default"><div class="tx"><b>${esc(nm(t.de))} → ${esc(nm(t.para))}</b><small>${fmtDate(t.date)}${t.desc?' · '+esc(t.desc):''}</small></div><div class="vl">${brl(t.valor)}</div><button class="icon-btn" data-act="delTransfer" data-id="${t.id}" title="Apagar">🗑</button></div>`).join('')}</div></div>`;
+  h+=`<div class="card"><div class="card-head"><div><h3>💳 Cartões de crédito</h3><div class="sub">Cadastre quantos quiser — cada um com limite, fechamento, vencimento e a conta que paga a fatura</div></div><button class="btn sm primary" data-act="addCard">+ Cartão</button></div>
    ${cards.length?cards.map(x=>`<div class="mrow" data-act="editCard" data-id="${x.c.id}"><div class="ic" style="background:${x.c.cor||'#888'}26">💳</div><div class="tx"><b>${esc(x.c.nome)}</b><small>Fatura vence ${fmtDate(x.venc)} · em aberto ${brl(x.aberto)}${x.c.limite?' · livre '+brl(Math.max(0,x.c.limite-x.aberto)):''}${x.c.contaId&&find(state.contas,x.c.contaId)?' · paga pela '+esc(find(state.contas,x.c.contaId).nome):''}</small></div><div class="vl neg">${brl(x.v)}</div></div>`).join(''):'<div class="empty">Nenhum cartão cadastrado.</div>'}
    <div class="row" style="margin-top:8px"><button class="btn sm" data-act="nav" data-id="cards">Abrir Cartões (compras e faturas)</button></div></div>
   <div class="muted" style="font-size:12px;padding:0 4px">💡 Contas com "atualizar sozinho" mudam com o que você lança. Poupança e investimentos normalmente ficam no modo manual: atualize quando conferir no banco.</div>`;
@@ -2606,6 +2613,12 @@ const ACT={
   delIncome:id=>delUndo('Renda excluída',()=>{tomb(id);const m=month(curMonth,true);m.income=m.income.filter(x=>x.id!==id)}),
   addBudget:()=>budgetForm(),addBudgetTipo:t=>budgetForm(null,{tipo:t}),
   budTab:id=>{ui.budTab=id;view='budget';render();window.scrollTo(0,0)},
+  transferir:()=>transferForm(),delTransfer:id=>delUndo('Transferência apagada',()=>{tomb(id);state.transfers=(state.transfers||[]).filter(t=>t.id!==id)}),
+  calTudo:()=>{ui.calTudo=!ui.calTudo;render()},
+  colarNotif:async()=>{let t='';try{t=await navigator.clipboard.readText()}catch(e){}
+    if(t&&/R\$/i.test(t)){closeModal();abrirNotif(t);return}
+    openForm({title:'Colar notificação do banco',saveLabel:'Ler',fields:[{type:'html',html:'<p class="muted" style="margin:0 0 8px">Copie o texto da notificação ou do SMS do banco e cole aqui:</p><textarea id="ntTxt" rows="4" style="width:100%;font-size:16px;padding:10px;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" placeholder="Ex.: Compra aprovada de R$ 23,90 em PADARIA X no cartão final 1234"></textarea>'}],
+      onSave:()=>{const v=$('#ntTxt').value;setTimeout(()=>abrirNotif(v),80)}})},
   editConta:id=>contaForm(id?find(state.contas,id):null),contaBanco:b=>contaForm(null,{banco:b}),delConta:id=>{closeModal();delUndo('Conta removida',()=>{tomb(id);state.contas=state.contas.filter(x=>x.id!==id)})},
   presetCats:()=>{const P=[['Moradia (aluguel/condomínio)','needs'],['Alimentação (mercado)','needs'],['Água','needs'],['Luz','needs'],['Internet','needs'],['Celular','needs'],['Transporte / combustível','needs'],['Saúde / farmácia','needs'],['Educação','needs'],['Dívidas e financiamentos','needs'],['Restaurantes / delivery','wants'],['Lazer','wants'],['Streaming e assinaturas','wants'],['Compras / roupas','wants'],['Cuidados pessoais','wants'],['Reserva de emergência','savings'],['Investimentos','savings']];
     openForm({title:'Categorias sugeridas',fields:[{type:'html',html:'<p class="muted" style="margin:0">Marque as que você usa. Elas serão criadas com valor 0 — depois é só digitar o budget de cada uma direto na tabela.</p>'},...P.map(([c,t],i)=>({name:'c'+i,label:c+' — '+BUCKETS[t].label,type:'checkbox',value:true}))],saveLabel:'Criar categorias',
@@ -2781,6 +2794,141 @@ function render(){
   $('#monthLabel').textContent=mLabel(curMonth,true);setSaveStatus();
   try{const v=view==='expenses'&&isMobile()?vExpensesMobile:VIEWS[view];$('#view').innerHTML=v();cardifyTables($('#view'))}catch(err){console.error(err);$('#view').innerHTML=`<div class="card empty">Erro ao montar a tela: ${esc(err.message)}</div>`}
 }
+
+/* ---------- transferências entre contas ---------- */
+function transferForm(){
+  const C=state.contas||[];if(C.length<2){toast('Cadastre pelo menos duas contas para transferir','err');return}
+  const ops=C.map(c=>[c.id,c.nome]),pr=contaPrincipal()||C[0];
+  openForm({title:'Transferir entre contas',saveLabel:'Transferir',fields:[
+    {name:'de',label:'Saiu de',type:'select',options:ops,value:pr.id},
+    {name:'para',label:'Entrou em',type:'select',options:ops,value:(C.find(c=>c.id!==pr.id)||C[1]).id},
+    {name:'valor',label:'Valor (R$)',type:'number',step:'0.01',min:0,required:true},
+    {name:'date',label:'Data',type:'date',value:todayISO(),required:true},
+    {name:'desc',label:'Observação (opcional)',placeholder:'Ex.: guardar na poupança',full:true},
+    {type:'html',html:'<div class="muted" style="font-size:12px">Transferência não é gasto nem renda: só muda o saldo das duas contas. Para registrar como poupança no orçamento, lance também um aporte numa categoria de Savings.</div>'}
+  ],onSave:d=>{if(d.de===d.para){toast('Escolha contas diferentes','err');return false}if(!(d.valor>0)){toast('Digite o valor','err');return false}
+    state.transfers=state.transfers||[];state.transfers.push({id:uid(),criado:Date.now(),...d});toast('Transferência registrada')}});
+}
+/* ---------- colar notificação do banco ---------- */
+function lerNotif(txt){
+  txt=String(txt||'').replace(/\s+/g,' ').trim();const o={};if(!txt)return o;
+  const v=txt.match(/R\$\s?(\d{1,3}(?:\.\d{3})*(?:,\d{2})|\d+(?:,\d{2})?)/i);if(v)o.valor=parseNum(v[1]);
+  const m=txt.match(/(?:\bem|\bno|\bna|\bpara|estabelecimento:?|loja:?)\s+((?:[A-Z0-9*][\wÀ-ú*&'.-]*\s?){1,5})/);
+  if(m)o.desc=m[1].trim().replace(/\s+(?:em|no|na|com|às|as|dia|foi|aprovad[ao]).*$/i,'').slice(0,40);
+  const n=norm(txt),cartao=state.cards.find(c=>n.includes(norm(c.nome)))||state.cards.find(c=>norm(c.nome).split(' ').some(w=>w.length>3&&n.includes(w)));
+  if(/pix/i.test(txt))o.pay='Pix';else if(/d[eé]bito/i.test(txt))o.pay='Débito';
+  else if(/cr[eé]dito|compra|cart[aã]o/i.test(txt)&&state.cards.length)o.pay='card:'+(cartao||state.cards[0]).id;
+  if(o.desc){const d=norm(o.desc).split(' ')[0],ant=[...state.expenses].reverse().find(e=>d.length>2&&norm(e.desc).includes(d))||[...state.cardPurchases].reverse().find(e=>d.length>2&&norm(e.desc).includes(d));if(ant){o.cat=ant.cat;o.tipo=ant.tipo}}
+  return o;
+}
+function abrirNotif(txt){const o=lerNotif(txt);if(!(o.valor>0)){toast('Não achei um valor em R$ nesse texto','err');return}quickAdd(o);toast('Confira e escolha a categoria')}
+/* ---------- calendário: próximos 30 dias ---------- */
+function proximosEventos(){
+  const hoje=todayISO(),fim=toISO(new Date(Date.now()+30*864e5)),E=[];
+  [todayYM(),addM(todayYM(),1)].forEach(ym=>{
+    billsOf(ym).forEach(({b,pay})=>{if(!pay)E.push({d:isoOf(ym,+b.dia||1),ic:'🧾',t:b.nome,v:-b.valor,act:'nav',id:'bills'})});
+    state.cards.forEach(c=>{const v=cardFatura(c.id,ym);if(v>0)E.push({d:isoOf(ym,+c.vencimento||10),ic:'💳',t:'Fatura '+c.nome,v:-v,act:'editCard',id:c.id})});
+    (month(ym).income||[]).forEach(i=>{if(i.date)E.push({d:i.date,ic:'💵',t:i.fonte+(i.desc?' — '+i.desc:''),v:+i.valor,act:'budTab',id:'renda'})})});
+  state.benefits.forEach(b=>E.push({d:benNext(b,hoje),ic:'🧺',t:'Recarga '+b.nome,v:+b.valorMensal||0,act:'nav',id:'vale',vale:true}));
+  (state.investimentos||[]).forEach(x=>{if(x.venc)E.push({d:x.venc,ic:'📈',t:'Vence: '+x.nome,v:0,act:'invTab',id:'carteira'})});
+  return E.filter(e=>e.d>=hoje&&e.d<=fim).sort((a,b)=>a.d.localeCompare(b.d));
+}
+function vCalendario(){
+  const E=proximosEventos();if(!E.length)return'';const sai=sum(E.filter(e=>e.v<0),e=>-e.v),ent=sum(E.filter(e=>e.v>0&&!e.vale),e=>e.v);
+  return`<div class="card"><div class="card-head"><div><h3>📅 Próximos 30 dias</h3><div class="sub" style="margin:0">A pagar <b class="neg">${brl(sai)}</b>${ent?' · a receber <b class="pos">'+brl(ent)+'</b>':''}</div></div></div>
+   ${E.slice(0,ui.calTudo?99:5).map(e=>{const dd=dDiff(todayISO(),e.d);return`<div class="mrow" data-act="${e.act}" data-id="${e.id}"><div class="ic" style="background:var(--panel2)">${e.ic}</div><div class="tx"><b>${esc(e.t)}</b><small>${fmtDate(e.d)} · ${dd===0?'hoje':dd===1?'amanhã':'em '+dd+' dias'}</small></div><div class="vl ${e.v<0?(dd<=3?'neg':''):e.v>0?'pos':''}">${e.v?brl(Math.abs(e.v)):''}</div></div>`}).join('')}
+   ${E.length>5?`<button class="btn sm" data-act="calTudo" style="margin-top:8px">${ui.calTudo?'Mostrar menos':'Ver os '+E.length+' eventos'}</button>`:''}</div>`;
+}
+/* ============================================================
+   SINCRONIZAÇÃO — GitHub Gist privado, com o token do próprio usuário (escopo "gist")
+   Junta as alterações dos dois lados (3 vias: local × nuvem × última sincronização).
+   O token fica só neste aparelho (localStorage) e só é enviado para api.github.com.
+   ============================================================ */
+const SY={FILE:'minhas-financas-dados.json',LS:'finm_gist',cfg:null,busy:false,st:'',err:'',quando:null,base:null,t:null};
+try{SY.cfg=JSON.parse(localStorage.getItem(SY.LS))||null}catch(e){}
+const syCfg=c=>{SY.cfg=c;try{c?localStorage.setItem(SY.LS,JSON.stringify(c)):localStorage.removeItem(SY.LS)}catch(e){}};
+const LISTAS=['expenses','debts','cards','cardPurchases','goals','bills','benefits','investimentos','contas','transfers'];
+const jj=x=>JSON.stringify(x===undefined?null:x);
+const canon=x=>JSON.stringify(x,(k,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.keys(v).sort().reduce((o,q)=>(o[q]=v[q],o),{}):v);
+const porId=s=>{const c=JSON.parse(jj(s));LISTAS.forEach(k=>c[k]=(c[k]||[]).slice().sort((a,b)=>String(a.id).localeCompare(String(b.id))));Object.values(c.months||{}).forEach(m=>['income','budget'].forEach(k=>m[k]=(m[k]||[]).slice().sort((a,b)=>String(a.id).localeCompare(String(b.id)))));return canon(c)};
+async function gh(path,opt={}){
+  const r=await fetch('https://api.github.com'+path,{...opt,cache:'no-store',headers:{Accept:'application/vnd.github+json',Authorization:'Bearer '+SY.cfg.token,'Content-Type':'application/json'}});
+  if(!r.ok){const e=new Error('GitHub respondeu '+r.status);e.status=r.status;throw e}return r}
+/* junta listas por id: quem mudou desde a última sincronização vence; se os dois mudaram, vale o deste aparelho */
+function m3lista(L=[],R=[],B=[],dead){
+  const mb=new Map(B.map(x=>[x.id,jj(x)])),mr=new Map(R.map(x=>[x.id,x])),out=[],vistos=new Set();
+  L.forEach(l=>{vistos.add(l.id);if(dead[l.id])return;const r=mr.get(l.id);
+    if(!r){out.push(l);return}                                   // só existe aqui (novo) → mantém
+    out.push(jj(l)===mb.get(l.id)?r:l)});                        // não mexi aqui → pega o da nuvem
+  R.forEach(r=>{if(!vistos.has(r.id)&&!dead[r.id])out.push(r)}); // novo na nuvem
+  return out}
+const m3valor=(l,r,b)=>jj(l)===jj(b)?(r===undefined?l:r):l;
+function merge3(L,R,B){
+  L=Object.assign(defaultState(),L);R=Object.assign(defaultState(),R);B=Object.assign(defaultState(),B||{});
+  const dead=Object.assign({},R.deleted,L.deleted),o=Object.assign({},R,L);o.deleted=dead;
+  LISTAS.forEach(k=>o[k]=m3lista(L[k],R[k],B[k],dead));
+  Object.keys(o).forEach(k=>{if(k==='months'||k==='deleted'||LISTAS.includes(k))return;o[k]=m3valor(L[k],R[k],B[k])});
+  o.months={};new Set([...Object.keys(L.months||{}),...Object.keys(R.months||{})]).forEach(ym=>{
+    const a=L.months[ym],r=R.months[ym],b=(B.months||{})[ym]||{};
+    if(!a||!r){const m=JSON.parse(jj(a||r));m.income=(m.income||[]).filter(x=>!dead[x.id]);m.budget=(m.budget||[]).filter(x=>!dead[x.id]);o.months[ym]=m;return}
+    o.months[ym]={pct:m3valor(a.pct,r.pct,b.pct),income:m3lista(a.income,r.income,b.income,dead),budget:m3lista(a.budget,r.budget,b.budget,dead)}});
+  return o}
+async function syLer(){
+  if(!SY.cfg.id){ // outro aparelho já criou? procura pelo nome do arquivo
+    const gs=await(await gh('/gists?per_page=100&_='+Date.now())).json(),g=gs.find(x=>x.files&&x.files[SY.FILE]);if(!g)return null;SY.cfg.id=g.id;syCfg(SY.cfg)}
+  try{const g=await(await gh('/gists/'+SY.cfg.id+'?_='+Date.now())).json(),f=g.files[SY.FILE];if(!f)return null;
+    const txt=f.truncated?await(await fetch(f.raw_url,{cache:'no-store'})).text():f.content,p=JSON.parse(txt);return p&&p.dados?p:null}
+  catch(e){if(e.status===404){SY.cfg.id=null;syCfg(SY.cfg);return null}throw e}}
+async function syGravar(hist){
+  const ver=uid();SY.novaVer=ver;
+  const files={[SY.FILE]:{content:JSON.stringify({app:'minhas-financas',formato:3,salvoEm:new Date().toISOString(),rev,ver,hist:(hist||[]).concat(ver).slice(-40),dados:state})}};
+  if(!SY.cfg.id){const g=await(await gh('/gists',{method:'POST',body:JSON.stringify({description:'Minhas Finanças — dados sincronizados (não apague)',public:false,files})})).json();SY.cfg.id=g.id;syCfg(SY.cfg)}
+  else await gh('/gists/'+SY.cfg.id,{method:'PATCH',body:JSON.stringify({files})})}
+async function syncNow(manual){
+  if(!SY.cfg||!SY.cfg.token||SY.busy)return;
+  if(!manual&&(!$('#modal').classList.contains('hidden')||!navigator.onLine))return;   // não mexe na tela enquanto você digita
+  SY.busy=true;SY.st='sincronizando';syPinta();
+  try{
+    if(SY.base===null){let k=null;try{k=await kvGet('syncBase')}catch(e){}k=k&&k.base?k:{base:{},prev:{},ver:null};SY.base=k.base;SY.prev=k.prev;SY.ver=k.ver}
+    const W=await syLer(),baseAntes=SY.base;SY.novaVer=null;
+    if(!W){await syGravar([])}
+    else{const R=W.dados,
+      /* se a minha última gravação não está no histórico da nuvem, outro aparelho gravou por cima ao mesmo tempo:
+         comparo com a base anterior para não perder o que eu tinha mudado */
+      atropelado=SY.ver&&Array.isArray(W.hist)&&!W.hist.includes(SY.ver),
+      antes=jj(state),M=merge3(state,R,atropelado?SY.prev:SY.base);
+      if(jj(M)!==antes){state=M;rev++;await persistir();render()}
+      if(porId(M)!==porId(Object.assign(defaultState(),R)))await syGravar(W.hist);else SY.novaVer=W.ver||null}
+    SY.prev=baseAntes;SY.ver=SY.novaVer;SY.base=JSON.parse(jj(state));try{await kvSet('syncBase',{base:SY.base,prev:SY.prev,ver:SY.ver})}catch(e){}
+    SY.st='ok';SY.err='';SY.quando=new Date();meta.exportRev=rev;meta.exportAt=SY.quando.toISOString();saveMeta();
+    if(manual)toast('Sincronizado ✓')}
+  catch(e){console.warn('sync',e);SY.st='erro';SY.err=e.status===401?'Token recusado ou vencido. Gere outro e conecte de novo.':e.status===403?'O GitHub recusou (limite de uso ou token sem a permissão "gist").':!navigator.onLine?'Sem internet — sincroniza quando voltar.':'Não consegui falar com o GitHub ('+(e.message||e)+').';
+    if(manual||e.status===401)toast(SY.err,'err')}
+  finally{SY.busy=false;syPinta()}}
+function syPinta(){const e=$('#syEstado');if(e)e.innerHTML=syTexto();const d=$('#syDot');if(d)d.textContent=!SY.cfg?'':SY.st==='erro'?'☁️⚠️':SY.st==='sincronizando'?'☁️…':'☁️✓'}
+const syTexto=()=>!SY.cfg?'':SY.st==='sincronizando'?'Sincronizando…':SY.st==='erro'?`<span class="neg">⚠️ ${esc(SY.err)}</span>`:SY.quando?`<span class="pos">✓ Sincronizado às ${hora(SY.quando)}</span>`:'Conectado';
+const syAgenda=()=>{if(!SY.cfg)return;clearTimeout(SY.t);SY.t=setTimeout(()=>syncNow(),3000)};
+{const _save=save;save=function(){_save();syAgenda()};}
+setInterval(()=>{if(document.visibilityState==='visible')syncNow()},60000);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')setTimeout(()=>syncNow(),800)});
+addEventListener('online',()=>syncNow());
+function syCard(){
+  const on=!!SY.cfg;
+  return`<div class="card"><div class="card-head"><div><h3>☁️ Sincronização entre aparelhos</h3><div class="sub">${on?'Conectado ao GitHub — os dados ficam num Gist <b>privado</b> da sua conta':'Celular e computador com os mesmos dados, automaticamente'}</div></div>${on?'<span class="badge ok">Ligada</span>':'<span class="badge warn">Desligada</span>'}</div>
+   ${on?`<div id="syEstado" style="margin-bottom:10px">${syTexto()}</div><div class="row"><button class="btn primary" data-act="syAgora">🔄 Sincronizar agora</button><button class="btn danger" data-act="syOff">Desconectar</button></div>
+    <div class="muted" style="font-size:12px;margin-top:10px">Sincroniza ao abrir, ao voltar para o app, a cada 1 minuto e 3 segundos depois de cada alteração. Nos outros aparelhos, abra o mesmo endereço do app e conecte com o <b>mesmo token</b>.</div>`
+   :`<ol style="margin:0 0 12px;padding-left:20px;line-height:1.6;font-size:14px"><li>Abra <a href="https://github.com/settings/tokens/new?scopes=gist&description=Minhas%20Financas" target="_blank" rel="noopener" style="color:var(--accent)">esta página do GitHub</a> (já vem com <b>gist</b> marcado).</li><li>Em <b>Expiration</b> escolha <b>No expiration</b>. Confira que <b>só</b> a caixa <b>gist</b> está marcada.</li><li>Toque em <b>Generate token</b> e copie o código que começa com <code>ghp_</code>.</li><li>Cole aqui embaixo e toque em Conectar.</li></ol>
+    <input type="password" id="syToken" placeholder="Cole o token ghp_…" autocomplete="off" autocapitalize="off" spellcheck="false" style="width:100%;font-size:16px;padding:11px 12px;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)">
+    <div class="row" style="margin-top:10px"><button class="btn primary" data-act="syOn">Conectar</button></div>
+    <div class="muted" style="font-size:12px;margin-top:10px">🔐 O token é como uma senha dos seus Gists: não mande por WhatsApp/e-mail. Ele fica guardado só neste aparelho. Se vazar, apague em github.com/settings/tokens e gere outro — os dados continuam salvos.</div>`}</div>`}
+Object.assign(ACT,{
+  syOn:async()=>{const t=($('#syToken')||{}).value||'';if(!/^(ghp_|github_pat_)\w{20,}/.test(t.trim())){toast('Cole o token completo (começa com ghp_)','err');return}
+    syCfg({token:t.trim()});SY.base=null;try{await kvSet('syncBase',undefined)}catch(e){}await syncNow(true);if(SY.st==='erro'&&/recusad/.test(SY.err))syCfg(null);render()},
+  syOff:()=>{syCfg(null);SY.st='';SY.base=null;kvSet('syncBase',undefined).catch(()=>{});render();toast('Sincronização desligada neste aparelho. Os dados continuam aqui e no GitHub.')},
+  syAgora:()=>syncNow(true).then(()=>{if(view==='settings')render()})
+});
+{const _vs=VIEWS.settings;VIEWS.settings=()=>syCard()+_vs();}
+
 /* ============================================================
    BLOQUEIO DO APP — senha, padrão desenhado ou impressão digital
    A configuração fica só neste aparelho (não vai no backup).
@@ -2890,7 +3038,7 @@ Object.assign(ACT,{
   lkEsqueci:()=>{LKS.antes=LKS.modo;LKS.modo='esqueci';LKS.certeza=false;lkDraw()},
   lkVoltar:()=>{LKS.modo=LKS.antes||'abrir';lkDraw()},
   lkApagar:async()=>{if(!LKS.certeza){LKS.certeza=true;lkDraw();return}
-    try{state=defaultState();rev=0;[STORE,'finm_meta','finm_wizard',LK_KEY].forEach(k=>localStorage.removeItem(k));await new Promise(r=>{const q=indexedDB.deleteDatabase('minhas_financas_mobile_db');q.onsuccess=q.onerror=q.onblocked=r})}catch(e){}
+    try{state=defaultState();rev=0;[STORE,'finm_meta','finm_wizard','finm_gist',LK_KEY].forEach(k=>localStorage.removeItem(k));await new Promise(r=>{const q=indexedDB.deleteDatabase('minhas_financas_mobile_db');q.onsuccess=q.onerror=q.onblocked=r})}catch(e){}
     location.replace(location.pathname)},
   lockMenu:()=>{closeModal();view='settings';render();setTimeout(()=>{const e=[...document.querySelectorAll('#view h3')].find(h=>h.textContent.includes('Bloqueio'));e&&e.scrollIntoView({block:'start'})},60)}
 });
@@ -2968,6 +3116,9 @@ ACT.toggleFx=()=>{closeModal();state.settings.fx=state.settings.fx===false;save(
   matchMedia('(max-width:820px)').addEventListener('change',()=>{if(!isMobile()&&view==='home')view='dashboard';render()});
   const temDados=await carregar();revAoAbrir=rev;fileRev=-1;
   pedirPersistencia().then(()=>{if(view==='settings')render()});
+  syPinta();syncNow();
+  const lerHash=()=>{if(!location.hash.startsWith('#n='))return;let t='';try{t=decodeURIComponent(location.hash.slice(3))}catch(e){}history.replaceState(null,'',location.pathname);if(t)setTimeout(()=>{closeModal();abrirNotif(t)},400)};
+  lerHash();addEventListener('hashchange',lerHash);
   render();
   await iniciarArquivo();
   if(temDados&&new URLSearchParams(location.search).get('acao')==='lancar'){history.replaceState(null,'',location.pathname);quickAdd()}
