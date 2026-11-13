@@ -363,7 +363,7 @@ const MN=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez
 const MNF=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const PALETTE=['#4f8cff','#a970ff','#22c58b','#f5a524','#f2555a','#2ec4d6','#ff7ab6','#9bd04b','#ff9f43','#7f8cff'];
 
-function defaultState(){return{settings:{theme:'dark',pct:{needs:50,wants:30,savings:20}},months:{},expenses:[],debts:[],cards:[],cardPurchases:[],goals:[],bills:[],benefits:[],deleted:{},profile:{},learn:{done:{}},investimentos:[],invest:{},contas:[],transfers:[]}}
+function defaultState(){return{settings:{theme:'dark',pct:{needs:50,wants:30,savings:20}},months:{},expenses:[],debts:[],cards:[],cardPurchases:[],goals:[],bills:[],benefits:[],deleted:{},profile:{},learn:{done:{}},investimentos:[],invest:{},contas:[],transfers:[],splits:[]}}
 let state=defaultState();
 let curMonth=todayYM();
 let view='dashboard';
@@ -405,7 +405,7 @@ function mergeStates(p,s){
   p=Object.assign(defaultState(),p);s=Object.assign(defaultState(),s);
   const dead=Object.assign({},s.deleted,p.deleted);
   const o=Object.assign(defaultState(),s,p);o.deleted=dead;o.settings=p.settings;
-  ['expenses','debts','cards','cardPurchases','goals','bills','benefits','investimentos','contas','transfers'].forEach(k=>o[k]=mergeById(p[k],s[k],dead));
+  ['expenses','debts','cards','cardPurchases','goals','bills','benefits','investimentos','contas','transfers','splits'].forEach(k=>o[k]=mergeById(p[k],s[k],dead));
   o.months={};
   new Set([...Object.keys(s.months),...Object.keys(p.months)]).forEach(ym=>{
     const a=p.months[ym],b=s.months[ym];
@@ -562,7 +562,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.13-3';
+const APP_VERSAO='2026.11.13-4';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -719,7 +719,7 @@ const IC={
 };
 const ico=n=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${IC[n]}</svg>`;
 const NAV=[
- ['sep','Visão geral'],['home','Início'],['dashboard','Dashboard'],['review','Revisão do período'],['report','Relatório do mês'],
+ ['sep','Visão geral'],['home','Início'],['dashboard','Dashboard'],['review','Revisão do período'],['report','Relatório do mês'],['anual','Ano & assinaturas'],['fechar','Fechar o mês'],['dividir','Dividir despesas'],
  ['sep','Planejamento'],['budget','Renda & Orçamento'],['compare','Planejado × Real'],['expenses','Gastos'],['contas','Contas e saldos'],['bills','Contas fixas'],['vale','Vale-alimentação'],
  ['sep','Compromissos'],['debts','Dívidas & Financiamentos'],['cards','Cartões de crédito'],['goals','Metas & Poupança'],
  ['sep','Coach'],['invest','Investir'],['learn','Aprender'],['profile','Meu perfil'],
@@ -744,9 +744,9 @@ function openMore(){
   const sec=(t,h)=>`<div class="q-label" style="margin-top:12px">${t}</div><div class="more-grid">${h}</div>`;
   f.innerHTML=`<header>Mais</header><div class="body"><div class="full">
    ${sec('Coach financeiro',it('invest','Investir e sair das dívidas','invest')+it('learn','Aprender')+it('profile','Meu perfil')+`<button type="button" class="more-item ${state.settings.coach!==false?'on':''}" data-act="toggleCoach">🤖<span>Coach nos gastos: ${state.settings.coach!==false?'ligado':'desligado'}</span></button>`)}
-   ${sec('Visão geral',it('dashboard','Dashboard')+it('review','Revisão do período')+it('report','Relatório do mês'))}
+   ${sec('Visão geral',it('dashboard','Dashboard')+it('review','Revisão do período')+it('report','Relatório do mês')+it('anual','Ano & assinaturas','report')+it('fechar','Fechar o mês','calendar'))}
    ${sec('Planejamento',it('contas','Contas e saldos','vale')+it('budget','Renda & Orçamento')+it('compare','Planejado × Real')+it('bills','Contas fixas'))}
-   ${sec('Compromissos',it('debts','Dívidas')+it('cards','Cartões')+it('goals','Metas & Reservas'))}
+   ${sec('Compromissos',it('debts','Dívidas')+it('cards','Cartões')+it('goals','Metas & Reservas')+it('dividir','Dividir despesas','profile'))}
    ${sec('Sistema',`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme',state.settings.theme==='dark'?'Tema claro':'Tema escuro','theme','theme')+
      it('todayM','Ir para o mês atual','calendar','todayM')+(installEvt?it('install','Instalar app','install','installApp'):''))}
   </div></div><footer><button type="button" class="btn" data-act="closeModal">Fechar</button></footer>`;
@@ -1200,6 +1200,7 @@ function vHome(){
   const base=planNW||inc,livre=base-spent,use=base?spent/base*100:0;
   let h='';
   if(backupDue())h+=`<div class="alert warn"><div class="row"><span>💾 ${meta.exportAt?'Seu último backup foi em '+new Date(meta.exportAt).toLocaleDateString('pt-BR'):'Você ainda não fez backup neste celular'}. Guarde uma cópia no Google Drive.</span><span class="spacer"></span><button class="btn sm primary" data-act="shareBackup">Fazer backup</button></div></div>`;
+  {const ant=addM(todayYM(),-1);if(curMonth===todayYM()&&new Date().getDate()<=10&&actualEntries(ant).length&&!(state.fechamentos||{})[ant])h+=`<div class="alert info"><div class="row"><span>🗓 ${mLabel(ant,true)} acabou. Que tal fechar o mês em 5 minutos?</span><span class="spacer"></span><button class="btn sm primary" data-act="irFechar">Fechar o mês</button></div></div>`}
   try{h+=vDinheiroHoje()+vCalendario()}catch(e){console.warn(e)}
   if(month()._empty)h+=emptyMonthBanner();
   h+=`<div class="card hero"><div class="lbl">${planNW?'Ainda pode gastar (Needs + Wants)':'Renda − gastos'} · ${mLabel(curMonth,true)}</div>
@@ -1244,6 +1245,7 @@ function quickAdd(preset={}){
   const pays=['Pix','Débito','Dinheiro'].map(p=>({v:p,l:p})).concat(state.benefits.map(b=>({v:'ben:'+b.id,l:'🧺 '+b.nome})),state.cards.map(c=>({v:'card:'+c.id,l:'💳 '+c.nome})),[{v:'Boleto',l:'Boleto'},{v:'Transferência',l:'Transferência'}]);
   const CT=state.contas||[];let sel={cat:preset.cat?preset.tipo+'|'+preset.cat:'',pay:preset.pay||(pays.some(p=>p.v===meta.lastPay)?meta.lastPay:'Pix'),conta:(CT.find(c=>c.id===meta.lastConta)||contaPrincipal()||CT[0]||{}).id||''};
   f.innerHTML=`<header>Lançar gasto</header><div class="body">
+   <div class="q-sec" style="display:flex;gap:8px"><input type="text" id="qFrase" placeholder='Fale ou digite: "mercado 85 no pix"' enterkeyhint="go" autocomplete="off" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();ACT.frase()}">${VOZ?'<button type="button" class="btn" id="qVoz" data-act="voz" title="Falar">🎤</button>':''}<button type="button" class="btn" data-act="frase" title="Preencher">➜</button></div>
    <div class="q-sec" style="text-align:center"><button type="button" class="chip" data-act="colarNotif" style="font-size:13px;padding:7px 12px">📋 Colar notificação do banco</button></div>
    <div class="q-sec"><input class="q-valor" name="valor" type="text" inputmode="decimal" placeholder="R$ 0,00" autocomplete="off" value="${preset.valor?String(preset.valor).replace('.',','):''}"></div>
    <div class="q-sec"><div class="q-label">Categoria</div><div class="chips" id="qCats">${cats.map(c=>`<button type="button" class="chip" data-q="cat" data-v="${esc(c.tipo+'|'+c.cat)}"><span class="dot" style="background:${BUCKETS[c.tipo].color}"></span>${esc(c.cat)}</button>`).join('')}<button type="button" class="chip" data-q="cat" data-v="__outra">＋ Outra</button></div>
@@ -2442,8 +2444,9 @@ function expenseForm(e,preset){
     {name:'pay',label:'Forma de pagamento',type:'select',options:payOpts,value:payVal},
     ...((state.contas||[]).length>1?[{name:'contaId',label:'Saiu de qual conta?',type:'select',options:[['','⭐ Conta principal']].concat(state.contas.map(x=>[x.id,x.nome])),value:e.contaId||''}]:[]),
     {name:'parcelas',label:'Nº de parcelas (cartão de crédito)',type:'number',step:'1',min:1,value:1},
+    ...(isNew?[]:[{type:'html',html:'<div id="fotoBox"></div>'}]),
     {type:'html',html:`<div id="payInfo" class="alert info" hidden style="margin:0"></div><div class="muted" style="font-size:12px">💳 Escolhendo um cartão de crédito, a compra desconta do <b>limite</b> e entra na fatura certa (com parcelas).${state.benefits.length?' 🧺 Vale: desconta do saldo do vale.':''}</div>`}
-  ],onRender:f=>{const pay=f.elements.pay,par=f.elements.parcelas,info=f.querySelector('#payInfo'),ct=f.elements.contaId;
+  ],onRender:f=>{if(!isNew)fotoPinta(e.id);const pay=f.elements.pay,par=f.elements.parcelas,info=f.querySelector('#payInfo'),ct=f.elements.contaId;
     const upd=()=>{const isC=pay.value.startsWith('card:'),c=isC?find(state.cards,pay.value.slice(5)):null;par.closest('label').hidden=!isC;if(ct)ct.closest('label').hidden=isC||pay.value.startsWith('ben:');
       info.hidden=!c;if(c){const v=parseNum(f.elements.valor.value),l=livre(c),n=Math.max(1,Math.round(parseNum(par.value)||1)),ft=faturaDe(c.id,f.elements.date.value||todayISO());
         info.className='alert '+(v>l?'bad':'info');info.innerHTML=`<div><b>${esc(c.nome)}</b> · limite livre <b>${brl(l)}</b> de ${brl(c.limite)}${v>0?`<br>Depois desta compra: <b>${brl(l-v)}</b>${v>l?' — passa do limite!':''}`:''}<br>1ª fatura: ${mLabel(ft,true)}${n>1&&v>0?' · '+n+'× de '+brl(v/n):''}</div>`}};
@@ -2614,7 +2617,7 @@ const ACT={
   addBudget:()=>budgetForm(),addBudgetTipo:t=>budgetForm(null,{tipo:t}),
   budTab:id=>{ui.budTab=id;view='budget';render();window.scrollTo(0,0)},
   transferir:()=>transferForm(),delTransfer:id=>delUndo('Transferência apagada',()=>{tomb(id);state.transfers=(state.transfers||[]).filter(t=>t.id!==id)}),
-  calTudo:()=>{ui.calTudo=!ui.calTudo;render()},
+  calTudo:()=>{ui.calTudo=!ui.calTudo;render()},irFechar:()=>{curMonth=addM(todayYM(),-1);view='fechar';render();window.scrollTo(0,0)},
   colarNotif:async()=>{let t='';try{t=await navigator.clipboard.readText()}catch(e){}
     if(t&&/R\$/i.test(t)){closeModal();abrirNotif(t);return}
     openForm({title:'Colar notificação do banco',saveLabel:'Ler',fields:[{type:'html',html:'<p class="muted" style="margin:0 0 8px">Copie o texto da notificação ou do SMS do banco e cole aqui:</p><textarea id="ntTxt" rows="4" style="width:100%;font-size:16px;padding:10px;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" placeholder="Ex.: Compra aprovada de R$ 23,90 em PADARIA X no cartão final 1234"></textarea>'}],
@@ -2847,7 +2850,7 @@ function vCalendario(){
 const SY={FILE:'minhas-financas-dados.json',LS:'finm_gist',cfg:null,busy:false,st:'',err:'',quando:null,base:null,t:null};
 try{SY.cfg=JSON.parse(localStorage.getItem(SY.LS))||null}catch(e){}
 const syCfg=c=>{SY.cfg=c;try{c?localStorage.setItem(SY.LS,JSON.stringify(c)):localStorage.removeItem(SY.LS)}catch(e){}};
-const LISTAS=['expenses','debts','cards','cardPurchases','goals','bills','benefits','investimentos','contas','transfers'];
+const LISTAS=['expenses','debts','cards','cardPurchases','goals','bills','benefits','investimentos','contas','transfers','splits'];
 const jj=x=>JSON.stringify(x===undefined?null:x);
 const canon=x=>JSON.stringify(x,(k,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.keys(v).sort().reduce((o,q)=>(o[q]=v[q],o),{}):v);
 const porId=s=>{const c=JSON.parse(jj(s));LISTAS.forEach(k=>c[k]=(c[k]||[]).slice().sort((a,b)=>String(a.id).localeCompare(String(b.id))));Object.values(c.months||{}).forEach(m=>['income','budget'].forEach(k=>m[k]=(m[k]||[]).slice().sort((a,b)=>String(a.id).localeCompare(String(b.id)))));return canon(c)};
@@ -2928,6 +2931,115 @@ Object.assign(ACT,{
   syAgora:()=>syncNow(true).then(()=>{if(view==='settings')render()})
 });
 {const _vs=VIEWS.settings;VIEWS.settings=()=>syCard()+_vs();}
+
+/* ============================================================
+   EXTRAS — ano & assinaturas, fechamento do mês, dividir despesas,
+   comprovante em foto e lançamento por frase/voz
+   ============================================================ */
+/* ---------- patrimônio líquido: guarda um retrato por mês ---------- */
+function plAgora(){return sum((state.contas||[]).map(c=>contaSaldo(c).v))+carteiraTotal()+sum(state.debts,d=>+d.valorBem||0)-totalDebt(todayYM())}
+function plRetrato(){try{if(!hasData(state))return;state.plHist=state.plHist||{};const v=Math.round(plAgora()*100)/100,ym=todayYM();if(Math.abs((state.plHist[ym]??1e15)-v)>1){state.plHist=Object.assign({},state.plHist,{[ym]:v});persistir()}}catch(e){console.warn(e)}}
+/* ---------- gastos que se repetem (assinaturas) ---------- */
+function recorrentes(){
+  const ms=[...Array(6)].map((_,i)=>addM(todayYM(),-i)),G={},dcat=new Set(state.debts.map(d=>norm(d.cat)));
+  ms.forEach(ym=>actualEntries(ym,true).forEach(e=>{if(e.tipo==='savings'||dcat.has(norm(e.cat))||(e.ref&&e.ref.billId)||(e.src==='card'&&e.ref.p.parcelas>1))return;
+    const k=norm(e.desc.replace(/\(\d+\/\d+\)/,'')).trim();if(k.length<3)return;(G[k]=G[k]||{desc:e.desc.replace(/\s*\(\d+\/\d+\)/,''),cat:e.cat,tipo:e.tipo,m:{}}).m[ym]=(G[k].m[ym]||0)+e.valor}));
+  return Object.values(G).map(g=>{const v=Object.values(g.m).sort((a,b)=>a-b),med=v[Math.floor(v.length/2)];return{...g,n:v.length,med,ok:v.length>=3&&v.every(x=>Math.abs(x-med)<=med*.2)}}).filter(g=>g.ok).sort((a,b)=>b.med-a.med);
+}
+function vAnual(){
+  const ano=curMonth.slice(0,4),ms=[...Array(12)].map((_,i)=>ano+'-'+String(i+1).padStart(2,'0')).filter(ym=>state.months[ym]||actualEntries(ym).length);
+  const D=ms.map(ym=>{const b=bucketSummary(ym);return{ym,inc:incomeTotal(ym),needs:b.needs.real,wants:b.wants.real,sav:b.savings.real}});
+  const T=k=>sum(D,d=>d[k]),inc=T('inc'),gasto=T('needs')+T('wants'),cats={};
+  ms.forEach(ym=>actualEntries(ym).filter(e=>e.tipo!=='savings').forEach(e=>cats[e.cat]=(cats[e.cat]||0)+e.valor));
+  const top=Object.entries(cats).sort((a,b)=>b[1]-a[1]).slice(0,8),R=recorrentes(),fixas=state.bills.filter(b=>billActive(b,todayYM()));
+  const comG=D.filter(d=>d.needs+d.wants>0),melhor=[...comG].sort((a,b)=>(b.inc-b.needs-b.wants)-(a.inc-a.needs-a.wants))[0],pior=[...comG].sort((a,b)=>(a.inc-a.needs-a.wants)-(b.inc-b.needs-b.wants))[0];
+  const ph=Object.entries(state.plHist||{}).sort();
+  let h=`<div class="card hero"><div class="lbl">📆 Seu ano de ${ano}</div><div class="big">${brl(inc-gasto)}</div><div class="mini"><span>renda (${brl(inc)}) menos gastos, em ${D.length} mês(es) — inclui o que você poupou</span></div></div>
+  <div class="grid g4">${kpi('Renda no ano',brl(inc),D.length?brl(inc/D.length)+'/mês':'')}${kpi('Gasto no ano',brl(gasto),inc?pctf(gasto/inc*100,0)+' da renda':'',null,gasto>inc?'neg':'')}${kpi('Poupado no ano',brl(T('sav')),inc?pctf(T('sav')/inc*100)+' da renda':'',null,'pos')}${kpi('Melhor mês',melhor?mLabel(melhor.ym):'—',melhor?'sobrou '+brl(melhor.inc-melhor.needs-melhor.wants):'')}</div>`;
+  if(!D.length)return h+'<div class="card empty">Ainda não há meses com dados neste ano.</div>';
+  h+=`<div class="card"><h3>Mês a mês</h3><div class="sub">Renda × gastos × poupança${pior&&pior!==melhor?' · mês mais apertado: '+mLabel(pior.ym):''}</div><div class="chart-box"><canvas id="chAno"></canvas></div></div>
+  <div class="card"><h3>🏆 Para onde foi o dinheiro no ano</h3>${top.map(([c,v])=>`<div style="margin:9px 0"><div class="stat-line"><span>${esc(c)}</span><b>${brl(v)} <span class="muted">· ${pctf(gasto?v/gasto*100:0,0)}</span></b></div>${bar(v/top[0][1]*100)}</div>`).join('')}</div>
+  <div class="card"><h3>🔁 Assinaturas e gastos que se repetem</h3><div class="sub">Detectados nos últimos 6 meses (mesmo nome, valor parecido, 3 meses ou mais)</div>
+   ${R.length?R.map(g=>`<div class="mrow" style="cursor:default"><div class="tx"><b>${esc(g.desc)}</b><small>${esc(g.cat)} · apareceu em ${g.n} meses</small></div><div class="vl" style="text-align:right">${brl(g.med)}<div class="muted" style="font-size:11px;font-weight:600">${brl(g.med*12)}/ano</div></div></div>`).join('')+`<div class="alert warn" style="margin-top:10px">Somam <b>${brl(sum(R,g=>g.med))}/mês = ${brl(sum(R,g=>g.med)*12)}/ano</b>. Pergunta do coach: você ainda usa todos? Cancelar um que não usa é o corte mais fácil que existe.</div>`:'<div class="empty">Nenhum gasto repetido encontrado ainda. Lance os gastos sempre com o mesmo nome para o app reconhecer.</div>'}
+   ${fixas.length?`<div class="stat-line" style="margin-top:8px"><span>Contas fixas cadastradas (${fixas.length})</span><b>${brl(sum(fixas,b=>+b.valor))}/mês</b></div>`:''}</div>
+  <div class="card"><h3>🏛 Evolução do patrimônio líquido</h3><div class="sub">O app guarda um retrato por mês a partir de agora</div>${ph.length>1?'<div class="chart-box sm"><canvas id="chPL"></canvas></div>':`<div class="stat-line"><span>${ph.length?mLabel(ph[0][0],true):'Hoje'}</span><b>${brl(ph.length?ph[0][1]:plAgora())}</b></div><div class="muted" style="font-size:12px">O gráfico aparece a partir do segundo mês.</div>`}</div>`;
+  setTimeout(()=>{
+    mkChart('chAno',{type:'bar',data:{labels:D.map(d=>mLabel(d.ym)),datasets:[{label:'Renda',data:D.map(d=>d.inc),backgroundColor:cssVar('--accent'),borderRadius:4},{label:'Gastos',data:D.map(d=>d.needs+d.wants),backgroundColor:cssVar('--wants'),borderRadius:4},{label:'Poupado',data:D.map(d=>d.sav),backgroundColor:cssVar('--savings'),borderRadius:4}]},options:{scales:{y:moneyAxis,x:{grid:{display:false}}},plugins:{legend:{position:'bottom',labels:{boxWidth:8}}}}});
+    if(ph.length>1)mkChart('chPL',{type:'line',data:{labels:ph.map(x=>mLabel(x[0])),datasets:[{label:'Patrimônio',data:ph.map(x=>x[1]),borderColor:cssVar('--savings'),backgroundColor:cssVar('--savings')+'22',fill:true,tension:.3}]},options:{plugins:{legend:{display:false}},scales:{y:moneyAxis,x:{grid:{display:false}}}}})});
+  return h;
+}
+/* ---------- fechamento do mês guiado ---------- */
+function vFechar(){
+  const ym=curMonth,prox=addM(ym,1),inc=incomeTotal(ym),b=bucketSummary(ym),gasto=b.needs.real+b.wants.real,F=(state.fechamentos||{})[ym];
+  const est=comparison(ym).filter(r=>r.tipo!=='savings'&&r.plan>0&&r.diff>0.005).sort((a,c)=>c.diff-a.diff).slice(0,6),sem=comparison(ym).filter(r=>r.unplanned&&r.real>0),pend=billsOf(ym).filter(x=>!x.pay),nx=state.months[prox]?month(prox).budget:[],faltam=month(ym).budget.filter(b=>!nx.some(x=>x.tipo===b.tipo&&norm(x.cat)===norm(b.cat))),vazio=faltam.length>0;
+  const passo=(n,t,ok,corpo)=>`<div class="card"><div class="row" style="flex-wrap:nowrap;margin-bottom:8px"><div class="ic" style="width:34px;height:34px;border-radius:50%;display:grid;place-items:center;flex:none;font-weight:800;background:${ok?'color-mix(in srgb,var(--ok) 22%,transparent)':'var(--panel2)'}">${ok?'✓':n}</div><h3 style="margin:0">${t}</h3></div>${corpo}</div>`;
+  return`<div class="card hero"><div class="lbl">🗓 Fechamento de ${mLabel(ym,true)}</div><div class="big">${F?'Fechado ✓':'5 passos · 5 minutos'}</div><div class="mini"><span>${F?'Concluído em '+fmtDate(F.slice(0,10)):'Use as setas do topo para escolher o mês que quer fechar.'}</span></div></div>`+
+  passo(1,'Como foi o mês',true,`<div class="stat-line"><span>Renda</span><b>${brl(inc)}</b></div><div class="stat-line"><span>Gastos (Needs + Wants)</span><b>${brl(gasto)}</b></div><div class="stat-line"><span>Poupado</span><b class="pos">${brl(b.savings.real)}${inc?' · '+pctf(b.savings.real/inc*100):''}</b></div><div class="stat-line"><span>Sobrou sem destino</span><b class="${inc-gasto-b.savings.real<0?'neg':''}">${brl(inc-gasto-b.savings.real)}</b></div>${inc-gasto-b.savings.real>50?'<div class="alert ok" style="margin-top:8px">💡 Sobrou dinheiro sem destino: mande para a reserva ou para uma meta antes que ele suma.</div>':inc-gasto-b.savings.real<0?'<div class="alert bad" style="margin-top:8px">O mês fechou no vermelho. Veja no passo 2 onde estourou e ajuste o próximo.</div>':''}`)+
+  passo(2,'Onde passou do planejado',!est.length,est.length?est.map(r=>`<div class="mrow" style="cursor:default"><div class="tx"><b>${esc(r.cat)}</b><small>planejado ${brl(r.plan)} · gastou ${brl(r.real)} (+${brl(r.diff)})</small></div><button class="btn sm" data-act="fecAjusta" data-id="${esc(r.tipo+'::'+r.cat)}">Usar ${brl(Math.ceil(r.real/10)*10)} em ${mLabel(prox)}</button></div>`).join('')+'<div class="muted" style="font-size:12px;margin-top:6px">Se o estouro foi exceção, não mexa. Se acontece todo mês, o budget é que está irreal — ajuste.</div>':'<div class="alert ok">Nenhuma categoria passou do budget. 👏</div>')+
+  passo(3,'Pendências',!pend.length&&!sem.length,(pend.length?`<div class="alert warn">${pend.length} conta(s) fixa(s) sem pagamento lançado: ${pend.map(x=>esc(x.b.nome)).join(', ')}. <button class="btn sm" data-act="nav" data-id="bills">Abrir contas</button></div>`:'')+(sem.length?`<div class="alert warn">${sem.length} categoria(s) com gasto fora do orçamento: ${sem.map(r=>esc(r.cat)).join(', ')}. <button class="btn sm" data-act="budTab" data-id="needs">Organizar</button></div>`:'')+(!pend.length&&!sem.length?'<div class="alert ok">Tudo em ordem.</div>':''))+
+  passo(4,'Preparar '+mLabel(prox,true),!vazio,vazio?`<p class="muted" style="margin:0 0 10px">${nx.length?'Faltam '+faltam.length+' categoria(s) deste mês em '+mLabel(prox,true)+'.':mLabel(prox,true)+' ainda não tem orçamento.'}</p><button class="btn primary" data-act="fecCopiar">${nx.length?'Completar com as categorias deste mês':'Copiar orçamento e rendas fixas deste mês'}</button>`:`<div class="alert ok">${mLabel(prox,true)} já tem orçamento (${brl(sum(month(prox).budget,x=>x.valor))} planejados).</div>`)+
+  passo(5,'Guardar uma cópia',!!SY.cfg||!backupDue(),SY.cfg?`<div class="alert ok">☁️ Sincronização ligada — seus dados já estão na nuvem.</div>`:`<button class="btn" data-act="shareBackup">📤 Fazer backup agora</button>`)+
+  `<button class="btn primary" data-act="fecConcluir" style="justify-content:center;padding:14px">${F?'Fechar de novo':'✅ Concluir fechamento de '+mLabel(ym,true)}</button>`;
+}
+/* ---------- dividir despesas ---------- */
+function splitSaldos(){const S={};(state.splits||[]).forEach(s=>{const outro=s.valor*(1-(+s.minha)/100),eu=s.valor*(+s.minha)/100;S[s.pessoa]=(S[s.pessoa]||0)+(s.tipo==='acerto'?s.valor*(s.quem==='eu'?1:-1):s.quem==='eu'?outro:-eu)});return S}
+function vDividir(){
+  const L=[...(state.splits||[])].sort((a,b)=>b.date.localeCompare(a.date)||(b.criado||0)-(a.criado||0)),S=splitSaldos(),P=Object.entries(S);
+  let h=`<div class="card"><div class="card-head"><div><h3>🤝 Dividir despesas</h3><div class="sub">Anote o que foi dividido e o app calcula quem deve quanto</div></div><button class="btn sm primary" data-act="splitAdd">+ Despesa</button></div>
+   ${P.length?P.map(([p,v])=>`<div class="mrow" style="cursor:default"><div class="ic" style="background:var(--panel2)">👤</div><div class="tx"><b>${esc(p)}</b><small>${Math.abs(v)<0.01?'Tudo certo, ninguém deve nada':v>0?'deve para você':'você deve'}</small></div><div class="vl ${v>0.01?'pos':v<-0.01?'neg':''}">${brl(Math.abs(v))}</div>${Math.abs(v)>=0.01?`<button class="btn sm" data-act="splitAcerto" data-id="${esc(p)}">Acertar</button>`:''}</div>`).join(''):'<div class="empty">Nada dividido ainda. Ex.: você pagou R$ 120 de pizza dividida meio a meio — a outra pessoa deve R$ 60.</div>'}</div>`;
+  if(L.length)h+=`<div class="card"><h3>Histórico</h3><div class="mlist">${L.slice(0,40).map(s=>`<div class="mrow" style="cursor:default"><div class="tx"><b>${s.tipo==='acerto'?'💸 Acerto de contas':esc(s.desc)}</b><small>${fmtDate(s.date)} · ${esc(s.pessoa)} · ${s.tipo==='acerto'?(s.quem==='eu'?'você pagou':'pagou para você'):(s.quem==='eu'?'você pagou':esc(s.pessoa)+' pagou')+' · sua parte '+s.minha+'%'}</small></div><div class="vl">${brl(s.valor)}</div><button class="icon-btn" data-act="splitDel" data-id="${s.id}">🗑</button></div>`).join('')}</div></div>`;
+  return h+`<div class="muted" style="font-size:12px;padding:0 4px">Isto é só um caderno de "quem deve quem". Para o gasto entrar no seu orçamento, lance a sua parte normalmente no +.</div>`;
+}
+function splitForm(){
+  const nomes=[...new Set((state.splits||[]).map(s=>s.pessoa))];
+  openForm({title:'Despesa dividida',fields:[
+    {name:'pessoa',label:'Com quem',value:nomes[0]||'',list:nomes,required:true,placeholder:'Nome'},
+    {name:'desc',label:'O que foi',required:true,placeholder:'Ex.: Mercado do mês'},
+    {name:'valor',label:'Valor total (R$)',type:'number',step:'0.01',min:0,required:true},
+    {name:'quem',label:'Quem pagou',type:'select',options:[['eu','Eu paguei'],['outro','A outra pessoa pagou']],value:'eu'},
+    {name:'minha',label:'Minha parte (%)',type:'number',step:'1',min:0,value:50},
+    {name:'date',label:'Data',type:'date',value:todayISO()}
+  ],onSave:d=>{if(!(d.valor>0))return false;d.minha=Math.max(0,Math.min(100,d.minha));state.splits=state.splits||[];state.splits.push({id:uid(),criado:Date.now(),tipo:'despesa',...d});toast('Anotado')}});
+}
+/* ---------- comprovante em foto (fica só neste aparelho) ---------- */
+function fotoReduz(file){return new Promise((ok,err)=>{const im=new Image(),u=URL.createObjectURL(file);im.onload=()=>{const k=Math.min(1,1000/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);c.getContext('2d').drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(u);ok(c.toDataURL('image/jpeg',.6))};im.onerror=err;im.src=u})}
+async function fotoPinta(id){const box=$('#fotoBox');if(!box)return;let d=null;try{d=await kvGet('foto:'+id)}catch(e){}const e=find(state.expenses,id);
+  box.innerHTML=d?`<img src="${d}" alt="Comprovante" style="width:100%;border-radius:12px;border:1px solid var(--border)"><div class="row" style="margin-top:8px"><button type="button" class="btn sm" data-act="fotoTroca" data-id="${id}">📷 Trocar</button><button type="button" class="btn sm danger" data-act="fotoDel" data-id="${id}">Remover foto</button></div>`
+   :`<button type="button" class="btn" data-act="fotoTroca" data-id="${id}">📷 Anexar comprovante</button>${e&&e.foto?'<div class="muted" style="font-size:12px;margin-top:6px">Este gasto tem uma foto guardada em outro aparelho.</div>':''}`}
+/* ---------- lançar por frase ou voz: "mercado 85 no pix" ---------- */
+const sa=x=>norm(x).normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+function lerFrase(txt){
+  const o={},n=sa(txt);if(!n)return o;
+  const v=txt.match(/(\d{1,3}(?:\.\d{3})*,\d{1,2}|\d+(?:[.,]\d{1,2})?)/);if(v)o.valor=parseNum(v[1].includes(',')?v[1]:v[1].replace('.',','));
+  const ben=state.benefits.find(b=>/\bvale\b|\bva\b|\bvr\b/.test(n)||n.includes(sa(b.nome))),card=state.cards.find(c=>n.includes(sa(c.nome)));
+  if(/\bpix\b/.test(n))o.pay='Pix';else if(/\bdebito\b/.test(n))o.pay='Débito';else if(/\bdinheiro\b/.test(n))o.pay='Dinheiro';else if(/\bboleto\b/.test(n))o.pay='Boleto';
+  else if(ben)o.pay='ben:'+ben.id;else if((card||/credito|cartao/.test(n))&&state.cards.length)o.pay='card:'+(card||state.cards[0]).id;
+  const cats=[];month().budget.forEach(b=>cats.push({cat:b.cat,tipo:b.tipo}));state.expenses.slice(-300).forEach(e=>cats.push({cat:e.cat,tipo:e.tipo}));
+  const hit=cats.filter(c=>c.cat).sort((a,b)=>b.cat.length-a.cat.length).find(c=>n.includes(sa(c.cat))||sa(c.cat).split(/[\s/&-]+/).some(w=>w.length>3&&n.split(' ').includes(w)));
+  if(hit){o.cat=hit.cat;o.tipo=hit.tipo}
+  const resto=txt.replace(v?v[0]:'','').replace(/\b(reais|real|r\$|no|na|em|de|com|pix|d[eé]bito|cr[eé]dito|cart[aã]o|dinheiro|boleto|vale)\b/gi,' ').replace(/\s+/g,' ').trim();
+  if(resto)o.desc=resto.charAt(0).toUpperCase()+resto.slice(1);
+  if(!o.cat&&o.desc){const d=sa(o.desc).split(' ')[0],ant=[...state.expenses].reverse().find(e=>d.length>2&&sa(e.desc).includes(d));if(ant){o.cat=ant.cat;o.tipo=ant.tipo}}
+  return o;
+}
+const VOZ=window.SpeechRecognition||window.webkitSpeechRecognition;
+Object.assign(ACT,{
+  frase:()=>{const t=($('#qFrase')||{}).value||'';const o=lerFrase(t);if(!(o.valor>0)){toast('Diga o valor. Ex.: "mercado 85 no pix"','err');return}closeModal();quickAdd(o)},
+  voz:()=>{if(!VOZ)return;const r=new VOZ();r.lang='pt-BR';r.interimResults=false;const b=$('#qVoz');if(b)b.textContent='🎙 Ouvindo…';
+    r.onresult=e=>{const t=e.results[0][0].transcript;const i=$('#qFrase');if(i)i.value=t;ACT.frase()};r.onerror=()=>{toast('Não consegui ouvir. Digite a frase ou use o microfone do teclado.','err');if(b)b.textContent='🎤'};r.onend=()=>{if(b)b.textContent='🎤'};try{r.start()}catch(e){}},
+  fecAjusta:id=>{const[t,...c]=id.split('::'),cat=c.join('::'),r=comparison(curMonth).find(x=>x.tipo===t&&x.cat===cat),prox=addM(curMonth,1),m=month(prox,true),v=Math.ceil(r.real/10)*10;
+    let it=m.budget.find(b=>b.tipo===t&&norm(b.cat)===norm(cat));if(!it){it={id:uid(),cat,tipo:t,valor:0};m.budget.push(it)}it.valor=v;save();render();toast(cat+' em '+mLabel(prox)+': '+brl(v))},
+  fecCopiar:()=>{const a=month(curMonth),prox=addM(curMonth,1),m=month(prox,true);
+    a.budget.forEach(b=>{if(!m.budget.some(x=>x.tipo===b.tipo&&norm(x.cat)===norm(b.cat)))m.budget.push({...b,id:uid()})});
+    if(!(m.income||[]).length){m.income=(a.income||[]).filter(i=>i.natureza!=='variavel').map(i=>({...i,id:uid(),date:i.date?prox+i.date.slice(7):i.date}));if(a.pct)m.pct={...a.pct}}save();render();toast('Orçamento de '+mLabel(prox,true)+' criado')},
+  fecConcluir:()=>{state.fechamentos=Object.assign({},state.fechamentos,{[curMonth]:new Date().toISOString()});save();render();window.scrollTo(0,0);try{fxMoeda('savings')}catch(e){}toast('Mês fechado ✓ Bom trabalho!')},
+  splitAdd:()=>splitForm(),
+  splitDel:id=>delUndo('Anotação apagada',()=>{tomb(id);state.splits=(state.splits||[]).filter(s=>s.id!==id)}),
+  splitAcerto:p=>{const v=splitSaldos()[p]||0;if(Math.abs(v)<0.01)return;state.splits.push({id:uid(),criado:Date.now(),tipo:'acerto',pessoa:p,valor:Math.round(Math.abs(v)*100)/100,quem:v>0?'outro':'eu',minha:0,date:todayISO(),desc:'Acerto'});save();render();toast('Contas acertadas com '+p)},
+  fotoTroca:id=>{const i=document.createElement('input');i.type='file';i.accept='image/*';i.onchange=async()=>{const f=i.files[0];if(!f)return;try{await kvSet('foto:'+id,await fotoReduz(f));const e=find(state.expenses,id);if(e&&!e.foto){e.foto=true;save()}fotoPinta(id);toast('Comprovante guardado')}catch(e){toast('Não consegui ler a imagem','err')}};i.click()},
+  fotoDel:async id=>{try{await kvSet('foto:'+id,undefined)}catch(e){}const e=find(state.expenses,id);if(e&&e.foto){delete e.foto;save()}fotoPinta(id)}
+});
+Object.assign(VIEWS,{anual:vAnual,fechar:vFechar,dividir:vDividir});
 
 /* ============================================================
    BLOQUEIO DO APP — senha, padrão desenhado ou impressão digital
@@ -3116,7 +3228,7 @@ ACT.toggleFx=()=>{closeModal();state.settings.fx=state.settings.fx===false;save(
   matchMedia('(max-width:820px)').addEventListener('change',()=>{if(!isMobile()&&view==='home')view='dashboard';render()});
   const temDados=await carregar();revAoAbrir=rev;fileRev=-1;
   pedirPersistencia().then(()=>{if(view==='settings')render()});
-  syPinta();syncNow();
+  syPinta();syncNow();setTimeout(plRetrato,1500);
   const lerHash=()=>{if(!location.hash.startsWith('#n='))return;let t='';try{t=decodeURIComponent(location.hash.slice(3))}catch(e){}history.replaceState(null,'',location.pathname);if(t)setTimeout(()=>{closeModal();abrirNotif(t)},400)};
   lerHash();addEventListener('hashchange',lerHash);
   render();
