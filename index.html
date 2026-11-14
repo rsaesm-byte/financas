@@ -665,7 +665,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.14-3';
+const APP_VERSAO='2026.11.14-4';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -1279,7 +1279,7 @@ function dayLabel(iso){const t=todayISO(),y=toISO(new Date(Date.now()-864e5));if
 function expRow(e){
   const c=BUCKETS[e.tipo]?BUCKETS[e.tipo].color:'#888',act=e.src==='exp'?`data-act="editExpense" data-id="${e.ref.id}"`:`data-act="editPurchase" data-id="${e.ref.p.id}"`;
   const ini=(e.src==='card'?'💳':e.ref&&e.ref.benefitId?'🧺':esc((e.cat||'?').trim().charAt(0).toUpperCase()));
-  return`<div class="mrow" ${act}><div class="ic" style="background:${c}22;color:${c}">${ini}</div><div class="tx"><b>${esc(e.desc)}</b><small>${esc(e.cat||'Sem categoria')} · ${esc(e.pay||'')}${e.fund?' · pago pela reserva':''}${(()=>{const o=e.src==='exp'?e.ref:e.ref&&e.ref.p;return o&&o.tags&&o.tags.length?' · <span style="color:var(--accent)">'+esc(tagsTxt(o))+'</span>':''})()}${e.ref&&(e.ref.auto||(e.ref.p&&e.ref.p.auto))?' · ⚙ automático':''}</small></div><div class="vl ${e.tipo==='savings'?'pos':''}">${brl(e.valor)}</div></div>`;
+  return`<div class="mrow" ${act}><div class="ic" style="background:${c}22;color:${c}">${ini}</div><div class="tx"><b>${esc(e.desc)}</b><small>${esc(e.cat||'Sem categoria')} · ${esc(e.pay||'')}${e.fund?' · pago pela reserva':''}${(()=>{const o=e.src==='exp'?e.ref:e.ref&&e.ref.p;return o&&o.tags&&o.tags.length?' · <span style="color:var(--accent)">'+esc(tagsTxt(o))+'</span>':''})()}${e.ref&&(e.ref.auto||(e.ref.p&&e.ref.p.auto))?' · ⚙ automático':''}${(()=>{const o=e.src==='exp'?e.ref:e.ref&&e.ref.p;return o&&o.por&&pessoasLanc().length>1?' · 👤 '+esc(o.por):''})()}</small></div><div class="vl ${e.tipo==='savings'?'pos':''}">${brl(e.valor)}</div></div>`;
 }
 function expList(list){
   const by={};list.forEach(e=>(by[e.date]=by[e.date]||[]).push(e));
@@ -1375,9 +1375,9 @@ function quickAdd(preset={}){
     if(!(d.valor>0)){toast('Digite o valor','err');f.elements.valor.focus();return}
     if(!d.cat){toast('Escolha a categoria','err');return}
     const tg=[];const desc=d.desc.replace(/#[\wÀ-ÿ-]+/g,m=>{tg.push(m);return''}).replace(/\s+/g,' ').trim()||d.cat;const tags=parseTags(tg.join(' '));let undo;
-    if(d.pay.startsWith('card:')){const cid=d.pay.slice(5),p={id:uid(),cardId:cid,desc,valorTotal:d.valor,parcelas:d.parcelas,dataCompra:d.date,primeiraFatura:faturaDe(cid,d.date),cat:d.cat,tipo:d.tipo};if(tags.length)p.tags=tags;state.cardPurchases.push(p);
+    if(d.pay.startsWith('card:')){const cid=d.pay.slice(5),p={id:uid(),cardId:cid,desc,valorTotal:d.valor,parcelas:d.parcelas,dataCompra:d.date,primeiraFatura:faturaDe(cid,d.date),cat:d.cat,tipo:d.tipo};if(tags.length)p.tags=tags;stampPor(p);state.cardPurchases.push(p);
       undo=()=>{tomb(p.id);state.cardPurchases=state.cardPurchases.filter(x=>x!==p)};}
-    else{const x={id:uid(),criado:Date.now(),desc,valor:d.valor,date:d.date,cat:d.cat,tipo:d.tipo,pay:d.pay};if(tags.length)x.tags=tags;
+    else{const x={id:uid(),criado:Date.now(),desc,valor:d.valor,date:d.date,cat:d.cat,tipo:d.tipo,pay:d.pay};if(tags.length)x.tags=tags;stampPor(x);
       if(CT.length>1&&(PAY_CONTA.includes(d.pay)||d.pay==='Dinheiro')&&sel.conta){x.contaId=sel.conta;meta.lastConta=sel.conta}
       if(d.pay.startsWith('ben:')){const b=find(state.benefits,d.pay.slice(4));x.benefitId=b?b.id:undefined;x.pay=b?b.nome:'Vale'}
       state.expenses.push(x);undo=()=>{tomb(x.id);state.expenses=state.expenses.filter(y=>y!==x)}}
@@ -2173,7 +2173,7 @@ function progEtapas(){
 }
 /* ---------- telas ---------- */
 const INV_TABS=[['prog','🧭 Programa'],['guia','📚 Guia'],['perfil','🧑‍💼 Perfil'],['carteira','💼 Carteira'],['sim','🧮 Simular'],['seg','🔐 Segurança']];
-function vInvest(){
+function vInvest(){invAtualiza();
   inv();const tab=ui.invTab||'prog';
   const tabs=`<div class="chips" style="flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch">${INV_TABS.map(([k,l])=>`<button class="chip ${tab===k?'on':''}" data-act="invTab" data-id="${k}" style="flex:none">${l}</button>`).join('')}</div>`;
   let h='';try{h={prog:vProg,guia:vGuia,perfil:vInvPerfil,carteira:vCarteira,sim:vSim,seg:vSeg}[tab]()}catch(e){console.error(e);h=`<div class="card empty">Erro: ${esc(e.message)}</div>`}
@@ -2561,12 +2561,12 @@ function expenseForm(e,preset){
     [pay,par,f.elements.valor,f.elements.date].forEach(x=>{x.addEventListener('input',upd);x.addEventListener('change',upd)});upd()},
   onSave:d=>{const parc=Math.max(1,Math.round(d.parcelas||1));delete d.parcelas;d.tags=parseTags(d.tags);if(!d.tags.length)d.tags=undefined;
     if(String(d.pay)==='card:new'){toast('Cadastre o cartão primeiro','err');setTimeout(()=>cardForm(),80);return false}
-    if(String(d.pay).startsWith('card:')&&!(e.fundId&&!isNew)){const cid=d.pay.slice(5),ft=faturaDe(cid,d.date),p={id:uid(),cardId:cid,desc:d.desc,valorTotal:d.valor,parcelas:parc,dataCompra:d.date,primeiraFatura:ft,cat:d.cat,tipo:d.tipo};if(d.tags)p.tags=d.tags;
+    if(String(d.pay).startsWith('card:')&&!(e.fundId&&!isNew)){const cid=d.pay.slice(5),ft=faturaDe(cid,d.date),p={id:uid(),cardId:cid,desc:d.desc,valorTotal:d.valor,parcelas:parc,dataCompra:d.date,primeiraFatura:ft,cat:d.cat,tipo:d.tipo};if(d.tags)p.tags=d.tags;stampPor(p);
       state.cardPurchases.push(p);if(!isNew){tomb(e.id);state.expenses=state.expenses.filter(y=>y!==e)}
       const c=find(state.cards,cid);setTimeout(()=>{coachShow({cat:d.cat,tipo:d.tipo,valor:d.valor,date:d.date,ym:ft,valorMes:d.valor/parc,parcelas:parc},isNew?()=>{tomb(p.id);state.cardPurchases=state.cardPurchases.filter(y=>y!==p);save();render();toast('Lançamento desfeito')}:null,brl(d.valor)+' no '+(c?c.nome:'cartão'));if(c)toast('Limite livre do '+c.nome+': '+brl(livre(c)))},60);return}
     if(e.fundId&&!isNew){const g=find(state.goals,e.fundId);if(g)g.guardado=Math.round(((+g.guardado)+(+e.valor)-(+d.valor))*100)/100;d.pay=e.pay}
     else if(String(d.pay).startsWith('ben:')){const b=find(state.benefits,d.pay.slice(4));d.benefitId=b?b.id:undefined;d.pay=b?b.nome:'Vale'}else d.benefitId=undefined;
-    if(isNew){const x={id:uid(),criado:Date.now(),...d};state.expenses.push(x);setTimeout(()=>coachShow(x,()=>{tomb(x.id);state.expenses=state.expenses.filter(y=>y!==x);save();render();toast('Lançamento desfeito')},brl(x.valor)+' lançado'),60)}else{Object.assign(e,d);toast('Gasto salvo')}},
+    if(isNew){const x=stampPor({id:uid(),criado:Date.now(),...d});state.expenses.push(x);setTimeout(()=>coachShow(x,()=>{tomb(x.id);state.expenses=state.expenses.filter(y=>y!==x);save();render();toast('Lançamento desfeito')},brl(x.valor)+' lançado'),60)}else{Object.assign(e,d);toast('Gasto salvo')}},
     extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelExpense" data-id="${e.id}" title="Excluir">🗑</button><button type="button" class="btn" data-act="dupExpense" data-id="${e.id}" title="Duplicar">⧉</button>${+e.valor>0?`<button type="button" class="btn" data-act="estorno" data-id="e:${e.id}" title="Registrar estorno">↩</button>`:''}`});
 }
 function incomeForm(i){
@@ -2579,7 +2579,7 @@ function incomeForm(i){
     {name:'date',label:'Data de recebimento',type:'date',value:i.date},
     ...((state.contas||[]).length>1?[{name:'contaId',label:'Caiu em qual conta?',type:'select',options:[['','⭐ Conta principal']].concat(state.contas.map(x=>[x.id,x.nome])),value:i.contaId||''}]:[]),
     {name:'recorrente',label:'🔁 Repetir automaticamente todo mês (lança sozinho nos próximos meses)',type:'checkbox',value:!!i.recorrente}
-  ],onSave:d=>{const m=month(curMonth,true);if(d.recorrente&&!i.recId)d.recId=uid();if(isNew)m.income.push({id:uid(),criado:Date.now(),...d});else Object.assign(i,d);toast(d.recorrente?'Renda salva — vai se repetir todo mês':'Renda salva');setTimeout(autoRecorrentes,50)}});
+  ],onSave:d=>{const m=month(curMonth,true);if(d.recorrente&&!i.recId)d.recId=uid();if(isNew)m.income.push(stampPor({id:uid(),criado:Date.now(),...d}));else Object.assign(i,d);toast(d.recorrente?'Renda salva — vai se repetir todo mês':'Renda salva');setTimeout(autoRecorrentes,50)}});
 }
 function budgetForm(b,preset){
   const isNew=!b;b=b||Object.assign({tipo:'needs'},preset);const old={cat:b.cat,tipo:b.tipo};
@@ -2650,7 +2650,7 @@ function purchaseForm(p,preset){
     {name:'primeiraFatura',label:'Fatura da 1ª parcela (calculada pelo fechamento)',type:'month',value:p.primeiraFatura,required:true},
     {name:'cat',label:'Categoria',value:p.cat,list:categoriesList(),required:true},
     {name:'tipo',label:'Grupo',type:'select',options:tipoOpts,value:p.tipo}
-  ],onSave:d=>{d.parcelas=Math.max(1,Math.round(d.parcelas));d.tags=parseTags(d.tags);if(!d.tags.length)d.tags=undefined;if(isNew)state.cardPurchases.push({id:uid(),...d});else Object.assign(p,d);toast('Compra salva')},
+  ],onSave:d=>{d.parcelas=Math.max(1,Math.round(d.parcelas));d.tags=parseTags(d.tags);if(!d.tags.length)d.tags=undefined;if(isNew)state.cardPurchases.push(stampPor({id:uid(),criado:Date.now(),...d}));else Object.assign(p,d);toast('Compra salva')},
     extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelPurchase" data-id="${p.id}" title="Excluir">🗑</button>${+p.valorTotal>0?`<button type="button" class="btn" data-act="estorno" data-id="p:${p.id}" title="Registrar estorno">↩ Estorno</button>`:''}`});
 }
 function goalForm(g){
@@ -2711,7 +2711,7 @@ const ACT={
   delBill:id=>delUndo('Conta fixa excluída (pagamentos já lançados continuam)',()=>{tomb(id);state.bills=state.bills.filter(x=>x.id!==id)}),
   payBill:id=>{const b=find(state.bills,id);const def=curMonth===todayYM()?todayISO():isoOf(curMonth,+b.dia||1);
     openForm({title:'Pagar — '+b.nome,saveLabel:'Confirmar pagamento',fields:[{name:'valor',label:'Valor pago (R$)',type:'number',step:'0.01',min:0,value:b.valor,required:true},{name:'date',label:'Data do pagamento',type:'date',value:def,required:true},{name:'pay',label:'Forma de pagamento',type:'select',options:PAY,value:b.pay},{type:'html',html:'<div class="muted" style="font-size:12px">O pagamento será lançado como gasto na categoria <b>'+esc(b.cat)+'</b> e comparado com o budget.</div>'}],
-      onSave:x=>{const e={id:uid(),criado:Date.now(),desc:b.nome,valor:x.valor,date:x.date,cat:b.cat,tipo:b.tipo,pay:x.pay,billId:b.id,billMonth:curMonth};state.expenses.push(e);setTimeout(()=>coachShow({...e,ym:curMonth},null,b.nome+' paga'),60)}})},
+      onSave:x=>{const e={por:quem()||undefined,id:uid(),criado:Date.now(),desc:b.nome,valor:x.valor,date:x.date,cat:b.cat,tipo:b.tipo,pay:x.pay,billId:b.id,billMonth:curMonth};state.expenses.push(e);setTimeout(()=>coachShow({...e,ym:curMonth},null,b.nome+' paga'),60)}})},
   unpayBill:id=>{const e=state.expenses.find(x=>x.billId===id&&x.billMonth===curMonth);if(e)delUndo('Pagamento desfeito',()=>{tomb(e.id);state.expenses=state.expenses.filter(x=>x!==e)})},
   billsToBudget:()=>{const m=month(curMonth,true),g={};state.bills.filter(b=>billActive(b,curMonth)).forEach(b=>{const k=b.tipo+'|'+norm(b.cat);g[k]=g[k]||{cat:b.cat,tipo:b.tipo,v:0};g[k].v+=+b.valor});
     let c=0,u=0;Object.values(g).forEach(x=>{const it=m.budget.find(b=>b.tipo===x.tipo&&norm(b.cat)===norm(x.cat));if(!it){m.budget.push({id:uid(),cat:x.cat,tipo:x.tipo,valor:x.v});c++}else if(+it.valor<x.v){it.valor=x.v;u++}});
@@ -3188,6 +3188,18 @@ const MAN=[
   o:'Salário que cai todo mês e conta em débito automático não precisam ser digitados de novo.',
   p:['<b>Renda</b>: ao adicionar/editar, marque <b>🔁 Repetir automaticamente todo mês</b>. Nos meses seguintes ela já aparece lançada.','<b>Conta fixa</b>: edite e marque <b>⚙ Débito automático</b>. No dia do vencimento o pagamento é lançado sozinho.','Valor mudou? Edite o lançamento do mês mais recente — os próximos seguem o novo valor.'],
   d:['Para parar, desmarque a opção no lançamento mais recente.','Apagou um lançamento automático? Ele não volta a aparecer naquele mês.','Itens automáticos mostram ⚙ na lista de gastos.']},
+ {id:'casal',a:'sistema',ic:'👥',t:'Casal / família: quem lançou',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Configurações › Casal / família'],
+  o:'Duas pessoas no mesmo orçamento, cada uma no próprio celular, vendo quem lançou cada gasto.',
+  p:['Uma pessoa gera o token do GitHub e conecta a sincronização.','Passe o token pessoalmente (nunca por WhatsApp/e-mail) e a outra pessoa conecta com o <b>mesmo token</b>.','Em cada celular, abra <b>Configurações › Casal / família</b> e escreva o seu nome.','Os novos lançamentos mostram 👤 nome; em Configurações aparece o total do mês por pessoa.'],
+  d:['O nome fica só no aparelho; não é senha.','Na busca, digite o nome para ver tudo o que a pessoa lançou.']},
+ {id:'rendimento',a:'dia',ic:'📈',t:'Investimentos que rendem sozinhos',go:['nav','invest','Abrir Investir'],onde:[manMenu(),'Investir › Minha carteira'],
+  o:'Informe a taxa (ex.: 100% do CDI) e o valor do investimento é estimado todo dia útil.',
+  p:['Abra <b>Investir</b> e toque no investimento (ou adicione um).','Em <b>Rendimento automático</b>, escolha % do CDI, Prefixado ou IPCA + taxa e digite a taxa.','Salve. O “Valor atual” passa a crescer sozinho.'],
+  d:['É uma estimativa bruta (antes do IR). De vez em quando, copie o valor real do app do banco e salve — a conta recomeça dali.','Selic e IPCA usados ficam no Simulador de Investir; atualize quando mudarem.']},
+ {id:'exportar',a:'sistema',ic:'📤',t:'Exportar planilha e PDF',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Configurações › Exportar'],
+  o:'Leve seus dados para o contador, o Imposto de Renda ou o Excel.',
+  p:['Abra <b>Configurações › Exportar</b> e escolha o ano.','<b>Planilha do ano (CSV)</b>: abre no Excel e no Google Planilhas.','<b>Relatório anual</b> ou <b>do mês (PDF)</b>: na tela de impressão, escolha <b>Salvar como PDF</b>.'],
+  d:['No celular, a planilha abre a tela de compartilhar: salve no Drive ou mande para você mesmo.']},
  {id:'lixeira',a:'sistema',ic:'⏪',t:'Lixeira e voltar no tempo',go:['nav','versoes','Abrir Voltar no tempo'],onde:[manMenu(),'Lixeira / Voltar no tempo'],
   o:'Apagou algo sem querer ou fez uma bagunça? Dá para desfazer.',
   p:['<b>Lixeira</b>: tudo o que você apaga fica lá por 30 dias. Toque em <b>Restaurar</b>.','<b>Voltar no tempo</b>: o app guarda uma cópia por dia. Escolha a data e toque em <b>Voltar</b> — todos os dados voltam a ficar como estavam.','Com a sincronização ligada, também aparecem as <b>versões na nuvem</b> (uma a cada sincronização).'],
@@ -3660,6 +3672,73 @@ Object.assign(VIEWS,{busca:vBusca,possocomprar:vPossoComprar});
 Object.assign(IC,{busca:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',possocomprar:'<path d="M6 6h15l-1.5 9h-12z"/><path d="M6 6L5 3H2"/><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/>'});
 
 /* ============================================================
+   BLOCO 3 — quem lançou, rendimento automático e exportar
+   ============================================================ */
+/* ---------- quem lançou (nome desta pessoa, guardado só neste aparelho) ---------- */
+const QUEM_K='finm_quem';
+function quem(){try{return(localStorage.getItem(QUEM_K)||'').trim()}catch(e){return''}}
+function stampPor(o){const q=quem();if(q&&o&&!o.por)o.por=q;return o}
+function pessoasLanc(){const S=new Set();state.expenses.forEach(e=>e.por&&S.add(e.por));state.cardPurchases.forEach(p=>p.por&&S.add(p.por));Object.values(state.months).forEach(m=>(m.income||[]).forEach(i=>i.por&&S.add(i.por)));return[...S].sort()}
+function quemCard(){const q=quem(),P=pessoasLanc();
+  const ym=curMonth,tot={};if(P.length){actualEntries(ym,true).forEach(e=>{const o=e.src==='exp'?e.ref:e.ref&&e.ref.p;if(e.tipo==='savings')return;const k=(o&&o.por)||'—';tot[k]=(tot[k]||0)+(+e.valor||0)})}
+  return`<div class="card"><h3>👥 Casal / família</h3><div class="sub">Duas pessoas podem usar o mesmo app: conectem a sincronização com o <b>mesmo token</b> (gerado por um de vocês e passado pessoalmente, nunca por mensagem). Cada uma põe o próprio nome aqui, e os lançamentos mostram quem lançou.</div>
+   <label style="display:grid;gap:5px;font-size:12px;color:var(--muted);font-weight:600">Seu nome neste aparelho<input type="text" id="quemNome" value="${esc(q)}" placeholder="Ex.: Rick" maxlength="20" autocomplete="off" style="font-size:16px;padding:11px 12px;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)"></label>
+   <div class="row" style="margin-top:10px"><button class="btn primary" data-act="quemSalva">Salvar nome</button>${q?'<button class="btn" data-act="quemLimpa">Remover</button>':''}</div>
+   ${Object.keys(tot).length>1||(Object.keys(tot).length===1&&!tot['—'])?`<div class="q-label" style="margin-top:14px">Gastos de ${mLabel(ym,true)} por pessoa</div>${Object.entries(tot).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="stat-line" data-act="buscaPor" data-id="${esc(k)}" style="cursor:pointer"><span>${k==='—'?'Sem nome (lançados antes)':esc(k)}</span><b>${brl(v)}</b></div>`).join('')}`:''}
+   <div class="muted" style="font-size:12px;margin-top:8px">O nome não é senha: fica só neste aparelho e serve para identificar quem lançou.</div></div>`}
+
+/* ---------- rendimento automático de investimentos ---------- */
+const REND=[['manual','Manual (eu atualizo o valor)'],['cdi','% do CDI (pós-fixado)'],['pre','Prefixado (% ao ano)'],['ipca','IPCA + taxa (% ao ano)']];
+function taxaAnual(x){const T=inv().taxas,t=+x.taxa||0,cdi=Math.max(0,(+T.selic||0)-0.1);
+  if(x.rendeTipo==='cdi')return cdi*t/100;if(x.rendeTipo==='pre')return t;if(x.rendeTipo==='ipca')return((1+(+T.ipca||0)/100)*(1+t/100)-1)*100;return 0}
+function diasUteis(a,b){let n=0;const d=new Date(a+'T12:00:00'),f=new Date(b+'T12:00:00');while(d<f){d.setDate(d.getDate()+1);const w=d.getDay();if(w&&w<6)n++}return n}
+function valorEstimado(x){if(!x.rendeTipo||x.rendeTipo==='manual'||!x.base)return null;const du=diasUteis(x.base.d,todayISO());return Math.round(x.base.v*Math.pow(1+taxaAnual(x)/100,du/252)*100)/100}
+function invAtualiza(){let n=0;(state.investimentos||[]).forEach(x=>{const v=valorEstimado(x);if(v!=null&&Math.abs(v-(+x.atual||0))>=0.01){x.atual=v;x.estimado=todayISO();n++}});if(n)save();return n}
+{const _f=invForm;invForm=function(x){_f(x);const f=$('#modalForm');if(!f||!f.elements.atual)return;const it=x||{};
+  const box=document.createElement('div');box.className='full';box.style.cssText='display:grid;gap:10px;grid-column:1/-1';
+  box.innerHTML=`<div class="grid g2"><label>Rendimento automático<select name="rendeTipo">${REND.map(([a,b])=>`<option value="${a}" ${(it.rendeTipo||'manual')===a?'selected':''}>${b}</option>`).join('')}</select></label>
+   <label id="rTaxaL">Taxa<input type="text" inputmode="decimal" name="taxa" value="${it.taxa!=null?String(it.taxa).replace('.',','):''}" placeholder=""></label></div><div id="rInfo" class="muted" style="font-size:12px"></div>`;
+  const ref=f.elements.liq.closest('label');ref.after(box);
+  const tp=f.elements.rendeTipo,tx=f.elements.taxa,info=box.querySelector('#rInfo'),T=inv().taxas;
+  const upd=()=>{const t=tp.value;box.querySelector('#rTaxaL').hidden=t==='manual';tx.placeholder=t==='cdi'?'Ex.: 100 (% do CDI)':t==='pre'?'Ex.: 12,5 (% a.a.)':'Ex.: 6,2 (% a.a. acima do IPCA)';
+    const a=taxaAnual({rendeTipo:t,taxa:parseNum(tx.value)});info.innerHTML=t==='manual'?'Você atualiza o “Valor atual” quando quiser (ex.: olhando o app do banco).':`O app estima o valor a cada dia útil a partir do “Valor atual” de hoje: ~<b>${num(a,2)}% ao ano</b> bruto (Selic ${num(T.selic,2)}% · IPCA ${num(T.ipca,2)}% — ajuste em Investir › Simulador). É uma estimativa antes do IR: confira com o banco de vez em quando e corrija o valor.`};
+  tp.addEventListener('change',upd);tx.addEventListener('input',upd);upd();
+  const sub=f.onsubmit;f.onsubmit=e=>{const t=tp.value,taxa=parseNum(tx.value)||0,atual=parseNum(f.elements.atual.value)||parseNum(f.elements.aplicado.value)||0;sub(e);
+    const alvo=x||state.investimentos[state.investimentos.length-1];if(!alvo||!$('#modal').classList.contains('hidden'))return;
+    alvo.rendeTipo=t;alvo.taxa=t==='manual'?undefined:taxa;alvo.base=t==='manual'?undefined:{d:todayISO(),v:atual};delete alvo.estimado;save();render()}}}
+
+/* ---------- exportar: CSV do ano e relatório anual em PDF ---------- */
+function csvCel(v){v=v==null?'':String(v);return/[;"\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v}
+function linhasAno(ano){const L=[],nm=t=>BUCKETS[t]?BUCKETS[t].label:t||'';
+  state.expenses.filter(e=>(e.date||'').startsWith(ano)).forEach(e=>L.push([e.date,'Gasto',e.desc,e.cat,nm(e.tipo),e.pay||'',-(+e.valor),'',tagsTxt(e),e.por||'']));
+  state.cardPurchases.forEach(p=>{const c=find(state.cards,p.cardId),n=Math.max(1,+p.parcelas||1);for(let k=0;k<n;k++){const ym=addM(p.primeiraFatura||faturaDe(p.cardId,p.dataCompra),k);if(!ym.startsWith(ano))continue;
+    L.push([p.dataCompra||isoOf(ym,1),'Cartão',p.desc+(n>1?` (${k+1}/${n})`:''),p.cat,nm(p.tipo),'💳 '+(c?c.nome:'cartão'),-(+p.valorTotal/n),ym,tagsTxt(p),p.por||''])}});
+  Object.entries(state.months).filter(([ym])=>ym.startsWith(ano)).forEach(([ym,m])=>(m.income||[]).forEach(i=>L.push([i.date||isoOf(ym,1),'Renda',(i.fonte||'')+(i.desc?' — '+i.desc:''),'Renda','','',+i.valor,'','',i.por||''])));
+  L.forEach(r=>{r[0]=r[0]||''});return L.sort((a,b)=>a[0].localeCompare(b[0]))}
+async function exportarCSV(ano){const L=linhasAno(ano);if(!L.length){toast('Nada lançado em '+ano,'err');return}
+  const fmt=v=>typeof v==='number'?v.toFixed(2).replace('.',','):v;
+  const txt='﻿'+[['Data','Tipo','Descrição','Categoria','Grupo','Pagamento','Valor (R$)','Fatura','Etiquetas','Quem lançou'],...L].map(r=>r.map(v=>csvCel(fmt(v))).join(';')).join('\r\n');
+  const nome=`minhas-financas-${ano}.csv`;
+  try{const file=new File([txt],nome,{type:'text/csv'});if(isMobile()&&navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:'Lançamentos '+ano});toast('Planilha compartilhada ✓');return}}catch(e){if(e.name==='AbortError')return}
+  download(nome,txt,'text/csv;charset=utf-8');toast(L.length+' lançamentos exportados')}
+function exportCard(){const anos=[...new Set([todayYM().slice(0,4),...Object.keys(state.months).map(m=>m.slice(0,4)),...state.expenses.map(e=>(e.date||'').slice(0,4))].filter(a=>/^\d{4}$/.test(a)))].sort().reverse();ui.expAno=ui.expAno||anos[0];
+  return`<div class="card"><h3>📤 Exportar</h3><div class="sub">Para o contador, o Imposto de Renda ou para analisar no Excel / Google Planilhas.</div>
+   <div class="row" style="align-items:center"><select data-expano style="max-width:120px">${anos.map(a=>`<option ${a===ui.expAno?'selected':''}>${a}</option>`).join('')}</select>
+   <button class="btn primary" data-act="expCSV">📊 Planilha do ano (CSV)</button><button class="btn" data-act="expPDF">🖨 Relatório anual (PDF)</button><button class="btn" data-act="expMesPDF">🖨 Relatório do mês (PDF)</button></div>
+   <div class="muted" style="font-size:12px;margin-top:8px">A planilha traz gastos, parcelas do cartão (no mês da fatura) e rendas, com categoria, etiquetas e quem lançou. Para PDF, na tela de impressão escolha <b>Salvar como PDF</b>.</div></div>`}
+document.addEventListener('change',e=>{if(e.target.dataset&&e.target.dataset.expano!==undefined)ui.expAno=e.target.value});
+{const _vs=VIEWS.settings;VIEWS.settings=()=>quemCard()+exportCard()+_vs();}
+
+Object.assign(ACT,{
+  quemSalva:()=>{const v=(($('#quemNome')||{}).value||'').trim().slice(0,20);try{v?localStorage.setItem(QUEM_K,v):localStorage.removeItem(QUEM_K)}catch(e){}toast(v?'Pronto: novos lançamentos vão mostrar “'+v+'”':'Nome removido');render()},
+  quemLimpa:()=>{try{localStorage.removeItem(QUEM_K)}catch(e){}render()},
+  buscaPor:k=>{if(k==='—')return;ui.busca=k;view='busca';render();scrollTo(0,0)},
+  expCSV:()=>exportarCSV(ui.expAno||todayYM().slice(0,4)),
+  expPDF:()=>{const a=ui.expAno||todayYM().slice(0,4);if(a!==curMonth.slice(0,4))curMonth=a+(a===todayYM().slice(0,4)?todayYM().slice(4):'-12');view='anual';render();scrollTo(0,0);setTimeout(()=>window.print(),500)},
+  expMesPDF:()=>{view='report';render();scrollTo(0,0);setTimeout(()=>window.print(),500)}
+});
+
+/* ============================================================
    BLOQUEIO DO APP — senha, padrão desenhado ou impressão digital
    A configuração fica só neste aparelho (não vai no backup).
    É uma tranca de tela: impede que alguém com o celular na mão abra o app.
@@ -3897,7 +3976,7 @@ try{const k=localStorage.getItem('finm_skin');if(SKINS[k]){document.documentElem
   matchMedia('(max-width:820px)').addEventListener('change',()=>{if(!isMobile()&&view==='home')view='dashboard';render()});
   const temDados=await carregar();revAoAbrir=rev;fileRev=-1;
   pedirPersistencia().then(()=>{if(view==='settings')render()});
-  syPinta();syncNow();setTimeout(plRetrato,1500);lixCarrega();setTimeout(()=>snapAuto(),4000);setTimeout(autoRecorrentes,1200);setInterval(autoRecorrentes,3600e3);setInterval(()=>snapAuto(),3600e3);
+  syPinta();syncNow();setTimeout(plRetrato,1500);lixCarrega();setTimeout(()=>snapAuto(),4000);setTimeout(autoRecorrentes,1200);setTimeout(invAtualiza,1500);setInterval(autoRecorrentes,3600e3);setInterval(()=>snapAuto(),3600e3);
   const lerHash=()=>{if(!location.hash.startsWith('#n='))return;let t='';try{t=decodeURIComponent(location.hash.slice(3))}catch(e){}history.replaceState(null,'',location.pathname);if(t)setTimeout(()=>{closeModal();abrirNotif(t)},400)};
   lerHash();addEventListener('hashchange',lerHash);
   render();
