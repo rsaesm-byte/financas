@@ -1,9 +1,10 @@
 /* Service worker — Minhas Finanças (celular)
    Deixa o app abrir sem internet. Os DADOS não passam por aqui: ficam no IndexedDB/localStorage do aparelho.
    Ao publicar uma versão nova do app, troque o número de VERSAO para o celular baixar os arquivos novos. */
-const VERSAO = 'financas-celular-v25';
+const VERSAO = 'financas-celular-v27';
+const APP = '2026.11.14-5'; // igual ao ?v= do index.html
 const ARQUIVOS = [
-  './', './index.html', './manifest.json',
+  './', './index.html', './manifest.json', './css/app.css?v=' + APP, './js/app.js?v=' + APP,
   './icons/icon-192.png?v=7', './icons/icon-512.png?v=7', './icons/icon-maskable-512.png?v=7', './icons/apple-touch-icon.png?v=7',
   'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js'
 ];

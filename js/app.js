@@ -1,0 +1,3539 @@
+/* Minhas Finanças — celular · código do app
+   Tudo roda no navegador; os dados ficam no aparelho (IndexedDB/localStorage) e, se ligado, num Gist privado do GitHub. */
+/* ============================================================
+   CONFIGURAÇÃO E ESTADO
+   ============================================================ */
+const STORE='minhas_financas_mobile_v1';
+const BUCKETS={
+  needs:{label:'Necessidades',short:'Needs',color:'#4f8cff'},
+  wants:{label:'Desejos',short:'Wants',color:'#a970ff'},
+  savings:{label:'Poupança',short:'Savings',color:'#22c58b'}
+};
+const PAY=['Pix','Débito','Dinheiro','Boleto','Transferência','Débito automático'];
+const DEBT_TYPES=['Empréstimo pessoal','Financiamento de veículo','Financiamento imobiliário','Consignado','Parcelamento','Cheque especial','Outro'];
+const INCOME_SOURCES=['Salário (trabalho atual)','Freelance — Traduções','Renda extra','Investimentos','13º / Férias','Outros'];
+const MN=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+const MNF=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const PALETTE=['#4f8cff','#a970ff','#22c58b','#f5a524','#f2555a','#2ec4d6','#ff7ab6','#9bd04b','#ff9f43','#7f8cff'];
+
+function defaultState(){return{settings:{theme:'dark',pct:{needs:50,wants:30,savings:20}},months:{},expenses:[],debts:[],cards:[],cardPurchases:[],goals:[],bills:[],benefits:[],deleted:{},profile:{},learn:{done:{}},investimentos:[],invest:{},contas:[],transfers:[],splits:[],cardPayments:[],catRules:{}}}
+let state=defaultState();
+let curMonth=todayYM();
+let view='dashboard';
+let charts=[];
+let ui={expFilter:{q:'',tipo:'',pay:''},period:'semana',refDate:todayISO()};
+/* ============================================================
+   SALVAMENTO — 3 CAMADAS
+   Camada 1: navegador (IndexedDB principal + localStorage < 4,5 MB) a cada alteração
+   Camada 2: arquivo .json (File System Access API, Chrome/Edge) com debounce 1,5 s,
+             SHA-256 de integridade, controle de revisão e junção com outro computador
+   Camada 3: redes de segurança (beforeunload, Ctrl+S, download a cada 10 min no Firefox,
+             assistente no primeiro acesso)
+   ============================================================ */
+/* no celular (tela de toque) a gravação direta em arquivo fica desligada — usa backup/compartilhar */
+const FS_OK=!!(window.showSaveFilePicker&&window.showOpenFilePicker)&&!matchMedia('(pointer:coarse)').matches;
+const LS_LIMIT=4.5e6;
+let rev=0,dirty=false,revAoAbrir=0,localSalvoEm='',lastBrowserSave=null;
+let handle=null,pendingHandle=null,timer=null,gravando=false;
+let fileRev=-1,lastFileSha=null,lastFileMod=null,lastFileTime=null,overwriteNext=false,integridadeOk=true;
+let meta=(()=>{try{return JSON.parse(localStorage.getItem('finm_meta'))||{}}catch(e){return{}}})();
+function saveMeta(){try{localStorage.setItem('finm_meta',JSON.stringify(meta))}catch(e){}}
+
+/* ---------- IndexedDB (chave-valor) ---------- */
+let _db;
+function db(){return _db||(_db=new Promise((res,rej)=>{const r=indexedDB.open('minhas_financas_mobile_db',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}))}
+async function kvGet(k){const d=await db();return new Promise((res,rej)=>{const q=d.transaction('kv').objectStore('kv').get(k);q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error)})}
+async function kvSet(k,v){const d=await db();return new Promise((res,rej)=>{const t=d.transaction('kv','readwrite');v===undefined?t.objectStore('kv').delete(k):t.objectStore('kv').put(v,k);t.oncomplete=()=>res();t.onerror=()=>rej(t.error)})}
+function oldHandle(){return new Promise(res=>{try{const r=indexedDB.open('financas_fs',1);r.onupgradeneeded=()=>r.result.createObjectStore('h');r.onsuccess=()=>{try{const q=r.result.transaction('h').objectStore('h').get('file');q.onsuccess=()=>res(q.result||null);q.onerror=()=>res(null)}catch(e){res(null)}};r.onerror=()=>res(null)}catch(e){res(null)}})}
+
+/* ---------- utilidades ---------- */
+async function sha256(t){try{const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(t));return[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}catch(e){return null}}
+const hora=d=>d?d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
+function tomb(...ids){state.deleted=state.deleted||{};const t=new Date().toISOString();ids.forEach(id=>{if(id){try{lixAdd(id)}catch(e){}state.deleted[id]=t}})}
+/* exclusão pode ser desfeita: 'r:data' = restaurado. Em conflito, vale a marcação mais recente */
+function isDead(v){return!!v&&!String(v).startsWith('r:')}
+function mergeDead(a,b){const ts=v=>Date.parse(String(v||'').replace(/^r:/,''))||0,o=Object.assign({},a);Object.entries(b||{}).forEach(([k,v])=>{if(!(k in o)||ts(v)>=ts(o[k]))o[k]=v});return o}
+function hasData(s){return s&&(Object.keys(s.months||{}).length||(s.expenses||[]).length||(s.debts||[]).length||(s.cards||[]).length||(s.goals||[]).length)}
+
+/* junta dois bancos: itens são unidos pelo id; em conflito vale o "principal"; excluídos (deleted) somem dos dois */
+function mergeById(a=[],b=[],dead){const ids=new Set(a.map(x=>x.id));return a.filter(x=>!isDead(dead[x.id])).concat(b.filter(x=>!ids.has(x.id)&&!isDead(dead[x.id])))}
+function mergeStates(p,s){
+  p=Object.assign(defaultState(),p);s=Object.assign(defaultState(),s);
+  const dead=mergeDead(s.deleted,p.deleted);
+  const o=Object.assign(defaultState(),s,p);o.deleted=dead;o.settings=p.settings;
+  ['expenses','debts','cards','cardPurchases','goals','bills','benefits','investimentos','contas','transfers','splits','cardPayments'].forEach(k=>o[k]=mergeById(p[k],s[k],dead));
+  o.months={};
+  new Set([...Object.keys(s.months),...Object.keys(p.months)]).forEach(ym=>{
+    const a=p.months[ym],b=s.months[ym];
+    if(!a||!b){const m=JSON.parse(JSON.stringify(a||b));m.income=(m.income||[]).filter(x=>!isDead(dead[x.id]));m.budget=(m.budget||[]).filter(x=>!isDead(dead[x.id]));o.months[ym]=m;return}
+    o.months[ym]={pct:a.pct,income:mergeById(a.income,b.income,dead),budget:mergeById(a.budget,b.budget,dead)};
+  });
+  return o;
+}
+
+/* ---------- CAMADA 1: navegador ---------- */
+function touch(){rev++;dirty=true;persistir();agendar()}
+function save(){touch()}            // todas as telas chamam save() → touch()
+async function persistir(){
+  const salvoEm=new Date().toISOString();localSalvoEm=salvoEm;
+  const rec={salvoEm,rev,dados:state};
+  try{await kvSet('dados',rec)}catch(e){console.warn('IndexedDB',e)}
+  try{const j=JSON.stringify(rec);if(j.length<LS_LIMIT)localStorage.setItem(STORE,j);else localStorage.removeItem(STORE)}catch(e){}
+  lastBrowserSave=new Date();setSaveStatus();
+}
+function persistirSync(){try{const j=JSON.stringify({salvoEm:new Date().toISOString(),rev,dados:state});if(j.length<LS_LIMIT)localStorage.setItem(STORE,j)}catch(e){}}
+async function carregar(){
+  let ls=null,ix=null;
+  try{const raw=localStorage.getItem(STORE);if(raw){const p=JSON.parse(raw);ls=p&&p.dados?p:{salvoEm:'',rev:0,dados:p}}}catch(e){}
+  try{ix=await kvGet('dados')}catch(e){}
+  const best=[ls,ix].filter(x=>x&&x.dados).sort((a,b)=>String(b.salvoEm||'').localeCompare(String(a.salvoEm||'')))[0];
+  if(!best)return false;
+  state=Object.assign(defaultState(),best.dados);rev=best.rev||0;localSalvoEm=best.salvoEm||'';lastBrowserSave=best.salvoEm?new Date(best.salvoEm):null;
+  return !!hasData(state);
+}
+
+/* ---------- CAMADA 2: arquivo .json ---------- */
+function agendar(){if(!handle)return;clearTimeout(timer);timer=setTimeout(gravarArquivo,1500);setSaveStatus()}
+async function readFileData(h){
+  const f=await h.getFile();const txt=await f.text();
+  if(!txt.trim())return{empty:true,lastModified:f.lastModified};
+  const obj=JSON.parse(txt);const dados=obj&&obj.dados?obj.dados:obj;
+  if(!dados||!dados.months)throw new Error('Arquivo não é um banco do Minhas Finanças');
+  let sha=obj.sha256||null,ok=true;
+  if(obj.sha256){const calc=await sha256(JSON.stringify(obj.dados));ok=!calc||calc===obj.sha256}
+  else sha=await sha256(JSON.stringify(dados));
+  return{dados,sha,ok,salvoEm:obj.salvoEm||'',lastModified:f.lastModified};
+}
+async function gravarArquivo(){
+  if(!handle)return;
+  if(gravando){agendar();return}
+  gravando=true;clearTimeout(timer);setSaveStatus();
+  const r0=rev;
+  try{
+    // não apagar o trabalho de outro computador: lê o arquivo e junta antes de gravar
+    if(!overwriteNext&&lastFileSha){
+      const f=await readFileData(handle).catch(()=>null);
+      if(f&&!f.empty&&f.sha&&f.sha!==lastFileSha){state=mergeStates(state,f.dados);persistir();toast('Alterações feitas em outro computador foram juntadas às suas');render()}
+    }
+    const json=JSON.stringify(state);const sha=await sha256(json);const salvoEm=new Date().toISOString();
+    const w=await handle.createWritable();
+    await w.write(JSON.stringify({app:'minhas-financas',formato:3,salvoEm,rev:r0,sha256:sha,dados:state}));
+    await w.close();
+    const f2=await handle.getFile();lastFileMod=f2.lastModified;lastFileSha=sha;lastFileTime=new Date();overwriteNext=false;integridadeOk=true;
+    if(rev!==r0)agendar();               // houve edição durante a gravação → grava de novo
+    else{fileRev=r0;dirty=false}
+  }catch(e){
+    console.warn(e);
+    let perm='denied';try{perm=await handle.queryPermission({mode:'readwrite'})}catch(x){}
+    if(perm!=='granted'){pendingHandle=handle;handle=null;toast('Perdi a permissão do arquivo — clique em "Reconectar arquivo"','err')}
+    else{toast('Falha ao gravar no arquivo. Vou tentar de novo.','err');setTimeout(agendar,5000)}
+  }
+  gravando=false;setSaveStatus();if(view==='settings')render();
+}
+async function conectar(h,{carregarDoArquivo}){
+  handle=h;pendingHandle=null;await kvSet('arquivo',h);
+  if(carregarDoArquivo){
+    const d=await readFileData(h);lastFileMod=d.lastModified;
+    if(d.empty){overwriteNext=true}
+    else{
+      integridadeOk=d.ok;if(!d.ok)toast('Atenção: o código de integridade (SHA-256) não confere — o arquivo foi editado fora do app','err');
+      const fileNewer=(d.salvoEm||'')>(localSalvoEm||'');
+      state=!hasData(state)?Object.assign(defaultState(),d.dados):fileNewer?mergeStates(d.dados,state):mergeStates(state,d.dados);
+      lastFileSha=d.sha;
+      if(d.sha&&d.sha===await sha256(JSON.stringify(state))){fileRev=rev;persistir();render();setSaveStatus();return}
+    }
+  }else overwriteNext=true;
+  touch();render();
+}
+async function ativarArquivo(){            // cria um arquivo novo (precisa de clique do usuário)
+  if(!FS_OK){toast('Este navegador não grava arquivos automaticamente. Use Chrome ou Edge — ou exporte o backup.','err');return}
+  try{const h=await showSaveFilePicker({suggestedName:'minhas-financas-celular-dados.json',types:[{description:'Banco Minhas Finanças (JSON)',accept:{'application/json':['.json']}}]});
+    await conectar(h,{carregarDoArquivo:false});toast('Arquivo criado — a partir de agora tudo é gravado nele automaticamente')}catch(e){if(e.name!=='AbortError')toast('Não foi possível criar o arquivo','err')}
+}
+async function abrirArquivo(){             // continua um arquivo existente
+  if(!FS_OK){$('#importFile').click();return}
+  try{const[h]=await showOpenFilePicker({multiple:false,types:[{description:'Banco Minhas Finanças (JSON)',accept:{'application/json':['.json']}}]});
+    if(await h.requestPermission({mode:'readwrite'})!=='granted'){toast('Permissão de escrita negada','err');return}
+    await conectar(h,{carregarDoArquivo:true});toast('Arquivo conectado: '+h.name)}catch(e){if(e.name!=='AbortError'){console.warn(e);toast('Não foi possível abrir: '+e.message,'err')}}
+}
+async function reconectarArquivo(){
+  const h=pendingHandle;if(!h)return;
+  try{if(await h.requestPermission({mode:'readwrite'})==='granted'){await conectar(h,{carregarDoArquivo:true});toast('Arquivo reconectado')}}catch(e){toast('Não foi possível reconectar. Use "Abrir arquivo existente".','err')}
+}
+async function desconectarArquivo(){handle=null;pendingHandle=null;fileRev=-1;lastFileSha=null;clearTimeout(timer);await kvSet('arquivo',undefined);toast('Arquivo desconectado — os dados continuam salvos no navegador');render()}
+async function iniciarArquivo(){            // ao abrir a página: pega a "chave" guardada e confere a permissão
+  let h=null;try{h=await kvGet('arquivo')}catch(e){}
+  
+  if(!h)return;
+  let perm='prompt';try{perm=await h.queryPermission({mode:'readwrite'})}catch(e){}
+  if(perm==='granted'){try{await conectar(h,{carregarDoArquivo:true})}catch(e){console.warn(e);pendingHandle=h;handle=null}}
+  else pendingHandle=h;
+  setSaveStatus();render();
+}
+/* confere a cada 20 s se outro computador mudou o arquivo */
+setInterval(async()=>{
+  if(!handle||gravando)return;
+  try{const f=await handle.getFile();if(lastFileMod===null||f.lastModified===lastFileMod)return;
+    const d=await readFileData(handle);lastFileMod=d.lastModified;
+    if(d.empty||!d.sha||d.sha===lastFileSha||overwriteNext)return;
+    if(rev===fileRev){state=Object.assign(defaultState(),d.dados);lastFileSha=d.sha;persistir();render();toast('Dados atualizados com alterações de outro computador')}
+    else{state=mergeStates(state,d.dados);lastFileSha=d.sha;touch();render();toast('Alterações de outro computador foram juntadas às suas')}
+  }catch(e){}
+},20000);
+
+/* ---------- CAMADA 3: redes de segurança ---------- */
+function semArquivo(){return handle?(rev!==fileRev||gravando):backupDue()}
+addEventListener('beforeunload',e=>{persistirSync();if(semArquivo()&&!isMobile()&&FS_OK){e.preventDefault();e.returnValue=''}});
+/* no celular o navegador pode ser fechado sem aviso: grava ao sair da tela */
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')persistirSync()});
+addEventListener('pagehide',persistirSync);
+addEventListener('keydown',e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();
+    if(handle){gravarArquivo().then(()=>toast('Salvo no arquivo '+handle.name))}
+    else if(pendingHandle)reconectarArquivo();
+    else if(FS_OK)ativarArquivo();
+    else{exportar();toast('Cópia baixada na pasta Downloads')}}
+});
+async function wrapJSON(){const sha=await sha256(JSON.stringify(state));return JSON.stringify({app:'minhas-financas',formato:3,salvoEm:new Date().toISOString(),rev,sha256:sha,dados:state},null,1)}
+async function exportar(nome){download(nome||`minhas-financas-celular-${todayISO()}.json`,await wrapJSON(),'application/json');marcarBackup()}
+/* CELULAR: sem download automático (gerava uma enxurrada de arquivos).
+   No lugar: lembrete de backup na tela Início + compartilhar o .json (Google Drive, WhatsApp, e-mail…) */
+async function compartilharBackup(){
+  const nome=`minhas-financas-celular-${todayISO()}.json`,txt=await wrapJSON();
+  try{
+    const file=new File([txt],nome,{type:'application/json'});
+    if(navigator.canShare&&navigator.canShare({files:[file]})){
+      await navigator.share({files:[file],title:'Backup — Minhas Finanças',text:'Backup do Minhas Finanças ('+new Date().toLocaleDateString('pt-BR')+')'});
+      marcarBackup();toast('Backup compartilhado ✓');return}
+  }catch(e){if(e.name==='AbortError')return;console.warn(e)}
+  download(nome,txt,'application/json');marcarBackup();toast('Backup baixado na pasta Downloads');
+}
+function marcarBackup(){meta.exportRev=rev;meta.exportAt=new Date().toISOString();saveMeta();setSaveStatus();if(view==='home'||view==='settings')render()}
+/* pede ao navegador para não apagar os dados sozinho (armazenamento persistente) */
+let persistido=null;
+async function pedirPersistencia(){try{if(navigator.storage&&navigator.storage.persist){persistido=await navigator.storage.persisted();if(!persistido)persistido=await navigator.storage.persist()}}catch(e){}}
+/* PWA: service worker (funciona offline) e botão "Instalar app" */
+let installEvt=null;
+addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
+addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
+async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
+if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
+const APP_VERSAO='2026.11.14-5';
+/* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
+async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
+  if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
+  setTimeout(()=>location.replace(location.pathname+'?atualizado='+Date.now()),400)}
+const standalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
+
+/* indicador na barra superior */
+function setSaveStatus(){
+  const el=document.getElementById('saveStatus'),rb=document.getElementById('reconnectBtn');if(!el)return;
+  let cor='var(--ok)',txt;
+  if(gravando){cor='var(--accent)';txt='Salvando no arquivo…'}
+  else if(handle&&rev!==fileRev){cor='var(--warn)';txt='Alterações pendentes — gravando em instantes'}
+  else if(handle){txt='Salvo em '+handle.name+(lastFileTime?' às '+hora(lastFileTime):'')}
+  else if(pendingHandle){cor='var(--warn)';txt='Salvo só no navegador — arquivo desconectado'}
+  else{txt='Salvo no navegador'+(lastBrowserSave?' às '+hora(lastBrowserSave):'');if(semArquivo())cor='var(--warn)'}
+  el.innerHTML=`<span style="color:${cor}">●</span> ${esc(txt)}`;
+  el.title=handle?'Camada 1 (navegador) + Camada 2 (arquivo) ativas':'Clique para configurar o salvamento em arquivo';
+  if(rb)rb.hidden=!pendingHandle;
+}
+
+/* assistente no primeiro acesso */
+function mostrarAssistente(){
+  const f=$('#modalForm');
+  f.innerHTML=`<header>👋 Bem-vindo ao Minhas Finanças</header><div class="body"><div class="full">
+   <p class="muted" style="margin-top:0">Este navegador ainda não tem dados. Como você quer começar?</p>
+   <div style="display:grid;gap:10px">
+    ${FS_OK?`<button type="button" class="btn primary" data-act="wizOpen" style="justify-content:flex-start">📂 Continuar meu arquivo de dados (.json) — já uso em outro computador</button>
+    <button type="button" class="btn" data-act="wizNew" style="justify-content:flex-start">💾 Criar um novo arquivo de dados (recomendado no primeiro uso)</button>`:`<button type="button" class="btn primary" data-act="wizOpen" style="justify-content:flex-start">📂 Importar meu backup (.json) do computador</button>`}
+    <button type="button" class="btn" data-act="wizSample" style="justify-content:flex-start">🧪 Ver com dados de exemplo</button>
+    <button type="button" class="btn" data-act="wizBrowser" style="justify-content:flex-start">✏️ Começar do zero neste celular</button>
+   </div>
+   <p class="muted" style="font-size:12px">${FS_OK?'Com um arquivo de dados, tudo é gravado nele automaticamente (1,5 s após cada alteração). Salve-o numa pasta do Google Drive/OneDrive para ter cópia na nuvem e usar em vários computadores.':'Para trazer seus dados do computador: lá, vá em Configurações › Exportar backup, mande o .json para o celular (Google Drive, WhatsApp, e-mail) e escolha "Importar meu backup" aqui. O formato é o mesmo nas duas versões.'}</p>
+  </div></div>`;
+  f.onsubmit=e=>e.preventDefault();
+  $('#modal').classList.remove('hidden');
+}
+function fecharAssistente(){try{localStorage.setItem('finm_wizard','1')}catch(e){}closeModal()}
+
+
+/* ============================================================
+   UTILITÁRIOS
+   ============================================================ */
+const $=s=>document.querySelector(s);
+const uid=()=>Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-4);
+const brl=v=>(+v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const num=(v,d=1)=>(+v||0).toLocaleString('pt-BR',{maximumFractionDigits:d,minimumFractionDigits:d});
+const pctf=(v,d=1)=>isFinite(v)?num(v,d)+'%':'—';
+const signBrl=v=>(v>0?'+':v<0?'−':'')+brl(Math.abs(v));
+const signPct=v=>isFinite(v)?(v>0?'+':v<0?'−':'')+num(Math.abs(v))+'%':'—';
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const norm=s=>String(s||'').trim().toLowerCase();
+function parseNum(v){let t=String(v??'').trim().replace(/[R$\s]/g,'');if(t.includes(','))t=t.replace(/\./g,'').replace(',','.');const n=parseFloat(t);return isFinite(n)?n:0}
+const sum=(a,f=x=>x)=>a.reduce((s,x)=>s+(+f(x)||0),0);
+function todayYM(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')}
+function todayISO(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+function addM(ym,n){let[y,m]=ym.split('-').map(Number);m+=n;y+=Math.floor((m-1)/12);m=((m-1)%12+12)%12+1;return y+'-'+String(m).padStart(2,'0')}
+function mDiff(a,b){const[y1,m1]=a.split('-').map(Number),[y2,m2]=b.split('-').map(Number);return(y2-y1)*12+(m2-m1)}
+function mLabel(ym,full){const[y,m]=ym.split('-');return full?MNF[+m-1]+' de '+y:MN[+m-1]+'/'+y.slice(2)}
+function daysIn(ym){const[y,m]=ym.split('-').map(Number);return new Date(y,m,0).getDate()}
+function isoOf(ym,d){return ym+'-'+String(Math.min(d,daysIn(ym))).padStart(2,'0')}
+function parseISO(s){const[y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d)}
+function toISO(dt){return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0')}
+function fmtDate(s){if(!s)return'';const[y,m,d]=s.split('-');return d+'/'+m}
+function toast(msg,type,action){const t=document.createElement('div');t.className='toast '+(type||'');t.textContent=msg;if(action){const b=document.createElement('button');b.type='button';b.className='btn sm';b.style.marginLeft='10px';b.textContent=action.label;b.onclick=()=>{action.fn();t.remove()};t.appendChild(b)}$('#toasts').appendChild(t);setTimeout(()=>t.remove(),action?7000:2800)}
+/* exclui com opção de desfazer (em vez de pedir confirmação) */
+function delUndo(msg,fn){const snap=JSON.stringify(state);fn();save();render();toast(msg,'',{label:'Desfazer',fn:()=>{state=JSON.parse(snap);overwriteNext=true;save();render();toast('Restaurado')}})}
+function cssVar(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
+
+/* ============================================================
+   MODELO / CÁLCULOS
+   ============================================================ */
+function month(ym=curMonth,create=false){
+  if(!state.months[ym]){
+    if(!create)return{income:[],budget:[],pct:{...state.settings.pct},_empty:true};
+    state.months[ym]={income:[],budget:[],pct:{...state.settings.pct}};
+  }
+  return state.months[ym];
+}
+const incomeTotal=ym=>sum(month(ym).income,i=>i.valor)+sum(benIncome(ym),x=>x.valor);
+function incomeBySource(ym){const o={};month(ym).income.forEach(i=>{const k=i.fonte||'Outros';o[k]=(o[k]||0)+ +i.valor});benIncome(ym).forEach(x=>{o[x.b.nome]=(o[x.b.nome]||0)+x.valor});return o}
+function incomeFixed(ym){return sum(month(ym).income.filter(i=>i.natureza!=='variavel'),i=>i.valor)+sum(benIncome(ym),x=>x.valor)}
+
+function cardById(id){return state.cards.find(c=>c.id===id)}
+function cardInstallments(ym,cardId){
+  const out=[];
+  state.cardPurchases.forEach(p=>{
+    if(cardId&&p.cardId!==cardId)return;
+    const idx=mDiff(p.primeiraFatura,ym);
+    if(idx>=0&&idx<p.parcelas)out.push({p,n:idx+1,valor:p.valorTotal/p.parcelas});
+  });
+  return out;
+}
+/* Todos os gastos reais do mês (lançamentos + parcelas de cartão que caem na fatura do mês) */
+/* gastos pagos por uma reserva com destino (fundId) já foram poupados antes: não contam no budget do mês */
+function actualEntries(ym,incFund){
+  const e=state.expenses.filter(x=>x.date&&x.date.slice(0,7)===ym&&(incFund||!x.fundId)).map(x=>({date:x.date,desc:x.desc,cat:x.cat,tipo:x.tipo,valor:+x.valor,pay:x.pay,src:'exp',ref:x,fund:!!x.fundId}));
+  cardInstallments(ym).forEach(i=>{const c=cardById(i.p.cardId);e.push({date:isoOf(ym,c?+c.vencimento||10:10),desc:i.p.desc+' ('+i.n+'/'+i.p.parcelas+')',cat:i.p.cat,tipo:i.p.tipo,valor:i.valor,pay:c?(/^cart/i.test(c.nome)?c.nome:'Cartão '+c.nome):'Cartão',src:'card',ref:i})});
+  return e;
+}
+/* Planejado x Real por categoria */
+function comparison(ym){
+  const m=month(ym),rows=[],map={};
+  m.budget.forEach(b=>{const k=b.tipo+'|'+norm(b.cat);if(!map[k]){map[k]={cat:b.cat,tipo:b.tipo,plan:0,real:0};rows.push(map[k])}map[k].plan+=+b.valor});
+  actualEntries(ym).forEach(a=>{const k=a.tipo+'|'+norm(a.cat);if(!map[k]){map[k]={cat:a.cat||'Sem categoria',tipo:a.tipo,plan:0,real:0,unplanned:true};rows.push(map[k])}map[k].real+=a.valor});
+  rows.forEach(r=>{r.diff=r.real-r.plan;r.diffPct=r.plan>0?r.diff/r.plan*100:(r.real>0?Infinity:0);r.usePct=r.plan>0?r.real/r.plan*100:(r.real>0?Infinity:0)});
+  return rows;
+}
+function bucketSummary(ym){
+  const m=month(ym),inc=incomeTotal(ym),rows=comparison(ym),o={};
+  Object.keys(BUCKETS).forEach(k=>{const rs=rows.filter(r=>r.tipo===k);const pct=+m.pct[k]||0;o[k]={pct,target:inc*pct/100,plan:sum(rs,r=>r.plan),real:sum(rs,r=>r.real)}});
+  return o;
+}
+function status(r){
+  if(r.tipo==='savings'){if(r.plan===0)return{cls:'ok',t:'Extra poupado'};return r.real>=r.plan?{cls:'ok',t:'Meta atingida'}:{cls:'warn',t:'Abaixo da meta'}}
+  if(r.plan===0&&r.real>0)return{cls:'bad',t:'Não orçado'};
+  if(r.usePct>100.0001)return{cls:'bad',t:'Estourou'};
+  if(r.usePct>=85)return{cls:'warn',t:'No limite'};
+  return{cls:'ok',t:'Dentro'};
+}
+function debtRemaining(d){return(+d.parcela)*Math.max(0,(+d.totalParcelas)-(+d.parcelasPagas))}
+function debtActiveIn(d,ym){if(!d.inicio)return(+d.parcelasPagas)<(+d.totalParcelas);const idx=mDiff(d.inicio,ym);return idx>=0&&idx<+d.totalParcelas}
+function cardUsed(cardId,ym){return sum(state.cardPurchases.filter(p=>p.cardId===cardId),p=>{const idx=Math.max(0,mDiff(p.primeiraFatura,ym));return Math.max(0,p.parcelas-idx)*p.valorTotal/p.parcelas})}
+function cardFatura(cardId,ym){return sum(cardInstallments(ym,cardId),i=>i.valor)}
+function totalDebt(ym){return sum(state.debts,debtRemaining)+sum(state.cards,c=>cardUsed(c.id,ym))}
+function monthlyDebtPayments(ym){return sum(state.debts.filter(d=>debtActiveIn(d,ym)),d=>d.parcela)}
+function categoriesList(){const s=new Set();Object.values(state.months).forEach(m=>m.budget.forEach(b=>s.add(b.cat)));state.expenses.forEach(e=>e.cat&&s.add(e.cat));return[...s].sort((a,b)=>a.localeCompare(b))}
+function tipoOfCat(cat){const b=month(curMonth).budget.find(b=>norm(b.cat)===norm(cat));if(b)return b.tipo;for(const m of Object.values(state.months)){const x=m.budget.find(b=>norm(b.cat)===norm(cat));if(x)return x.tipo}return null}
+
+/* ============================================================
+   ÍCONES / NAVEGAÇÃO
+   ============================================================ */
+const IC={
+ home:'<path d="M3 11l9-8 9 8"/><path d="M5 10v10h5v-6h4v6h5V10"/>',
+ more:'<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
+ theme:'<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+ calendar:'<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+ share:'<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/>',
+ install:'<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
+ dashboard:'<path d="M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z"/>',
+ review:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+ budget:'<path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+ compare:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+ expenses:'<path d="M4 4h16v16H4zM8 9h8M8 13h8M8 17h5"/>',
+ debts:'<path d="M3 7h18v12H3zM3 11h18M7 15h3"/>',
+ cards:'<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/>',
+ goals:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
+ vale:'<path d="M5 8h14l-1.5 11a2 2 0 0 1-2 1.7H8.5a2 2 0 0 1-2-1.7z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>',
+ bills:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 15l2 2 4-4"/>',
+ report:'<path d="M6 2h9l5 5v15H6zM14 2v6h6M9 13h6M9 17h6"/>',
+ invest:'<path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/>',
+ manual:'<circle cx="12" cy="12" r="9"/><path d="M9.5 9.2a2.6 2.6 0 1 1 3.6 2.4c-.8.4-1.1 1-1.1 1.9"/><circle cx="12" cy="17" r=".7"/>',
+ learn:'<path d="M2 7l10-4 10 4-10 4z"/><path d="M6 9v5c0 1.7 2.7 3 6 3s6-1.3 6-3V9"/><path d="M22 7v6"/>',
+ profile:'<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>',
+ settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'
+};
+Object.assign(IC,{anual:IC.report,fechar:IC.calendar,dividir:IC.profile,contas:IC.vale});
+const ico=n=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${IC[n]}</svg>`;
+const NAV=[
+ ['sep','Visão geral'],['home','Início'],['dashboard','Dashboard'],['review','Revisão do período'],['report','Relatório do mês'],['anual','Ano & assinaturas'],['fechar','Fechar o mês'],['dividir','Dividir despesas'],['busca','Buscar & etiquetas'],
+ ['sep','Planejamento'],['budget','Renda & Orçamento'],['compare','Planejado × Real'],['expenses','Gastos'],['contas','Contas e saldos'],['bills','Contas fixas'],['possocomprar','Posso comprar?'],['vale','Vale-alimentação'],
+ ['sep','Compromissos'],['debts','Dívidas & Financiamentos'],['cards','Cartões de crédito'],['goals','Metas & Poupança'],
+ ['sep','Coach'],['invest','Investir'],['learn','Aprender'],['profile','Meu perfil'],
+ ['sep','Sistema'],['importar','Importar extrato'],['versoes','Voltar no tempo'],['lixeira','Lixeira'],['manual','Manual'],['settings','Configurações']
+];
+const TITLES=Object.fromEntries(NAV.filter(n=>n[0]!=='sep'));
+function renderNav(){
+  $('#sidebar').innerHTML='<div class="brand"><div class="logo">R$</div>Minhas Finanças <span class="pill">celular</span></div>'+
+   NAV.map(([k,l])=>k==='sep'?`<div class="nav-sep">${l}</div>`:`<button class="nav-btn ${view===k?'active':''}" data-act="nav" data-id="${k}">${ico(k)}${l}</button>`).join('')+
+   '<div class="side-foot">Salvamento automático no navegador. Faça backup pelo menu Mais › Configurações.</div>';
+  const bt=(id,label,icon,on)=>`<button class="${on?'on':''}" data-act="${id==='more'?'more':'nav'}" data-id="${id}">${ico(icon)}${label}</button>`;
+  const inMore=!['home','expenses','vale'].includes(view);
+  $('#bnav').innerHTML=bt('home','Início','home',view==='home')+bt('expenses','Gastos','expenses',view==='expenses')+
+    `<button class="fab" data-act="quickAdd" aria-label="Lançar gasto"><i>+</i><span style="margin-top:2px">Lançar</span></button>`+
+    bt('vale','Vale','vale',view==='vale')+bt('more','Mais','more',inMore);
+}
+const isMobile=()=>matchMedia('(max-width:820px)').matches;
+/* menu "Mais": todas as telas + atalhos do sistema */
+function openMore(){
+  const f=$('#modalForm');
+  const it=(k,l,icon,act='nav')=>`<button type="button" class="more-item ${view===k?'on':''}" data-act="${act}" data-id="${k}">${ico(icon||k)}${l}</button>`;
+  const sec=(t,h)=>`<div class="q-label" style="margin-top:12px">${t}</div><div class="more-grid">${h}</div>`;
+  f.innerHTML=`<header>Mais</header><div class="body"><div class="full">
+   ${sec('Coach financeiro',it('invest','Investir e sair das dívidas','invest')+it('learn','Aprender')+it('profile','Meu perfil')+`<button type="button" class="more-item ${state.settings.coach!==false?'on':''}" data-act="toggleCoach">🤖<span>Coach nos gastos: ${state.settings.coach!==false?'ligado':'desligado'}</span></button>`)}
+   ${sec('Visão geral',it('dashboard','Dashboard')+it('review','Revisão do período')+it('report','Relatório do mês')+it('anual','Ano & assinaturas','report')+it('fechar','Fechar o mês','calendar')+it('busca','Buscar & etiquetas'))}
+   ${sec('Planejamento',it('contas','Contas e saldos','vale')+it('budget','Renda & Orçamento')+it('compare','Planejado × Real')+it('bills','Contas fixas')+it('possocomprar','Posso comprar?'))}
+   ${sec('Compromissos',it('debts','Dívidas')+it('cards','Cartões')+it('goals','Metas & Reservas')+it('dividir','Dividir despesas','profile'))}
+   ${sec('Sistema',it('importar','Importar extrato','importar')+it('versoes','Voltar no tempo','versoes')+it('lixeira','Lixeira','lixeira')+it('manual','Manual e ajuda','manual')+`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme','Temas','theme','theme')+
+     it('todayM','Ir para o mês atual','calendar','todayM')+(installEvt?it('install','Instalar app','install','installApp'):''))}
+  </div></div><footer><button type="button" class="btn" data-act="closeModal">Fechar</button></footer>`;
+  f.onsubmit=e=>e.preventDefault();
+  $('#modal').classList.remove('hidden');
+}
+/* coloca o nome da coluna em cada célula — no celular as tabelas viram cartões */
+function cardifyTables(root){
+  root.querySelectorAll('table').forEach(t=>{
+    const heads=[...t.querySelectorAll('thead th')].map(th=>th.textContent.trim());
+    t.querySelectorAll('tbody tr').forEach(tr=>{let col=0;[...tr.children].forEach(td=>{
+      const lab=heads[col]||'';col+=+td.colSpan||1;
+      if(lab)td.dataset.label=lab;
+      else if(td.querySelector('button,.icon-btn')&&!td.querySelector('input'))td.classList.add('acts');
+      if(!td.textContent.trim()&&!td.querySelector('input,button,.bar,canvas'))td.classList.add('empty-cell');
+    })});
+  });
+}
+
+/* ============================================================
+   MODAL / FORMULÁRIOS
+   ============================================================ */
+function openForm({title,fields,onSave,saveLabel='Salvar',danger,onRender,extra,focus}){
+  const f=$('#modalForm');
+  f.innerHTML=`<header>${esc(title)}</header><div class="body">${fields.map(fd=>{
+    const v=fd.value??'';const full=fd.full?'full':'';
+    if(fd.type==='html')return`<div class="full">${fd.html}</div>`;
+    if(fd.type==='checkbox')return`<label class="chk full"><input type="checkbox" name="${fd.name}" ${v?'checked':''}> ${esc(fd.label)}</label>`;
+    if(fd.type==='select')return`<label class="${full}">${esc(fd.label)}<select name="${fd.name}">${fd.options.map(o=>{const[val,lab]=Array.isArray(o)?o:[o,o];return`<option value="${esc(val)}" ${String(val)===String(v)?'selected':''}>${esc(lab)}</option>`}).join('')}</select></label>`;
+    if(fd.type==='textarea')return`<label class="full">${esc(fd.label)}<textarea name="${fd.name}" rows="3">${esc(v)}</textarea></label>`;
+    const dl=fd.list?`<datalist id="dl_${fd.name}">${fd.list.map(o=>`<option value="${esc(o)}">`).join('')}</datalist>`:'';
+    const txtNum=fd.type==='number'&&isMobile(),vv=txtNum&&v!==''?String(v).replace('.',','):v;
+    return`<label class="${full}">${esc(fd.label)}<input type="${txtNum?'text':fd.type||'text'}" name="${fd.name}" value="${esc(vv)}" ${fd.required?'required':''} ${fd.step?`step="${fd.step}"`:''} ${fd.min!=null?`min="${fd.min}"`:''} ${fd.type==='number'?`inputmode="${fd.step==='1'?'numeric':'decimal'}"`:''} ${fd.list?`list="dl_${fd.name}"`:''} ${fd.placeholder?`placeholder="${esc(fd.placeholder)}"`:''}>${dl}</label>`;
+  }).join('')}</div><footer>${extra||''}<button type="button" class="btn" data-act="closeModal">Cancelar</button><button type="submit" class="btn ${danger?'danger':'primary'}">${esc(saveLabel)}</button></footer>`;
+  f.onclick=null;
+  f.onsubmit=e=>{e.preventDefault();const data={};fields.forEach(fd=>{if(!fd.name)return;const el=f.elements[fd.name];if(!el)return;data[fd.name]=fd.type==='checkbox'?el.checked:fd.type==='number'?parseNum(el.value):el.value.trim()});if(onSave(data)!==false){closeModal();save();render()}};
+  $('#modal').classList.remove('hidden');
+  if(!isMobile()||focus)setTimeout(()=>{const first=focus?f.querySelector(focus):f.querySelector('input:not([type=checkbox]),select');first&&first.focus()},30);
+  f.querySelector('.body').scrollTop=0;
+  // auto-preencher grupo ao escolher categoria conhecida
+  const catEl=f.elements.cat,tipoEl=f.elements.tipo;
+  if(catEl&&tipoEl)catEl.addEventListener('change',()=>{const t=tipoOfCat(catEl.value);if(t)tipoEl.value=t});
+  if(onRender)onRender(f);
+}
+function closeModal(){$('#modal').classList.add('hidden')}
+function confirmBox(msg,cb){openForm({title:'Confirmar',fields:[{type:'html',html:`<p style="margin:0">${msg}</p>`}],saveLabel:'Excluir',danger:true,onSave:()=>{cb()}})}
+const tipoOpts=Object.entries(BUCKETS).map(([k,b])=>[k,b.label+' ('+b.short+')']);
+
+/* ============================================================
+   GRÁFICOS
+   ============================================================ */
+function mkChart(id,cfg){
+  const el=document.getElementById(id);if(!el)return;
+  if(typeof Chart!=='undefined'){const old=Chart.getChart(el);if(old)old.destroy()}
+  if(typeof Chart==='undefined'){el.parentElement.innerHTML='<div class="empty">Gráficos indisponíveis (sem internet para carregar Chart.js).</div>';return}
+  Chart.defaults.color=cssVar('--muted');Chart.defaults.borderColor=cssVar('--border');Chart.defaults.font.family=getComputedStyle(document.body).fontFamily;
+  cfg.options=Object.assign({responsive:true,maintainAspectRatio:false,plugins:{}},cfg.options||{});
+  cfg.options.plugins.tooltip=Object.assign({callbacks:{label:c=>{const v=c.parsed&&typeof c.parsed==='object'?(c.parsed.y??c.parsed.x??c.parsed):c.parsed;return' '+(c.dataset.label?c.dataset.label+': ':'')+(cfg._pct?pctf(v):brl(v))}}},cfg.options.plugins.tooltip||{});
+  cfg.options.plugins.legend=Object.assign({labels:{usePointStyle:true,boxWidth:8}},cfg.options.plugins.legend||{});
+  charts.push(new Chart(el,cfg));
+}
+const moneyAxis={ticks:{callback:v=>'R$ '+(+v).toLocaleString('pt-BR',{notation:'compact'})},grid:{color:()=>cssVar('--border')}};
+function destroyCharts(){charts.forEach(c=>c.destroy());charts=[]}
+
+/* ============================================================
+   COMPONENTES
+   ============================================================ */
+const kpi=(label,value,hint,color,cls='')=>`<div class="card kpi"><div class="label">${color?`<span class="dot" style="background:${color}"></span>`:''}${label}</div><div class="value ${cls}">${value}</div><div class="hint">${hint||''}</div></div>`;
+const bar=(p,cls)=>`<div class="bar ${cls||''}"><i style="width:${Math.max(0,Math.min(100,isFinite(p)?p:100))}%"></i></div>`;
+const tipoBadge=t=>`<span class="badge" style="background:${BUCKETS[t].color}22;color:${BUCKETS[t].color}">${BUCKETS[t].short}</span>`;
+function emptyMonthBanner(){
+  const prev=addM(curMonth,-1);const hasPrev=state.months[prev]&&(state.months[prev].budget.length||state.months[prev].income.length);
+  return`<div class="card"><div class="row"><div><h3>${mLabel(curMonth,true)} ainda não tem renda nem orçamento</h3><div class="sub" style="margin:0">Cada mês tem seu próprio orçamento. Comece cadastrando suas fontes de renda e categorias.</div></div><span class="spacer"></span>${hasPrev?`<button class="btn primary" data-act="copyPrev">Copiar de ${mLabel(prev,true)}</button>`:''}<button class="btn" data-act="nav" data-id="budget">Montar orçamento</button></div></div>`;
+}
+
+/* ============================================================
+   VIEW: DASHBOARD
+   ============================================================ */
+/* ============================================================
+   CONTAS FIXAS (contas a pagar recorrentes)
+   ============================================================ */
+function billActive(b,ym){return b.ativo!==false&&(!b.inicio||b.inicio<=ym)&&(!b.fim||b.fim>=ym)}
+function billPayment(b,ym){return state.expenses.find(e=>e.billId===b.id&&e.billMonth===ym)}
+function billsOf(ym){
+  const cur=todayYM();
+  return state.bills.filter(b=>billActive(b,ym)).map(b=>{const pay=billPayment(b,ym),dia=Math.min(+b.dia||1,daysIn(ym));let st;
+    if(pay)st={cls:'ok',t:'Pago em '+fmtDate(pay.date),k:'pago'};
+    else if(ym<cur)st={cls:'bad',t:'Não paga',k:'atrasada'};
+    else if(ym>cur)st={cls:'info',t:'Vence dia '+dia,k:'futura'};
+    else{const d=dia-new Date().getDate();st=d<0?{cls:'bad',t:`Atrasada há ${-d} dia(s)`,k:'atrasada'}:d===0?{cls:'warn',t:'Vence hoje',k:'proxima'}:d<=5?{cls:'warn',t:`Vence em ${d} dia(s)`,k:'proxima'}:{cls:'info',t:'Vence dia '+dia,k:'futura'}}
+    return{b,pay,dia,st}}).sort((x,y)=>x.dia-y.dia);
+}
+function vBills(){
+  const L=billsOf(curMonth),prev=sum(L,x=>+x.b.valor),pagas=L.filter(x=>x.pay),pago=sum(pagas,x=>x.pay.valor),aPagar=sum(L.filter(x=>!x.pay),x=>+x.b.valor),atras=L.filter(x=>x.st.k==='atrasada').length,inc=incomeTotal(curMonth);
+  return`<div class="grid g4">${kpi('Contas fixas do mês',brl(prev),L.length+' conta(s)'+(inc?' · '+pctf(prev/inc*100,0)+' da renda':''))}${kpi('Pagas',pagas.length+' de '+L.length,brl(pago)+' pagos',null,'pos')}${kpi('A pagar',brl(aPagar),(L.length-pagas.length)+' conta(s) em aberto')}${kpi('Atrasadas',String(atras),atras?'Pague o quanto antes — multa e juros':'Nenhuma atrasada',null,atras?'neg':'pos')}</div>
+  <div class="card"><div class="card-head"><div><h3>Contas de ${mLabel(curMonth,true)}</h3><div class="sub">Cadastre uma vez (aluguel, luz, internet…) — elas aparecem todo mês com o vencimento. Ao clicar em Pagar, o gasto é lançado na categoria do budget.</div></div><div class="row">${L.length?'<button class="btn sm" data-act="billsToBudget">Levar valores para o budget</button>':''}<button class="btn primary sm" data-act="addBill">+ Conta fixa</button></div></div>
+  ${L.length?`<div class="table-wrap"><table><thead><tr><th>Vence</th><th>Conta</th><th>Categoria</th><th class="num">Previsto</th><th class="num">Pago</th><th class="num">Diferença</th><th>Status</th><th></th></tr></thead><tbody>
+  ${L.map(({b,pay,dia,st})=>{const d=pay?pay.valor-b.valor:0;return`<tr><td><b>${String(dia).padStart(2,'0')}</b></td><td>${esc(b.nome)}<div class="muted" style="font-size:11px">${esc(b.pay||'')}</div></td><td>${esc(b.cat)} ${tipoBadge(b.tipo)}</td><td class="num">${brl(b.valor)}</td><td class="num">${pay?'<b>'+brl(pay.valor)+'</b>':'—'}</td><td class="num ${d>0?'neg':d<0?'pos':''}">${pay?signBrl(d)+(+b.valor?' ('+signPct(d/b.valor*100)+')':''):''}</td><td><span class="badge ${st.cls}">${st.t}</span></td>
+   <td class="num" style="white-space:nowrap">${pay?`<button class="btn sm" data-act="unpayBill" data-id="${b.id}">Desfazer</button>`:`<button class="btn sm primary" data-act="payBill" data-id="${b.id}">Pagar</button>`}<button class="icon-btn" data-act="editBill" data-id="${b.id}">✎</button><button class="icon-btn" data-act="delBill" data-id="${b.id}">🗑</button></td></tr>`}).join('')}
+  <tr class="total"><td colspan="3">Total</td><td class="num">${brl(prev)}</td><td class="num">${brl(pago)}</td><td></td><td></td><td></td></tr></tbody></table></div>`
+  :`<div class="empty"><p style="margin:0 0 6px"><b>Nenhuma conta fixa cadastrada.</b></p><p style="margin:0 0 14px">Ex.: Aluguel (dia 5), Luz (dia 12), Internet (dia 15), Celular (dia 20).</p><button class="btn primary" data-act="addBill">+ Cadastrar primeira conta</button></div>`}</div>`;
+}
+function billForm(b){
+  const isNew=!b;b=b||{dia:10,tipo:'needs',pay:'Pix',inicio:curMonth};
+  openForm({title:isNew?'Nova conta fixa':'Editar conta fixa',fields:[
+    {name:'nome',label:'Nome da conta',value:b.nome,required:true,placeholder:'Ex.: Internet'},
+    {name:'valor',label:'Valor previsto (R$)',type:'number',step:'0.01',min:0,value:b.valor,required:true},
+    {name:'dia',label:'Dia do vencimento',type:'number',min:1,step:'1',value:b.dia,required:true},
+    {name:'pay',label:'Forma de pagamento',type:'select',options:PAY,value:b.pay},
+    {name:'cat',label:'Categoria do budget',value:b.cat,list:categoriesList(),required:true,placeholder:'Ex.: Internet'},
+    {name:'tipo',label:'Grupo',type:'select',options:tipoOpts,value:b.tipo},
+    {name:'inicio',label:'Começa em',type:'month',value:b.inicio},
+    {name:'fim',label:'Termina em (opcional)',type:'month',value:b.fim},
+    {name:'auto',label:'⚙ Débito automático — lançar como paga sozinha no dia do vencimento',type:'checkbox',value:!!b.auto}
+  ],onSave:d=>{d.dia=Math.max(1,Math.min(31,Math.round(d.dia)));if(d.auto&&!b.auto)d.autoDesde=todayYM();if(isNew)state.bills.push({id:uid(),ativo:true,...d});else Object.assign(b,d);toast('Conta fixa salva')}});
+}
+/* fatura em que a compra cai: antes do fechamento → fatura que fecha neste mês; o mês da fatura é o mês do vencimento */
+function faturaDe(cardId,dateISO){
+  const c=cardById(cardId);if(!c||!dateISO)return curMonth;
+  const ym=dateISO.slice(0,7),dia=+dateISO.slice(8),fech=+c.fechamento||1,venc=+c.vencimento||10;
+  const fechaEm=dia<fech?ym:addM(ym,1);
+  return venc>fech?fechaEm:addM(fechaEm,1);
+}
+/* sugestões de budget: compromissos conhecidos + média real dos últimos 3 meses */
+function budgetSuggestions(ym){
+  const m=month(ym),map={},K=(t,c)=>t+'|'+norm(c);
+  const get=(t,c)=>map[K(t,c)]||(map[K(t,c)]={tipo:t,cat:c,atual:0,soma:0,contas:0,dividas:0,cartao:0});
+  m.budget.forEach(b=>get(b.tipo,b.cat).atual+=+b.valor);
+  const meses=[1,2,3].map(i=>addM(ym,-i)).filter(x=>actualEntries(x).length);
+  meses.forEach(x=>comparison(x).forEach(r=>{if(r.real)get(r.tipo,r.cat).soma+=r.real}));
+  state.bills.filter(b=>billActive(b,ym)).forEach(b=>get(b.tipo,b.cat).contas+=+b.valor);
+  state.debts.filter(d=>d.cat&&debtActiveIn(d,ym)).forEach(d=>get(tipoOfCat(d.cat)||'needs',d.cat).dividas+=+d.parcela);
+  cardInstallments(ym).forEach(i=>get(i.p.tipo,i.p.cat).cartao+=i.valor);
+  return Object.values(map).map(o=>{
+    if(o.tipo==='savings')return null;
+    const known=o.contas+o.dividas+o.cartao,media=meses.length?o.soma/meses.length:0,mediaR=Math.ceil(media/10)*10;
+    const sug=Math.round(Math.max(known,mediaR)*100)/100;if(!sug||Math.abs(sug-o.atual)<1)return null;
+    const fonte=known>=mediaR?[o.contas?'contas fixas':'',o.dividas?'parcelas de dívidas':'',o.cartao?'parcelas de cartão':''].filter(Boolean).join(' + '):'média real de '+meses.length+' mês(es)';
+    return{...o,sug,fonte};
+  }).filter(Boolean).sort((a,b)=>Math.abs(b.sug-b.atual)-Math.abs(a.sug-a.atual));
+}
+/* linha de saúde financeira do dashboard */
+function healthRow(inc,bs,debt){
+  const reserva=sum(state.goals.filter(g=>/emerg|reserva/i.test(g.nome)),g=>g.guardado),base=bs.needs.real||bs.needs.plan,meses=base?reserva/base:0;
+  const bens=sum(state.debts,d=>+d.valorBem||0),pl=sum(state.goals,g=>g.guardado)+bens-debt,dp=monthlyDebtPayments(curMonth),dr=inc?dp/inc*100:0,bl=billsOf(curMonth),bp=bl.filter(x=>x.pay).length;
+  return`<div class="grid g4">
+   ${kpi('🛟 Reserva de emergência',num(meses,1)+' meses',`${brl(reserva)} guardados · ideal: 6 meses de Needs`,null,meses>=6?'pos':meses>=3?'wrn':'neg')}
+   ${kpi('🏦 Patrimônio líquido',brl(pl),'Metas'+(bens?' + bens ('+brl(bens)+')':'')+' − dívidas em aberto',null,pl<0?'neg':'pos')}
+   ${kpi('⛓ Comprometimento com dívidas',pctf(dr,0),brl(dp)+'/mês em parcelas · ideal até 30%',null,dr>30?'neg':dr>20?'wrn':'pos')}
+   ${kpi('🧾 Contas fixas',bl.length?bp+' de '+bl.length+' pagas':'—',bl.length?brl(sum(bl.filter(x=>!x.pay),x=>+x.b.valor))+' ainda a pagar':'Cadastre em "Contas fixas"')}
+  </div>`;
+}
+
+/* ============================================================
+   VALE-ALIMENTAÇÃO / BENEFÍCIOS
+   ============================================================ */
+const BEN_TIPOS=[['VA','Vale-alimentação (mercado)'],['VR','Vale-refeição (restaurantes)'],['FLEX','Benefício flexível']];
+function benCredit(b,ym){if(b.inicio&&ym<b.inicio)return 0;const o=(b.creditos||{})[ym];return o!=null?+o:+b.valorMensal||0}
+function benIncome(ym){return(state.benefits||[]).filter(b=>b.contarRenda!==false).map(b=>({b,valor:benCredit(b,ym)})).filter(x=>x.valor>0)}
+function benSpentList(b,ym){return state.expenses.filter(e=>e.benefitId===b.id&&(!ym||(e.date||'').slice(0,7)===ym))}
+function benBalance(b,iso){
+  let s=+b.saldoInicial||0,ym=b.inicio||iso.slice(0,7),g=0;const end=iso.slice(0,7);
+  while(ym<=end&&g++<600){if(iso>=isoOf(ym,+b.dia||1))s+=benCredit(b,ym);ym=addM(ym,1)}
+  (b.ajustes||[]).forEach(a=>{if(a.date<=iso)s+=+a.valor});
+  state.expenses.forEach(e=>{if(e.benefitId===b.id&&e.date<=iso)s-=+e.valor});
+  return Math.round(s*100)/100;
+}
+function benRef(){const c=todayYM();return curMonth===c?todayISO():curMonth<c?isoOf(curMonth,daysIn(curMonth)):isoOf(curMonth,1)}
+function benNext(b,iso){const ym=iso.slice(0,7),c=isoOf(ym,+b.dia||1);return c>iso?c:isoOf(addM(ym,1),+b.dia||1)}
+function benPrev(b,iso){const ym=iso.slice(0,7),c=isoOf(ym,+b.dia||1);return c<=iso?c:isoOf(addM(ym,-1),+b.dia||1)}
+const dDiff=(a,b)=>Math.round((parseISO(b)-parseISO(a))/864e5);
+function vVale(){
+  if(!state.benefits.length)return`<div class="card"><div class="welcome" style="margin:10px auto"><h2>🧺 Vale-alimentação</h2><p class="muted">Controle o saldo do seu VA/VR como uma carteira separada: a recarga entra sozinha todo mês, cada compra no vale desconta do saldo e também conta no budget da categoria (ex.: Mercado). O app mostra quanto você pode gastar por dia até a próxima recarga.</p><button class="btn primary" data-act="addBenefit">+ Cadastrar meu vale</button></div></div>`;
+  const ref=benRef(),isCur=curMonth===todayYM();let h='',charts_=[];
+  state.benefits.forEach((b,bi)=>{
+    const saldo=benBalance(b,ref),cr=benCredit(b,curMonth),list=benSpentList(b,curMonth),gasto=sum(list,e=>e.valor);
+    const nx=benNext(b,ref),dias=Math.max(1,dDiff(ref,nx)),porDia=Math.max(0,saldo)/dias;
+    const pv=benPrev(b,ref),desde=Math.max(1,dDiff(pv,ref)+1),gDesde=sum(state.expenses.filter(e=>e.benefitId===b.id&&e.date>=pv&&e.date<=ref),e=>e.valor),ritmo=gDesde/desde,proj=saldo-ritmo*dias;
+    const usoPct=cr?gasto/cr*100:0,saldoIni=benBalance(b,isoOf(addM(curMonth,-1),daysIn(addM(curMonth,-1))));
+    const tipoLabel=(BEN_TIPOS.find(t=>t[0]===b.tipoBen)||BEN_TIPOS[0])[1];
+    h+=`<div class="card" style="border-top:3px solid ${b.cor||'#22c58b'}"><div class="card-head"><div><h3>🧺 ${esc(b.nome)} <span class="pill">${esc(tipoLabel)}</span></h3><div class="sub">Recarga de ${brl(b.valorMensal)} todo dia ${b.dia} · gastos vão para a categoria <b>${esc(b.cat||'—')}</b>${b.contarRenda!==false?' · crédito somado à renda do mês':''}</div></div>
+     <div class="row"><button class="btn sm primary" data-act="addBenExpense" data-id="${b.id}">+ Gasto no vale</button><button class="btn sm" data-act="adjustBenefit" data-id="${b.id}">Conferir saldo</button><button class="btn sm" data-act="creditMonth" data-id="${b.id}">Crédito do mês</button><button class="icon-btn" data-act="editBenefit" data-id="${b.id}">✎</button><button class="icon-btn" data-act="delBenefit" data-id="${b.id}">🗑</button></div></div>
+     <div class="grid g4">
+      ${kpi('Saldo disponível',brl(saldo),(isCur?'Hoje':'Em '+fmtDate(ref))+` · início do mês: ${brl(saldoIni)}`,b.cor,saldo<0?'neg':'pos')}
+      ${kpi('Crédito de '+mLabel(curMonth),brl(cr),'Cai dia '+String(Math.min(+b.dia,daysIn(curMonth))).padStart(2,'0')+(cr!==+b.valorMensal?' · valor ajustado neste mês':''))}
+      ${kpi('Gasto no mês',brl(gasto),`${pctf(usoPct,0)} do crédito · ${list.length} compra(s)`,null,usoPct>100?'neg':'')}
+      ${kpi('Pode gastar por dia',brl(porDia),`por ${dias} dia(s), até a recarga de ${fmtDate(nx)}`,null,'')}
+     </div>
+     ${isCur?(proj<0?`<div class="alert bad" style="margin-top:12px">⚠️ No ritmo atual (${brl(ritmo)}/dia desde a última recarga) o saldo acaba em cerca de <b>${Math.max(0,Math.floor(saldo/Math.max(ritmo,0.01)))} dia(s)</b> — antes da recarga de ${fmtDate(nx)}. Reduza para até <b>${brl(porDia)}/dia</b>.</div>`
+       :`<div class="alert ok" style="margin-top:12px">✅ No ritmo atual (${brl(ritmo)}/dia) devem sobrar cerca de <b>${brl(proj)}</b> quando a próxima recarga cair (${fmtDate(nx)}).${proj>cr*0.5?' Saldo sobrando: use o vale primeiro nas compras de '+esc(b.cat||'alimentação')+' e guarde o dinheiro equivalente.':''}</div>`):''}
+     <div class="grid g21" style="margin-top:14px">
+      <div><h3 style="font-size:14px;margin:0 0 6px">Saldo dia a dia — ${mLabel(curMonth,true)}</h3><div class="chart-box sm"><canvas id="chBen${bi}"></canvas></div></div>
+      <div><h3 style="font-size:14px;margin:0 0 6px">Crédito × gasto — 6 meses</h3><div class="chart-box sm"><canvas id="chBenH${bi}"></canvas></div></div>
+     </div>
+     <h3 style="font-size:14px;margin:16px 0 6px">Movimentações de ${mLabel(curMonth,true)}</h3>
+     ${(()=>{const mv=[...list.map(e=>({date:e.date,desc:e.desc,cat:e.cat,valor:-e.valor,act:`<button class="icon-btn" data-act="editExpense" data-id="${e.id}">✎</button><button class="icon-btn" data-act="delExpense" data-id="${e.id}">🗑</button>`})),
+        ...(cr?[{date:isoOf(curMonth,+b.dia||1),desc:'Recarga do benefício',cat:'—',valor:cr,act:''}]:[]),
+        ...(b.ajustes||[]).filter(a=>a.date.slice(0,7)===curMonth).map(a=>({date:a.date,desc:'Ajuste de saldo (conferência)',cat:'—',valor:+a.valor,act:`<button class="icon-btn" data-act="delAjuste" data-id="${b.id}|${a.id}">🗑</button>`}))].sort((x,y)=>x.date.localeCompare(y.date));
+       return mv.length?`<div class="table-wrap"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th class="num">Valor</th><th></th></tr></thead><tbody>${mv.map(x=>`<tr><td>${fmtDate(x.date)}</td><td>${esc(x.desc)}</td><td>${esc(x.cat)}</td><td class="num ${x.valor<0?'neg':'pos'}">${signBrl(x.valor)}</td><td class="num">${x.act}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Sem movimentações neste mês.</div>'})()}
+    </div>`;
+    charts_.push(()=>{
+      const dim=daysIn(curMonth),last=isCur?new Date().getDate():dim,labels=[...Array(dim)].map((_,i)=>String(i+1));
+      const sal=labels.map((_,i)=>i<last?benBalance(b,isoOf(curMonth,i+1)):null);
+      const daily=Array(dim).fill(0);list.forEach(e=>daily[+e.date.slice(8)-1]+=+e.valor);
+      mkChart('chBen'+bi,{type:'line',data:{labels,datasets:[{label:'Saldo',data:sal,borderColor:b.cor||'#22c58b',backgroundColor:(b.cor||'#22c58b')+'22',fill:true,tension:.2,pointRadius:0},{type:'bar',label:'Gasto do dia',data:daily,backgroundColor:cssVar('--wants')+'aa',borderRadius:3}]},options:{interaction:{mode:'index',intersect:false},scales:{y:moneyAxis,x:{grid:{display:false}}}}});
+      const ms=[...Array(6)].map((_,i)=>addM(curMonth,i-5));
+      mkChart('chBenH'+bi,{type:'bar',data:{labels:ms.map(x=>mLabel(x)),datasets:[{label:'Crédito',data:ms.map(x=>benCredit(b,x)),backgroundColor:cssVar('--border'),borderRadius:6},{label:'Gasto',data:ms.map(x=>sum(benSpentList(b,x),e=>e.valor)),backgroundColor:b.cor||'#22c58b',borderRadius:6}]},options:{scales:{y:moneyAxis,x:{grid:{display:false}}}}});
+    });
+  });
+  h+=`<div class="row"><span class="muted" style="font-size:12px">💡 Os gastos no vale entram no budget da categoria escolhida (aba Renda & Orçamento) e o crédito ${'é somado à renda do mês — assim a comparação Planejado × Real fica correta.'}</span><span class="spacer"></span><button class="btn sm" data-act="addBenefit">+ Outro benefício (ex.: VR)</button></div>`;
+  setTimeout(()=>charts_.forEach(f=>f()));
+  return h;
+}
+function benefitForm(b){
+  const isNew=!b;b=b||{nome:'Vale-alimentação',tipoBen:'VA',dia:1,saldoInicial:0,inicio:curMonth,cat:'',grupo:'needs',contarRenda:true,cor:'#22c58b'};
+  openForm({title:isNew?'Cadastrar vale / benefício':'Editar benefício',onRender:f=>{f.elements.tipoBen.addEventListener('change',()=>{const t=f.elements.tipoBen.value;if(!f.elements.cat.value)f.elements.cat.value=t==='VR'?'Restaurantes / delivery':'Alimentação (mercado)';if(f.elements.nome.value==='Vale-alimentação'&&t==='VR')f.elements.nome.value='Vale-refeição'})},fields:[
+    {name:'nome',label:'Nome',value:b.nome,required:true},
+    {name:'tipoBen',label:'Tipo',type:'select',options:BEN_TIPOS,value:b.tipoBen},
+    {name:'valorMensal',label:'Valor da recarga mensal (R$)',type:'number',step:'0.01',min:0,value:b.valorMensal,required:true},
+    {name:'dia',label:'Dia em que a recarga cai',type:'number',min:1,step:'1',value:b.dia,required:true},
+    {name:'saldoInicial',label:'Saldo que já estava no cartão (R$)',type:'number',step:'0.01',value:b.saldoInicial},
+    {name:'inicio',label:'Começar a controlar em',type:'month',value:b.inicio,required:true},
+    {name:'cat',label:'Categoria do budget para os gastos',value:b.cat,list:categoriesList(),required:true,placeholder:'Ex.: Alimentação (mercado)'},
+    {name:'grupo',label:'Grupo',type:'select',options:tipoOpts,value:b.grupo},
+    {name:'cor',label:'Cor',type:'color',value:b.cor},
+    {name:'contarRenda',label:'Somar o crédito do vale à renda do mês (recomendado: assim os gastos no vale cabem no budget)',type:'checkbox',value:b.contarRenda!==false},
+    {type:'html',html:'<div class="muted" style="font-size:12px">"Saldo que já estava no cartão" é o saldo no início do mês escolhido em "Começar a controlar em", antes da recarga desse mês.</div>'}
+  ],onSave:d=>{d.dia=Math.max(1,Math.min(31,Math.round(d.dia)));if(isNew)state.benefits.push({id:uid(),ajustes:[],creditos:{},...d});else Object.assign(b,d);toast('Benefício salvo')}});
+}
+
+function vDashboard(){
+  const hasAny=Object.keys(state.months).length||state.expenses.length||state.debts.length;
+  if(!hasAny)return`<div class="welcome card"><h2>Bem-vindo ao seu painel financeiro</h2><p class="muted">Monte o orçamento do mês por porcentagem (Needs / Wants / Savings), lance seus gastos e acompanhe dívidas, cartões e metas. Tudo fica salvo neste navegador.</p><div class="row" style="justify-content:center;margin-top:18px"><button class="btn primary" data-act="sample">Carregar dados de exemplo</button><button class="btn" data-act="nav" data-id="budget">Começar do zero</button></div></div>`;
+  const m=month(),inc=incomeTotal(curMonth),bs=bucketSummary(curMonth);
+  const spent=bs.needs.real+bs.wants.real,saved=bs.savings.real,free=inc-spent-saved;
+  const planNW=bs.needs.plan+bs.wants.plan,use=planNW?spent/planNW*100:0;
+  const debt=totalDebt(curMonth),rows=comparison(curMonth);
+  const over=rows.filter(r=>r.tipo!=='savings'&&r.diff>0.005).sort((a,b)=>b.diff-a.diff);
+  const prevInc=incomeTotal(addM(curMonth,-1));
+  let h=m._empty?emptyMonthBanner():'';
+  h+=`<div class="grid g4">
+   ${kpi('Renda do mês',brl(inc),Object.keys(incomeBySource(curMonth)).length+' fonte(s)'+(prevInc?` · ${signPct((inc-prevInc)/prevInc*100)} vs mês anterior`:''))}
+   ${kpi('Gasto real (Needs + Wants)',brl(spent),`${pctf(use)} do planejado (${brl(planNW)})`,null,use>100?'neg':'')}
+   ${kpi('Poupado / investido',brl(saved),inc?`Taxa de poupança: ${pctf(saved/inc*100)}`:'—',BUCKETS.savings.color,'pos')}
+   ${kpi('Saldo livre do mês',brl(free),'Renda − gastos − poupança',null,free<0?'neg':'pos')}
+  </div>
+  <div class="grid g3">
+   ${Object.entries(BUCKETS).map(([k,b])=>{const s=bs[k];const p=s.target?s.real/s.target*100:0;const isSav=k==='savings';const cls=isSav?(p>=100?'ok':'warn'):(p>100?'bad':p>=85?'warn':'ok');
+     return`<div class="card"><div class="card-head"><div><h3><span class="dot" style="background:${b.color}"></span> ${b.label} <span class="pill">${s.pct}% da renda</span></h3><div class="sub">Meta ${brl(s.target)} · Planejado ${brl(s.plan)}</div></div><span class="badge ${cls}">${pctf(p,0)}</span></div>
+     <div class="row" style="justify-content:space-between;margin-bottom:6px"><b style="font-size:20px">${brl(s.real)}</b><span class="${isSav?(s.real-s.target>=0?'pos':'wrn'):(s.real-s.target>0?'neg':'pos')}">${signBrl(s.real-s.target)} vs meta</span></div>${bar(p,cls)}</div>`}).join('')}
+  </div>
+  ${healthRow(inc,bs,debt)}
+  <div class="grid g21">
+   <div class="card"><h3>Planejado × Real por categoria</h3><div class="sub">Categorias do mês — barras vermelhas indicam estouro</div><div class="chart-box lg"><canvas id="chCat"></canvas></div></div>
+   <div class="card"><h3>Para onde foi o dinheiro</h3><div class="sub">Distribuição real da renda</div><div class="chart-box lg"><canvas id="chDonut"></canvas></div></div>
+  </div>
+  <div class="grid g21">
+   <div class="card"><h3>Evolução — últimos 6 meses</h3><div class="sub">Renda, gastos e poupança</div><div class="chart-box"><canvas id="chTrend"></canvas></div></div>
+   <div class="card"><h3>Alertas</h3><div class="sub">O que merece atenção agora</div>${alertsHTML(over)}</div>
+  </div>
+  <div class="grid g2">
+   <div class="card"><h3>Renda por fonte</h3><div class="sub">${mLabel(curMonth,true)}</div><div class="chart-box sm"><canvas id="chInc"></canvas></div></div>
+   <div class="card"><div class="card-head"><div><h3>Compromissos em aberto</h3><div class="sub">Dívidas + saldo a pagar nos cartões</div></div><b style="font-size:20px" class="neg">${brl(debt)}</b></div>
+    ${state.debts.map(d=>{const p=(+d.parcelasPagas)/(+d.totalParcelas)*100;return`<div style="margin:10px 0"><div class="stat-line"><span>${esc(d.nome)}</span><b>${brl(debtRemaining(d))}</b></div>${bar(p)}</div>`}).join('')}
+    ${state.cards.map(c=>{const u=cardUsed(c.id,curMonth),p=c.limite?u/c.limite*100:0;return`<div style="margin:10px 0"><div class="stat-line"><span>💳 ${esc(c.nome)}</span><b>${brl(u)}</b></div>${bar(p,p>80?'bad':p>50?'warn':'ok')}</div>`}).join('')||''}
+    ${!state.debts.length&&!state.cards.length?'<div class="empty">Nenhuma dívida cadastrada 🎉</div>':''}
+   </div>
+  </div>`;
+  setTimeout(()=>{
+    const cr=rows.filter(r=>r.plan||r.real).sort((a,b)=>Math.max(b.plan,b.real)-Math.max(a.plan,a.real)).slice(0,12);
+    mkChart('chCat',{type:'bar',data:{labels:cr.map(r=>r.cat),datasets:[{label:'Planejado',data:cr.map(r=>r.plan),backgroundColor:cssVar('--border'),borderRadius:6},{label:'Real',data:cr.map(r=>r.real),backgroundColor:cr.map(r=>r.tipo==='savings'?BUCKETS.savings.color:r.real>r.plan?cssVar('--bad'):BUCKETS[r.tipo].color),borderRadius:6}]},options:{indexAxis:'y',scales:{x:moneyAxis,y:{grid:{display:false}}}}});
+    const dl=[bs.needs.real,bs.wants.real,bs.savings.real,Math.max(0,free)];
+    mkChart('chDonut',{type:'doughnut',data:{labels:['Necessidades','Desejos','Poupança','Sobra livre'],datasets:[{data:dl,backgroundColor:[BUCKETS.needs.color,BUCKETS.wants.color,BUCKETS.savings.color,cssVar('--border')],borderWidth:0}]},options:{cutout:'68%',plugins:{legend:{position:'bottom'}}}});
+    const ms=[...Array(6)].map((_,i)=>addM(curMonth,i-5));
+    mkChart('chTrend',{type:'line',data:{labels:ms.map(x=>mLabel(x)),datasets:[
+      {label:'Renda',data:ms.map(incomeTotal),borderColor:cssVar('--accent'),backgroundColor:cssVar('--accent')+'22',fill:true,tension:.35},
+      {label:'Gastos',data:ms.map(x=>{const b=bucketSummary(x);return b.needs.real+b.wants.real}),borderColor:cssVar('--bad'),tension:.35},
+      {label:'Poupança',data:ms.map(x=>bucketSummary(x).savings.real),borderColor:BUCKETS.savings.color,tension:.35}]},options:{scales:{y:moneyAxis,x:{grid:{display:false}}}}});
+    const src=incomeBySource(curMonth);
+    mkChart('chInc',{type:'bar',data:{labels:Object.keys(src),datasets:[{label:'Renda',data:Object.values(src),backgroundColor:PALETTE,borderRadius:8}]},options:{plugins:{legend:{display:false}},scales:{y:moneyAxis,x:{grid:{display:false}}}}});
+  });
+  return h;
+}
+function alertsHTML(over){
+  const a=[],inc=incomeTotal(curMonth),bs=bucketSummary(curMonth),m=month();
+  over.slice(0,5).forEach(r=>a.push(['bad',r.plan?`<b>${esc(r.cat)}</b>: gastou ${brl(r.real)} de ${brl(r.plan)} planejados — <b>${signBrl(r.diff)} (${signPct(r.diffPct)})</b>.`:`<b>${esc(r.cat)}</b>: ${brl(r.real)} gastos sem orçamento definido.`]));
+  const planTot=bs.needs.plan+bs.wants.plan+bs.savings.plan;
+  if(inc&&planTot>inc+0.01)a.push(['warn',`O orçamento planejado (${brl(planTot)}) é maior que a renda (${brl(inc)}).`]);
+  const pctSum=sum(Object.values(m.pct));if(Math.abs(pctSum-100)>0.01)a.push(['warn',`As porcentagens do orçamento somam ${num(pctSum,0)}% (deveriam somar 100%).`]);
+  state.cards.forEach(c=>{const u=cardUsed(c.id,curMonth);if(c.limite&&u/c.limite>.8)a.push(['warn',`Cartão <b>${esc(c.nome)}</b> com ${pctf(u/c.limite*100,0)} do limite comprometido.`]);const f=cardFatura(c.id,curMonth);if(f)a.push(['info',`Fatura do <b>${esc(c.nome)}</b> em ${mLabel(curMonth)}: <b>${brl(f)}</b> (vence dia ${c.vencimento}).`])});
+  const dp=monthlyDebtPayments(curMonth);if(inc&&dp/inc>.3)a.push(['bad',`Parcelas de dívidas consomem ${pctf(dp/inc*100,0)} da renda (ideal: até 30%).`]);
+  if(curMonth<=todayYM())billsOf(curMonth).filter(x=>x.st.k==='atrasada'||x.st.k==='proxima').forEach(x=>a.unshift([x.st.k==='atrasada'?'bad':'warn',`Conta <b>${esc(x.b.nome)}</b> (${brl(x.b.valor)}): ${x.st.t.toLowerCase()}.`]));
+  if(!a.length)a.push(['ok','Tudo sob controle neste mês. 👏']);
+  return a.map(([c,t])=>`<div class="alert ${c}">${t}</div>`).join('');
+}
+
+/* ============================================================
+   VIEW: RENDA & ORÇAMENTO
+   ============================================================ */
+const BUD_TABS=[['renda','💵 Renda'],['needs','🏠 Needs'],['wants','🎉 Wants'],['savings','💚 Savings'],['poupanca','🐷 Poupança'],['invest','📈 Investimentos'],['reserva','🛟 Reserva']];
+function budTabs(){
+  const tab=ui.budTab||'renda',inc=incomeTotal(curMonth),bs=bucketSummary(curMonth),pl=sum(month().budget,b=>b.valor),real=bs.needs.real+bs.wants.real+bs.savings.real;
+  return`<div class="chips" style="flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch">${BUD_TABS.map(([k,l])=>`<button class="chip ${tab===k?'on':''}" data-act="budTab" data-id="${k}" style="flex:none">${l}</button>`).join('')}</div>
+  <div class="grid g4">${kpi('Renda do mês',brl(inc),'')}${kpi('Planejado',brl(pl),inc?pctf(pl/inc*100,0)+' da renda':'')}${kpi('Gasto/aplicado',brl(real),pl?pctf(real/pl*100,0)+' do planejado':'')}${kpi(inc-pl>=0?'Sem destino':'Acima da renda',brl(Math.abs(inc-pl)),'',null,Math.abs(inc-pl)<0.5?'pos':inc-pl<0?'neg':'wrn')}</div>`;
+}
+function vBudget(){
+  const tab=ui.budTab||'renda';
+  const m=month(),inc=incomeTotal(curMonth),bs=bucketSummary(curMonth),pctSum=sum(Object.values(m.pct));
+  const src=incomeBySource(curMonth),fixed=incomeFixed(curMonth);
+  let h=budTabs();
+  if(tab==='poupanca')return h+budPoupanca();
+  if(tab==='invest')return h+budInvest();
+  if(tab==='reserva')return h+budReserva();
+  if(tab==='renda'){h+=`<div class="grid g2">
+  <div class="card"><div class="card-head"><div><h3>Fontes de renda — ${mLabel(curMonth,true)}</h3><div class="sub">Trabalho, freelas e outras entradas do mês</div></div><button class="btn primary sm" data-act="addIncome">+ Renda</button></div>
+   ${m.income.length||benIncome(curMonth).length?`<div class="table-wrap"><table><thead><tr><th>Fonte</th><th>Descrição</th><th>Data</th><th>Tipo</th><th class="num">Valor</th><th></th></tr></thead><tbody>
+   ${m.income.map(i=>`<tr><td><b>${esc(i.fonte)}</b></td><td class="muted">${esc(i.desc||'')}</td><td>${fmtDate(i.date)}</td><td><span class="badge ${i.natureza==='variavel'?'warn':'info'}">${i.natureza==='variavel'?'Variável':'Fixa'}</span></td><td class="num">${brl(i.valor)}</td><td class="num"><button class="icon-btn" data-act="editIncome" data-id="${i.id}">✎</button><button class="icon-btn" data-act="delIncome" data-id="${i.id}">🗑</button></td></tr>`).join('')}
+   ${benIncome(curMonth).map(x=>`<tr><td><b>${esc(x.b.nome)}</b></td><td class="muted">Crédito do benefício (aba Vale-alimentação)</td><td>${fmtDate(isoOf(curMonth,+x.b.dia||1))}</td><td><span class="badge ok">Benefício</span></td><td class="num">${brl(x.valor)}</td><td class="num"><button class="icon-btn" title="Abrir aba do vale" data-act="nav" data-id="vale">↗</button></td></tr>`).join('')}
+   <tr class="total"><td colspan="4">Total (${pctf(inc?fixed/inc*100:0,0)} fixa · ${pctf(inc?(inc-fixed)/inc*100:0,0)} variável)</td><td class="num">${brl(inc)}</td><td></td></tr></tbody></table></div>`:'<div class="empty">Nenhuma renda neste mês. Adicione seu salário e seus freelas.</div>'}
+   ${Object.keys(src).length>1?`<div class="chart-box sm" style="margin-top:10px"><canvas id="chSrc"></canvas></div>`:''}
+  </div>
+  <div class="card"><div class="card-head"><div><h3>Divisão por porcentagem</h3><div class="sub">Quanto da renda vai para cada grupo</div></div><button class="btn sm" data-act="apply503020">Regra 50/30/20</button></div>
+   ${Object.entries(BUCKETS).map(([k,b])=>`<div class="pct-row"><b><span class="dot" style="background:${b.color}"></span> ${b.label}</b><input type="range" min="0" max="100" step="1" value="${m.pct[k]}" data-pct="${k}"><input type="number" min="0" max="100" step="0.5" value="${m.pct[k]}" data-pctn="${k}"><b class="num" id="pv_${k}" style="text-align:right">${brl(inc*m.pct[k]/100)}</b></div>`).join('')}
+   <div class="row" style="margin-top:8px"><span>Total:</span><b id="pctSum" class="${Math.abs(pctSum-100)>0.01?'neg':'pos'}">${num(pctSum,1)}%</b><span class="spacer"></span><span class="muted" style="font-size:12px">Ajuste os controles — os valores são recalculados a partir da renda.</span></div>
+  </div></div>`;
+  }
+  h+=`<div class="grid g3">${Object.entries(BUCKETS).filter(([k])=>tab==='renda'||tab===k).map(([k,b])=>{const s=bs[k],left=s.target-s.plan;return`<div class="card" ${tab==='renda'?`data-act="budTab" data-id="${k}" style="cursor:pointer"`:''}><h3><span class="dot" style="background:${b.color}"></span> ${b.label}</h3><div class="sub">${s.pct}% de ${brl(inc)}${tab===k?' · gasto real '+brl(s.real):''}</div>
+   <div class="stat-line"><span>Meta do grupo</span><b>${brl(s.target)}</b></div><div class="stat-line"><span>Já distribuído em categorias</span><b>${brl(s.plan)}</b></div>
+   <div class="stat-line"><span>${left>=0?'Falta distribuir':'Distribuído a mais'}</span><b class="${left>=0?'':'neg'}">${brl(Math.abs(left))}</b></div>${bar(s.target?s.plan/s.target*100:0,left<0?'bad':'ok')}</div>`}).join('')}</div>`;
+  // ---- Categorias: planejado (editável) × real (puxado dos gastos) ----
+  const cmp=comparison(curMonth),cmap={};cmp.forEach(r=>cmap[r.tipo+'|'+norm(r.cat)]=r);
+  const totPlan=sum(m.budget,b=>b.valor),totReal=sum(cmp,r=>r.real);
+  if(inc&&tab==='renda'){const sd=inc-totPlan;
+    h+=Math.abs(sd)<0.5?`<div class="alert ok">✅ <b>Orçamento base zero:</b> cada real da sua renda (${brl(inc)}) já tem um destino.</div>`
+      :sd>0?`<div class="alert warn"><div class="row"><span>💰 Falta dar destino a <b>${brl(sd)}</b> da sua renda. Dinheiro sem destino costuma "sumir" em gastos pequenos — distribua nas categorias ou envie para a poupança.</span><span class="spacer"></span><button class="btn sm primary" data-act="sobraPoupanca">Enviar para a poupança</button></div></div>`
+      :`<div class="alert bad">⚠️ Seu budget (${brl(totPlan)}) passa da renda em <b>${brl(-sd)}</b>. Reduza categorias de Desejos primeiro.</div>`}
+  if(tab==='renda'){setTimeout(()=>{if(Object.keys(src).length>1)mkChart('chSrc',{type:'doughnut',data:{labels:Object.keys(src),datasets:[{data:Object.values(src),backgroundColor:PALETTE,borderWidth:0}]},options:{cutout:'62%',plugins:{legend:{position:'right'}}}})});return h}
+  h+=`<div class="card"><div class="card-head"><div><h3>${BUCKETS[tab].label}: categorias × gasto real</h3><div class="sub">Digite quanto espera gastar em cada item. O gasto real é puxado automaticamente dos seus lançamentos de ${mLabel(curMonth,true)}.</div></div>
+   <div class="row">${state.months[addM(curMonth,-1)]?`<button class="btn sm" data-act="copyPrev">Copiar do mês anterior</button>`:''}<button class="btn sm" data-act="presetCats">✨ Categorias sugeridas</button><button class="btn sm" data-act="suggestBudget">💡 Sugerir valores</button><button class="btn primary sm" data-act="addBudgetTipo" data-id="${tab}">+ Categoria</button></div></div>`;
+  if(!m.budget.some(b=>b.tipo===tab)&&!cmp.some(r=>r.tipo===tab)){
+    h+=`<div class="empty"><p style="margin:0 0 6px"><b>Comece cadastrando suas categorias.</b></p><p style="margin:0 0 14px">Ex.: Moradia, Alimentação, Água, Luz, Internet, Celular, Transporte (Needs) · Restaurantes, Lazer (Wants) · Reserva de emergência (Savings).</p><button class="btn primary" data-act="presetCats">✨ Criar categorias sugeridas</button> <button class="btn" data-act="addBudgetTipo" data-id="${tab}">+ Criar uma por uma</button></div></div>`;
+  }else{const totPlan=sum(m.budget.filter(b=>b.tipo===tab),b=>b.valor),totReal=sum(cmp.filter(r=>r.tipo===tab),r=>r.real);
+    h+=`<div class="table-wrap"><table><thead><tr><th>Categoria</th><th class="num" style="width:150px">Planejado (budget)</th><th class="num">Gasto real</th><th class="num">Diferença R$</th><th class="num">Diferença %</th><th style="width:130px">Uso</th><th>Status</th><th></th></tr></thead><tbody>`;
+    [tab].forEach(k=>{
+      const items=m.budget.filter(b=>b.tipo===k);
+      const extra=cmp.filter(r=>r.tipo===k&&r.unplanned);
+      if(!items.length&&!extra.length)return;
+      const gp=sum(items,b=>b.valor),gr=sum(cmp.filter(r=>r.tipo===k),r=>r.real),gd=gr-gp,isS=k==='savings';
+      h+=`<tr class="group"><td><span class="dot" style="background:${BUCKETS[k].color}"></span> ${BUCKETS[k].label} <span class="pill">meta ${brl(bs[k].target)}</span></td><td class="num">${brl(gp)}</td><td class="num">${brl(gr)}</td><td class="num ${(isS?gd<0:gd>0)?'neg':'pos'}">${signBrl(gd)}</td><td class="num">${gp?signPct(gd/gp*100):'—'}</td><td>${bar(gp?gr/gp*100:0)}</td><td></td><td></td></tr>`;
+      items.forEach(b=>{
+        const r=cmap[b.tipo+'|'+norm(b.cat)]||{plan:+b.valor,real:0,diff:-b.valor,diffPct:-100,usePct:0,tipo:b.tipo};
+        const st=status(r),bad=isS?r.diff<0:r.diff>0;
+        h+=`<tr><td data-act="editBudget" data-id="${b.id}" style="cursor:pointer" title="Editar categoria">${esc(b.cat)}${b.acumula?' <span title="Acumula a sobra">♻</span>':''}${r.sobra?` <span class="pill" title="Sobra acumulada dos meses anteriores">+${brl(r.sobra)} de sobra</span>`:''} <span class="muted" style="font-size:12px;font-weight:400">✎</span></td>
+         <td class="num"><input type="number" min="0" step="0.01" value="${+b.valor||''}" placeholder="0,00" data-bval="${b.id}" style="text-align:right;padding:6px 8px"></td>
+         <td class="num"><b>${brl(r.real)}</b></td>
+         <td class="num ${bad?'neg':r.diff===0?'':'pos'}">${signBrl(r.diff)}</td>
+         <td class="num ${bad?'neg':''}">${r.plan?signPct(r.diffPct):'—'}</td>
+         <td>${bar(r.usePct,st.cls)}<div class="muted" style="font-size:11px;margin-top:3px">${r.plan?pctf(r.usePct,0)+' usado':''}</div></td>
+         <td>${r.real||r.plan?`<span class="badge ${st.cls}">${r.real?st.t:'Sem gastos'}</span>`:''}</td>
+         <td class="num"><button class="icon-btn" title="Lançar gasto nesta categoria" data-act="addExpenseCat" data-id="${b.id}">＋<span class="m-only"> Lançar</span></button><button class="icon-btn" title="Editar" data-act="editBudget" data-id="${b.id}">✎<span class="m-only"> Editar</span></button><button class="icon-btn" title="Apagar" data-act="delBudget" data-id="${b.id}">🗑<span class="m-only"> Apagar</span></button></td></tr>`;
+      });
+      extra.forEach(r=>{const uid_=esc(r.tipo+'::'+r.cat);h+=`<tr><td data-act="editUnplanned" data-id="${uid_}" style="cursor:pointer" title="Editar / juntar">${esc(r.cat)} <span class="pill">não orçado</span> <span class="muted" style="font-size:12px;font-weight:400">✎</span></td><td class="num muted">—</td><td class="num"><b>${brl(r.real)}</b></td><td class="num ${isS?'pos':'neg'}">${signBrl(r.real)}</td><td class="num">—</td><td>${bar(100,isS?'ok':'bad')}</td><td><span class="badge ${isS?'ok':'bad'}">${isS?'Extra poupado':'Não orçado'}</span></td><td class="num"><button class="btn sm" data-act="orcar" data-id="${uid_}">Orçar</button><button class="icon-btn" title="Editar / juntar com outra categoria" data-act="editUnplanned" data-id="${uid_}">✎<span class="m-only"> Editar</span></button><button class="icon-btn" title="Apagar os gastos" data-act="delUnplanned" data-id="${uid_}">🗑<span class="m-only"> Apagar</span></button></td></tr>`});
+    });
+    const d=totReal-totPlan;
+    h+=`<tr class="total"><td>Total</td><td class="num">${brl(totPlan)}</td><td class="num">${brl(totReal)}</td><td class="num ${d>0?'neg':'pos'}">${signBrl(d)}</td><td class="num">${totPlan?signPct(d/totPlan*100):'—'}</td><td></td><td></td><td></td></tr></tbody></table></div>
+    <div class="muted" style="font-size:12px;margin-top:10px">💡 O gasto real soma todos os lançamentos do mês com o <b>mesmo nome de categoria e grupo</b> (incluindo parcelas de cartão). Gastos com nome diferente aparecem como "não orçado" — clique em <b>Orçar</b> para criar a categoria.</div></div>`;
+  }
+  setTimeout(()=>{if(Object.keys(src).length>1)mkChart('chSrc',{type:'doughnut',data:{labels:Object.keys(src),datasets:[{data:Object.values(src),backgroundColor:PALETTE,borderWidth:0}]},options:{cutout:'62%',plugins:{legend:{position:'right'}}}})});
+  return h;
+}
+
+/* ============================================================
+   VIEW: PLANEJADO × REAL
+   ============================================================ */
+function vCompare(){
+  const rows=comparison(curMonth),bs=bucketSummary(curMonth),inc=incomeTotal(curMonth);
+  if(!rows.length)return(month()._empty?emptyMonthBanner():'')+'<div class="card empty">Sem orçamento e sem gastos neste mês.</div>';
+  const tp=sum(rows,r=>r.plan),tr=sum(rows,r=>r.real);
+  let h=`<div class="grid g4">${Object.entries(BUCKETS).map(([k,b])=>{const s=bs[k],d=s.real-s.plan,dp=s.plan?d/s.plan*100:0,isS=k==='savings',good=isS?d>=0:d<=0;
+    return kpi(b.label,brl(s.real),`Planejado ${brl(s.plan)} · <b class="${good?'pos':'neg'}">${signBrl(d)} (${signPct(dp)})</b>`,b.color)}).join('')}
+    ${kpi('Total geral',brl(tr),`Planejado ${brl(tp)} · <b class="${tr<=tp?'pos':'neg'}">${signBrl(tr-tp)} (${signPct(tp?(tr-tp)/tp*100:0)})</b>`)}</div>`;
+  h+=`<div class="card"><div class="card-head"><div><h3>Comparativo por categoria</h3><div class="sub">Diferença positiva = gastou a mais que o planejado (em Savings, positivo = guardou mais)</div></div></div><div class="table-wrap"><table>
+  <thead><tr><th>Categoria</th><th class="num">Planejado</th><th class="num">Real</th><th class="num">Diferença R$</th><th class="num">Diferença %</th><th style="width:150px">Uso</th><th>Status</th></tr></thead><tbody>`;
+  Object.keys(BUCKETS).forEach(k=>{
+    const rs=rows.filter(r=>r.tipo===k).sort((a,b)=>b.diff-a.diff);if(!rs.length)return;
+    const s=bs[k],d=s.real-s.plan;
+    h+=`<tr class="group"><td>${BUCKETS[k].label} <span class="pill">meta ${brl(s.target)}</span></td><td class="num">${brl(s.plan)}</td><td class="num">${brl(s.real)}</td><td class="num ${(k==='savings'?d<0:d>0)?'neg':'pos'}">${signBrl(d)}</td><td class="num">${signPct(s.plan?d/s.plan*100:0)}</td><td>${bar(s.plan?s.real/s.plan*100:0)}</td><td></td></tr>`;
+    rs.forEach(r=>{const st=status(r),bad=k==='savings'?r.diff<0:r.diff>0;
+      h+=`<tr><td>${esc(r.cat)}${r.unplanned?' <span class="pill">não orçado</span>':''}</td><td class="num">${brl(r.plan)}</td><td class="num">${brl(r.real)}</td><td class="num ${bad?'neg':r.diff===0?'':'pos'}">${signBrl(r.diff)}</td><td class="num ${bad?'neg':''}">${r.plan?signPct(r.diffPct):'—'}</td><td>${bar(r.usePct,st.cls)}<div class="muted" style="font-size:11px;margin-top:3px">${isFinite(r.usePct)?pctf(r.usePct,0)+' usado':'sem orçamento'}</div></td><td><span class="badge ${st.cls}">${st.t}</span></td></tr>`});
+  });
+  h+=`<tr class="total"><td>Total</td><td class="num">${brl(tp)}</td><td class="num">${brl(tr)}</td><td class="num ${tr>tp?'neg':'pos'}">${signBrl(tr-tp)}</td><td class="num">${signPct(tp?(tr-tp)/tp*100:0)}</td><td></td><td></td></tr></tbody></table></div></div>
+  <div class="grid g2"><div class="card"><h3>Meta × Planejado × Real por grupo</h3><div class="sub">Meta = renda (${brl(inc)}) × porcentagem do grupo</div><div class="chart-box"><canvas id="chBk"></canvas></div></div>
+  <div class="card"><h3>Desvio por categoria (%)</h3><div class="sub">Quanto cada categoria passou ou ficou abaixo do planejado</div><div class="chart-box"><canvas id="chDev"></canvas></div></div></div>`;
+  setTimeout(()=>{
+    const ks=Object.keys(BUCKETS);
+    mkChart('chBk',{type:'bar',data:{labels:ks.map(k=>BUCKETS[k].label),datasets:[{label:'Meta (%)',data:ks.map(k=>bs[k].target),backgroundColor:cssVar('--border'),borderRadius:6},{label:'Planejado',data:ks.map(k=>bs[k].plan),backgroundColor:ks.map(k=>BUCKETS[k].color+'88'),borderRadius:6},{label:'Real',data:ks.map(k=>bs[k].real),backgroundColor:ks.map(k=>BUCKETS[k].color),borderRadius:6}]},options:{scales:{y:moneyAxis,x:{grid:{display:false}}}}});
+    const dv=rows.filter(r=>r.plan>0&&r.tipo!=='savings').sort((a,b)=>b.diffPct-a.diffPct);
+    mkChart('chDev',{type:'bar',_pct:true,data:{labels:dv.map(r=>r.cat),datasets:[{label:'Desvio',data:dv.map(r=>r.diffPct),backgroundColor:dv.map(r=>r.diffPct>0?cssVar('--bad'):cssVar('--ok')),borderRadius:6}]},options:{indexAxis:'y',plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>v+'%'}},y:{grid:{display:false}}}}});
+  });
+  return h;
+}
+
+/* ============================================================
+   VIEW: GASTOS
+   ============================================================ */
+function vExpenses(){
+  const f=ui.expFilter;
+  let list=actualEntries(curMonth,true).sort((a,b)=>b.date.localeCompare(a.date));
+  if(f.q)list=list.filter(e=>norm(e.desc+' '+e.cat).includes(norm(f.q)));
+  if(f.tipo)list=list.filter(e=>e.tipo===f.tipo);
+  if(f.pay)list=list.filter(e=>f.pay==='Cartão'?e.src==='card':e.pay===f.pay);
+  const byDay={};list.forEach(e=>byDay[e.date]=(byDay[e.date]||0)+e.valor);
+  return`<div class="card"><div class="card-head"><div><h3>Gastos de ${mLabel(curMonth,true)}</h3><div class="sub">Inclui as parcelas de cartão que caem na fatura deste mês</div></div><button class="btn primary sm" data-act="addExpense">+ Lançar gasto</button></div>
+  <div class="filters no-print" style="margin-bottom:12px"><input type="text" placeholder="Buscar..." value="${esc(f.q)}" data-filter="q" style="flex:1"><select data-filter="tipo"><option value="">Todos os grupos</option>${tipoOpts.map(([v,l])=>`<option value="${v}" ${f.tipo===v?'selected':''}>${l}</option>`).join('')}</select><select data-filter="pay"><option value="">Todas as formas</option>${[...PAY,'Cartão',...state.benefits.map(b=>b.nome)].map(p=>`<option ${f.pay===p?'selected':''}>${p}</option>`).join('')}</select></div>
+  ${list.length?`<div class="table-wrap"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Grupo</th><th>Pagamento</th><th class="num">Valor</th><th></th></tr></thead><tbody>
+  ${list.map(e=>`<tr><td>${fmtDate(e.date)}</td><td>${esc(e.desc)}${e.fund?' <span class="pill" title="Pago com dinheiro já guardado — não conta no budget do mês">pago pela reserva</span>':''}</td><td>${esc(e.cat)}</td><td>${tipoBadge(e.tipo)}</td><td class="muted">${esc(e.pay||'')}</td><td class="num">${brl(e.valor)}</td><td class="num">${e.src==='exp'?`<button class="icon-btn" title="Duplicar" data-act="dupExpense" data-id="${e.ref.id}">⧉</button><button class="icon-btn" data-act="editExpense" data-id="${e.ref.id}">✎</button><button class="icon-btn" data-act="delExpense" data-id="${e.ref.id}">🗑</button>`:`<button class="icon-btn" title="Editar compra no cartão" data-act="editPurchase" data-id="${e.ref.p.id}">💳</button>`}</td></tr>`).join('')}
+  <tr class="total"><td colspan="5">${list.length} lançamento(s)${list.some(e=>e.fund)?` · ${brl(sum(list.filter(e=>e.fund),e=>e.valor))} pagos por reservas (fora do budget)`:''}</td><td class="num">${brl(sum(list,e=>e.valor))}</td><td></td></tr></tbody></table></div>`:'<div class="empty">Nenhum gasto encontrado.</div>'}</div>`;
+}
+
+/* ============================================================
+   CELULAR: LISTA DE GASTOS, INÍCIO E LANÇAMENTO RÁPIDO
+   ============================================================ */
+const DOW=['dom','seg','ter','qua','qui','sex','sáb'];
+function dayLabel(iso){const t=todayISO(),y=toISO(new Date(Date.now()-864e5));if(iso===t)return'Hoje';if(iso===y)return'Ontem';const d=parseISO(iso);return DOW[d.getDay()]+', '+fmtDate(iso)}
+function expRow(e){
+  const c=BUCKETS[e.tipo]?BUCKETS[e.tipo].color:'#888',act=e.src==='exp'?`data-act="editExpense" data-id="${e.ref.id}"`:`data-act="editPurchase" data-id="${e.ref.p.id}"`;
+  const ini=(e.src==='card'?'💳':e.ref&&e.ref.benefitId?'🧺':esc((e.cat||'?').trim().charAt(0).toUpperCase()));
+  return`<div class="mrow" ${act}><div class="ic" style="background:${c}22;color:${c}">${ini}</div><div class="tx"><b>${esc(e.desc)}</b><small>${esc(e.cat||'Sem categoria')} · ${esc(e.pay||'')}${e.fund?' · pago pela reserva':''}${(()=>{const o=e.src==='exp'?e.ref:e.ref&&e.ref.p;return o&&o.tags&&o.tags.length?' · <span style="color:var(--accent)">'+esc(tagsTxt(o))+'</span>':''})()}${e.ref&&(e.ref.auto||(e.ref.p&&e.ref.p.auto))?' · ⚙ automático':''}${(()=>{const o=e.src==='exp'?e.ref:e.ref&&e.ref.p;return o&&o.por&&pessoasLanc().length>1?' · 👤 '+esc(o.por):''})()}</small></div><div class="vl ${e.tipo==='savings'?'pos':''}">${brl(e.valor)}</div></div>`;
+}
+function expList(list){
+  const by={};list.forEach(e=>(by[e.date]=by[e.date]||[]).push(e));
+  return`<div class="mlist">${Object.keys(by).sort().reverse().map(d=>`<div class="mday"><span>${dayLabel(d)}</span><span>${brl(sum(by[d].filter(x=>x.tipo!=='savings'),x=>x.valor))}</span></div>${by[d].map(expRow).join('')}`).join('')}</div>`;
+}
+function vExpensesMobile(){
+  const f=ui.expFilter;
+  let list=actualEntries(curMonth,true).sort((a,b)=>b.date.localeCompare(a.date));
+  if(f.q)list=list.filter(e=>norm(e.desc+' '+e.cat).includes(norm(f.q)));
+  if(f.tipo)list=list.filter(e=>e.tipo===f.tipo);
+  if(f.pay)list=list.filter(e=>f.pay==='Cartão'?e.src==='card':e.pay===f.pay);
+  const tot=sum(list.filter(e=>e.tipo!=='savings'),e=>e.valor),sav=sum(list.filter(e=>e.tipo==='savings'),e=>e.valor);
+  return`<div class="card"><div class="row" style="margin-bottom:10px"><button class="btn sm" data-act="nav" data-id="busca">🔎 Buscar em tudo</button><button class="btn sm" data-act="nav" data-id="possocomprar">🤔 Posso comprar?</button><button class="btn sm" data-act="nav" data-id="importar">⬆ Importar extrato</button><button class="btn sm" data-act="nav" data-id="lixeira">🗑 Lixeira</button></div><div class="filters" style="margin-bottom:6px"><input type="text" placeholder="🔎 Buscar gasto ou categoria" value="${esc(f.q)}" data-filter="q" style="flex:1 1 100%"><select data-filter="tipo"><option value="">Todos os grupos</option>${tipoOpts.map(([v,l])=>`<option value="${v}" ${f.tipo===v?'selected':''}>${l}</option>`).join('')}</select><select data-filter="pay"><option value="">Todas as formas</option>${[...PAY,'Cartão',...state.benefits.map(b=>b.nome)].map(p=>`<option ${f.pay===p?'selected':''}>${p}</option>`).join('')}</select></div>
+  <div class="row" style="justify-content:space-between;margin:10px 2px 0"><span class="muted">${list.length} lançamento(s)${sav?' · '+brl(sav)+' poupados':''}</span><b>${brl(tot)}</b></div>
+  ${list.length?expList(list):'<div class="empty">Nenhum gasto encontrado.<br><br><button class="btn primary" data-act="quickAdd">+ Lançar gasto</button></div>'}
+  <div class="muted" style="font-size:12px;margin-top:12px">Toque num lançamento para editar, duplicar ou excluir. Inclui as parcelas de cartão que caem na fatura de ${mLabel(curMonth,true)}.</div></div>`;
+}
+function backupDue(){const dias=meta.exportAt?(Date.now()-new Date(meta.exportAt))/864e5:Infinity;return hasData(state)&&rev>(meta.exportRev||0)&&dias>=7}
+function vHome(){
+  const hasAny=Object.keys(state.months).length||state.expenses.length||state.debts.length;
+  if(!hasAny)return`<div class="card welcome"><h2>📱 Minhas Finanças</h2><p class="muted">Lance seus gastos pelo celular em poucos toques. Para começar, traga o backup (.json) do computador ou monte o orçamento aqui.</p><div style="display:grid;gap:10px;margin-top:16px"><button class="btn primary" data-act="import" style="justify-content:center">📂 Importar backup do computador</button><button class="btn" data-act="nav" data-id="budget" style="justify-content:center">Começar do zero</button><button class="btn" data-act="sample" style="justify-content:center">🧪 Ver com dados de exemplo</button></div></div>`;
+  const inc=incomeTotal(curMonth),bs=bucketSummary(curMonth),planNW=bs.needs.plan+bs.wants.plan,spent=bs.needs.real+bs.wants.real;
+  const isCur=curMonth===todayYM(),dim=daysIn(curMonth),diasRest=isCur?dim-new Date().getDate()+1:0;
+  const base=planNW||inc,livre=base-spent,use=base?spent/base*100:0;
+  let h='';
+  if(backupDue())h+=`<div class="alert warn"><div class="row"><span>💾 ${meta.exportAt?'Seu último backup foi em '+new Date(meta.exportAt).toLocaleDateString('pt-BR'):'Você ainda não fez backup neste celular'}. Guarde uma cópia no Google Drive.</span><span class="spacer"></span><button class="btn sm primary" data-act="shareBackup">Fazer backup</button></div></div>`;
+  {const ant=addM(todayYM(),-1);if(curMonth===todayYM()&&new Date().getDate()<=10&&actualEntries(ant).length&&!(state.fechamentos||{})[ant])h+=`<div class="alert info"><div class="row"><span>🗓 ${mLabel(ant,true)} acabou. Que tal fechar o mês em 5 minutos?</span><span class="spacer"></span><button class="btn sm primary" data-act="irFechar">Fechar o mês</button></div></div>`}
+  try{h+=vDinheiroHoje()+vCalendario()}catch(e){console.warn(e)}
+  if(month()._empty)h+=emptyMonthBanner();
+  h+=`<div class="card hero"><div class="lbl">${planNW?'Ainda pode gastar (Needs + Wants)':'Renda − gastos'} · ${mLabel(curMonth,true)}</div>
+   <div class="big">${livre<0?'−':''}${brl(Math.abs(livre))}</div>${bar(use)}
+   <div class="mini"><span>Gasto ${brl(spent)} de ${brl(base)}</span><span>${pctf(use,0)}</span></div>
+   ${isCur&&livre>0&&diasRest?`<div class="mini" style="margin-top:4px"><span>≈ <b>${brl(livre/diasRest)}</b> por dia nos próximos ${diasRest} dia(s)</span></div>`:''}</div>
+  <div class="grid g4">${kpi('Renda',brl(inc),Object.keys(incomeBySource(curMonth)).length+' fonte(s)')}${kpi('Poupado',brl(bs.savings.real),'meta '+brl(bs.savings.target),BUCKETS.savings.color,'pos')}</div>`;
+  // vale
+  if(false){const ref=benRef();h+=state.benefits.map(b=>{const saldo=benBalance(b,ref),nx=benNext(b,ref),dias=Math.max(1,dDiff(ref,nx));
+    return`<div class="card" data-act="nav" data-id="vale" style="cursor:pointer;border-left:4px solid ${b.cor||'#22c58b'}"><div class="row" style="justify-content:space-between"><div><div class="muted" style="font-size:12px">🧺 ${esc(b.nome)}</div><b style="font-size:20px" class="${saldo<0?'neg':''}">${brl(saldo)}</b></div><div style="text-align:right"><div class="muted" style="font-size:12px">pode gastar por dia</div><b>${brl(Math.max(0,saldo)/dias)}</b><div class="muted" style="font-size:11px">recarga ${fmtDate(nx)}</div></div></div></div>`}).join('')}
+  // contas
+  const bl=billsOf(curMonth).filter(x=>!x.pay);
+  if(bl.length)h+=`<div class="card"><div class="card-head"><div><h3>🧾 Contas a pagar</h3><div class="sub" style="margin:0">${bl.length} em aberto · ${brl(sum(bl,x=>+x.b.valor))}</div></div><button class="btn sm" data-act="nav" data-id="bills">Ver todas</button></div>
+   ${bl.slice(0,4).map(({b,st})=>`<div class="mrow" style="cursor:default"><div class="tx"><b>${esc(b.nome)}</b><small><span class="badge ${st.cls}">${st.t}</span></small></div><div class="vl">${brl(b.valor)}</div><button class="btn sm primary" data-act="payBill" data-id="${b.id}">Pagar</button></div>`).join('')}</div>`;
+  // categorias perto do limite
+  const cats=comparison(curMonth).filter(r=>r.tipo!=='savings'&&(r.plan||r.real)).sort((a,b)=>(isFinite(b.usePct)?b.usePct:999)-(isFinite(a.usePct)?a.usePct:999)).slice(0,5);
+  if(cats.length)h+=`<div class="card"><div class="card-head"><div><h3>📊 Categorias</h3><div class="sub" style="margin:0">As mais perto do limite</div></div><button class="btn sm" data-act="nav" data-id="compare">Ver todas</button></div>
+   ${cats.map(r=>{const st=status(r);return`<div style="margin:12px 0"><div class="stat-line"><span>${esc(r.cat)}</span><span><b>${brl(r.real)}</b> <span class="muted">/ ${r.plan?brl(r.plan):'sem budget'}</span></span></div>${bar(r.usePct,st.cls)}</div>`}).join('')}</div>`;
+  // últimos lançamentos
+  const last=actualEntries(curMonth,true).filter(e=>e.src==='exp').sort((a,b)=>b.date.localeCompare(a.date)||0).slice(0,6);
+  h+=`<div class="card"><div class="card-head"><div><h3>🕑 Últimos lançamentos</h3></div><button class="btn sm" data-act="nav" data-id="expenses">Ver todos</button></div>${last.length?expList(last):'<div class="empty">Nada lançado neste mês ainda.</div>'}</div>`;
+  try{const E=progEtapas(),at=E.find(e=>!e.ok);if(at)h+=`<div class="card" data-act="invTab" data-id="prog" style="cursor:pointer"><div class="muted" style="font-size:12px">🧭 Programa "Para onde foi meu dinheiro?" · etapa ${E.indexOf(at)+1} de 7</div><div class="row" style="margin-top:6px;flex-wrap:nowrap"><span style="font-size:24px">${at.ic}</span><b style="flex:1">${at.t}</b><span class="vl">›</span></div>${bar(E.filter(e=>e.ok).length/7*100)}</div>`}catch(e){console.warn(e)}
+  try{const P=profileCalc(),[aic,anome]=arquetipo(P),nx=nextLesson();
+    h+=`<div class="card"><div class="row" style="flex-wrap:nowrap"><div class="ring" style="--p:${P.total};width:64px;height:64px"><b style="width:50px;height:50px;font-size:15px">${Math.round(P.total)}</b></div><div style="flex:1;min-width:0" data-act="nav" data-id="profile"><div class="muted" style="font-size:12px">Seu perfil financeiro</div><b>${aic} ${anome}</b><div class="muted" style="font-size:12px">Ver pilares e evolução ›</div></div></div>
+     ${nx?`<div class="mrow" data-act="openLesson" data-id="${nx.id}" style="border:0;padding-bottom:0"><div class="ic" style="background:var(--panel2)">${nx.ic}</div><div class="tx"><b>${nx.t}</b><small>🎓 Aula recomendada · ${nx.min} min</small></div><div class="vl">›</div></div>`:''}</div>`}catch(e){console.warn(e)}
+  const al=alertsHTML(comparison(curMonth).filter(r=>r.tipo!=='savings'&&r.diff>0.005).sort((a,b)=>b.diff-a.diff));
+  h+=`<div class="card"><h3>🔔 Alertas</h3><div class="sub">O que merece atenção agora</div>${al}</div>`;
+  return h;
+}
+/* lançamento rápido: valor → categoria → pagamento → salvar */
+function topCats(){
+  const cnt={},lim=toISO(new Date(Date.now()-120*864e5));
+  state.expenses.filter(e=>e.date>=lim&&e.cat&&!e.billId&&!e.fundId).forEach(e=>{const k=e.tipo+'|'+e.cat;cnt[k]=(cnt[k]||0)+1});
+  state.cardPurchases.filter(p=>(p.dataCompra||'')>=lim).forEach(p=>{const k=p.tipo+'|'+p.cat;cnt[k]=(cnt[k]||0)+1});
+  let L=Object.entries(cnt).sort((a,b)=>(a[0].startsWith('savings|')-b[0].startsWith('savings|'))||b[1]-a[1]).map(x=>x[0]);
+  month().budget.filter(b=>b.tipo!=='savings').forEach(b=>{const k=b.tipo+'|'+b.cat;if(!L.some(x=>norm(x)===norm(k)))L.push(k)});
+  const seen=new Set();L=L.filter(k=>{const n=norm(k);if(seen.has(n))return false;seen.add(n);return true});
+  return L.slice(0,10).map(k=>{const i=k.indexOf('|');return{tipo:k.slice(0,i),cat:k.slice(i+1)}});
+}
+function quickAdd(preset={}){
+  const f=$('#modalForm'),cats=topCats(),d0=curMonth===todayYM()?todayISO():isoOf(curMonth,1);
+  const pays=['Pix','Débito','Dinheiro'].map(p=>({v:p,l:p})).concat(state.benefits.map(b=>({v:'ben:'+b.id,l:'🧺 '+b.nome})),state.cards.map(c=>({v:'card:'+c.id,l:'💳 '+c.nome})),[{v:'Boleto',l:'Boleto'},{v:'Transferência',l:'Transferência'}]);
+  const CT=state.contas||[];let sel={cat:preset.cat?preset.tipo+'|'+preset.cat:'',pay:preset.pay||(pays.some(p=>p.v===meta.lastPay)?meta.lastPay:'Pix'),conta:(CT.find(c=>c.id===meta.lastConta)||contaPrincipal()||CT[0]||{}).id||''};
+  f.innerHTML=`<header>Lançar gasto</header><div class="body">
+   <div class="q-sec" style="display:flex;gap:8px"><input type="text" id="qFrase" placeholder='Fale ou digite: "mercado 85 no pix"' enterkeyhint="go" autocomplete="off" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();ACT.frase()}">${VOZ?'<button type="button" class="btn" id="qVoz" data-act="voz" title="Falar">🎤</button>':''}<button type="button" class="btn" data-act="frase" title="Preencher">➜</button></div>
+   <div class="q-sec" style="text-align:center"><button type="button" class="chip" data-act="colarNotif" style="font-size:13px;padding:7px 12px">📋 Colar notificação do banco</button></div>
+   <div class="q-sec"><input class="q-valor" name="valor" type="text" inputmode="decimal" placeholder="R$ 0,00" autocomplete="off" value="${preset.valor?String(preset.valor).replace('.',','):''}"></div>
+   <div class="q-sec"><div class="q-label">Categoria</div><div class="chips" id="qCats">${cats.map(c=>`<button type="button" class="chip" data-q="cat" data-v="${esc(c.tipo+'|'+c.cat)}"><span class="dot" style="background:${BUCKETS[c.tipo].color}"></span>${esc(c.cat)}</button>`).join('')}<button type="button" class="chip" data-q="cat" data-v="__outra">＋ Outra</button></div>
+    <div id="qOutra" hidden style="display:grid;gap:8px;margin-top:10px"><input type="text" name="catNova" list="dl_qcat" placeholder="Nome da categoria"><datalist id="dl_qcat">${categoriesList().map(o=>`<option value="${esc(o)}">`).join('')}</datalist><select name="tipoNovo">${tipoOpts.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select></div></div>
+   <div class="q-sec"><div class="q-label">Pagamento</div><div class="chips" id="qPays">${pays.map(p=>`<button type="button" class="chip" data-q="pay" data-v="${esc(p.v)}">${esc(p.l)}</button>`).join('')}</div>
+    <div id="qContas" hidden style="margin-top:10px"><div class="q-label">Saiu de qual conta?</div><div class="chips">${(state.contas||[]).map(c=>`<button type="button" class="chip" data-q="conta" data-v="${c.id}"><span class="dot" style="background:${c.cor||corBanco(c.banco)}"></span>${esc(c.nome)}</button>`).join('')}</div></div>
+    <label id="qParc" hidden style="margin-top:10px">Nº de parcelas<input type="text" inputmode="numeric" name="parcelas" value="1"></label></div>
+   <label class="q-sec">Descrição (opcional)<input type="text" name="desc" placeholder="Ex.: Padaria" value="${esc(preset.desc||'')}"></label>
+   <label class="q-sec">Data<input type="date" name="date" value="${preset.date||d0}"></label>
+  </div><footer><button type="button" class="btn" data-act="quickMore">Mais opções</button><button type="submit" class="btn primary">Salvar</button></footer>`;
+  const paint=()=>{f.querySelectorAll('[data-q]').forEach(b=>b.classList.toggle('on',sel[b.dataset.q]===b.dataset.v));
+    f.querySelector('#qOutra').hidden=sel.cat!=='__outra';f.querySelector('#qParc').hidden=!sel.pay.startsWith('card:');
+    f.querySelector('#qContas').hidden=!(CT.length>1&&(PAY_CONTA.includes(sel.pay)||sel.pay==='Dinheiro'))};
+  if(sel.cat&&!cats.some(c=>c.tipo+'|'+c.cat===sel.cat)){f.elements.catNova.value=preset.cat;f.elements.tipoNovo.value=preset.tipo||'needs';sel.cat='__outra'}
+  paint();
+  f.onclick=e=>{const b=e.target.closest('[data-q]');if(!b)return;sel[b.dataset.q]=b.dataset.v;paint();if(b.dataset.v==='__outra')f.elements.catNova.focus()};
+  const read=()=>{let cat,tipo;if(sel.cat==='__outra'){cat=f.elements.catNova.value.trim();tipo=f.elements.tipoNovo.value;const t=tipoOfCat(cat);if(t&&f.elements.tipoNovo.value==='needs')tipo=t}else if(sel.cat){const i=sel.cat.indexOf('|');tipo=sel.cat.slice(0,i);cat=sel.cat.slice(i+1)}
+    return{valor:Math.round(parseNum(f.elements.valor.value)*100)/100,cat,tipo,pay:sel.pay,desc:f.elements.desc.value.trim(),date:f.elements.date.value||d0,parcelas:Math.max(1,Math.round(parseNum(f.elements.parcelas.value)||1))}};
+  ui.quickRead=read;
+  f.onsubmit=e=>{e.preventDefault();const d=read();
+    if(!(d.valor>0)){toast('Digite o valor','err');f.elements.valor.focus();return}
+    if(!d.cat){toast('Escolha a categoria','err');return}
+    const tg=[];const desc=d.desc.replace(/#[\wÀ-ÿ-]+/g,m=>{tg.push(m);return''}).replace(/\s+/g,' ').trim()||d.cat;const tags=parseTags(tg.join(' '));let undo;
+    if(d.pay.startsWith('card:')){const cid=d.pay.slice(5),p={id:uid(),cardId:cid,desc,valorTotal:d.valor,parcelas:d.parcelas,dataCompra:d.date,primeiraFatura:faturaDe(cid,d.date),cat:d.cat,tipo:d.tipo};if(tags.length)p.tags=tags;stampPor(p);state.cardPurchases.push(p);
+      undo=()=>{tomb(p.id);state.cardPurchases=state.cardPurchases.filter(x=>x!==p)};}
+    else{const x={id:uid(),criado:Date.now(),desc,valor:d.valor,date:d.date,cat:d.cat,tipo:d.tipo,pay:d.pay};if(tags.length)x.tags=tags;stampPor(x);
+      if(CT.length>1&&(PAY_CONTA.includes(d.pay)||d.pay==='Dinheiro')&&sel.conta){x.contaId=sel.conta;meta.lastConta=sel.conta}
+      if(d.pay.startsWith('ben:')){const b=find(state.benefits,d.pay.slice(4));x.benefitId=b?b.id:undefined;x.pay=b?b.nome:'Vale'}
+      state.expenses.push(x);undo=()=>{tomb(x.id);state.expenses=state.expenses.filter(y=>y!==x)}}
+    meta.lastPay=d.pay;saveMeta();closeModal();save();render();
+    if(d.date.slice(0,7)!==curMonth&&!d.pay.startsWith('card:'))toast('Lançado em '+mLabel(d.date.slice(0,7),true));
+    const isCard=d.pay.startsWith('card:'),pf=isCard?faturaDe(d.pay.slice(5),d.date):null;
+    coachShow({cat:d.cat,tipo:d.tipo,valor:d.valor,date:d.date,ym:pf||undefined,valorMes:isCard?d.valor/d.parcelas:d.valor,parcelas:isCard?d.parcelas:undefined,benefitId:d.pay.startsWith('ben:')?d.pay.slice(4):undefined},
+      ()=>{undo();save();render();toast('Lançamento desfeito')},brl(d.valor)+' lançado');};
+  $('#modal').classList.remove('hidden');
+  setTimeout(()=>f.elements.valor.focus(),60);
+}
+function quickMore(){ // passa o que já foi digitado para o formulário completo
+  const d=ui.quickRead?ui.quickRead():{};const base={valor:d.valor||'',cat:d.cat,tipo:d.tipo||'needs',desc:d.desc,date:d.date};
+  if(d.pay&&d.pay.startsWith('card:')){if(!state.cards.length)return;purchaseForm(null,{...base,cardId:d.pay.slice(5),valorTotal:d.valor||'',parcelas:d.parcelas,dataCompra:d.date,primeiraFatura:faturaDe(d.pay.slice(5),d.date)});return}
+  expenseForm(null,{...base,pay:d.pay||'Pix'});
+}
+
+/* ============================================================
+   VIEW: REVISÃO (DIA / SEMANA / QUINZENA / MÊS)
+   ============================================================ */
+function periodRange(){
+  let ref=ui.refDate;if(ref.slice(0,7)!==curMonth){ref=curMonth===todayYM()?todayISO():isoOf(curMonth,1);ui.refDate=ref}
+  const d=parseISO(ref),dim=daysIn(curMonth);let a,b,label;
+  if(ui.period==='dia'){a=b=ref;label=d.toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'})}
+  else if(ui.period==='semana'){const wd=(d.getDay()+6)%7;const s=new Date(d);s.setDate(d.getDate()-wd);const e=new Date(s);e.setDate(s.getDate()+6);a=toISO(s);b=toISO(e);if(a.slice(0,7)<curMonth)a=isoOf(curMonth,1);if(b.slice(0,7)>curMonth)b=isoOf(curMonth,dim);label='Semana de '+fmtDate(a)+' a '+fmtDate(b)}
+  else if(ui.period==='quinzena'){if(d.getDate()<=15){a=isoOf(curMonth,1);b=isoOf(curMonth,15);label='1ª quinzena (01 a 15)'}else{a=isoOf(curMonth,16);b=isoOf(curMonth,dim);label='2ª quinzena (16 a '+dim+')'}}
+  else{a=isoOf(curMonth,1);b=isoOf(curMonth,dim);label=mLabel(curMonth,true)}
+  const days=Math.round((parseISO(b)-parseISO(a))/864e5)+1;
+  return{a,b,days,label};
+}
+function vReview(){
+  const{a,b,days,label}=periodRange(),dim=daysIn(curMonth);
+  const all=actualEntries(curMonth),inP=all.filter(e=>e.date>=a&&e.date<=b);
+  const spendP=inP.filter(e=>e.tipo!=='savings'),spent=sum(spendP,e=>e.valor),savedP=sum(inP.filter(e=>e.tipo==='savings'),e=>e.valor);
+  const bs=bucketSummary(curMonth),planNW=bs.needs.plan+bs.wants.plan,budgetP=planNW*days/dim;
+  const isCur=curMonth===todayYM(),today=isCur?new Date().getDate():(curMonth<todayYM()?dim:0);
+  const spentToDate=sum(all.filter(e=>e.tipo!=='savings'&&+e.date.slice(8)<=today),e=>e.valor);
+  // projeção: contas únicas (1 lançamento) contam pelo maior entre real e planejado; gastos recorrentes seguem o ritmo diário
+  let proj=0;if(today){const cnt={};all.filter(e=>e.tipo!=='savings'&&+e.date.slice(8)<=today).forEach(e=>{const k=e.tipo+'|'+norm(e.cat);cnt[k]=cnt[k]||{n:0,v:0};cnt[k].n++;cnt[k].v+=e.valor});
+    comparison(curMonth).filter(r=>r.tipo!=='savings').forEach(r=>{const c=cnt[r.tipo+'|'+norm(r.cat)]||{n:0,v:0};proj+=Math.max(c.v,r.plan,(c.n>=3&&today>=7)?c.v/today*dim:0)})}
+  const pace=budgetP?spent/budgetP*100:0;
+  const cats={};spendP.forEach(e=>cats[e.cat]=(cats[e.cat]||0)+e.valor);
+  const catArr=Object.entries(cats).sort((x,y)=>y[1]-x[1]);
+  const prevLen=days,pa=toISO(new Date(parseISO(a).getTime()-prevLen*864e5));
+  const prevEntries=ui.period==='mes'?actualEntries(addM(curMonth,-1)):[...actualEntries(addM(curMonth,-1)),...all];
+  const prevSpent=ui.period==='mes'?sum(prevEntries.filter(e=>e.tipo!=='savings'),e=>e.valor):sum(prevEntries.filter(e=>e.tipo!=='savings'&&e.date>=pa&&e.date<a),e=>e.valor);
+  const restante=planNW-spentToDate,diasRest=Math.max(0,dim-today);
+  let h=`<div class="card no-print"><div class="row"><div class="seg">${[['dia','Diária'],['semana','Semanal'],['quinzena','Quinzenal'],['mes','Mensal']].map(([k,l])=>`<button type="button" class="${ui.period===k?'on':''}" data-act="period" data-id="${k}">${l}</button>`).join('')}</div>
+   ${ui.period!=='mes'?`<button class="icon-btn" data-act="refPrev">‹</button><input type="date" value="${ui.refDate}" min="${isoOf(curMonth,1)}" max="${isoOf(curMonth,dim)}" data-ref style="width:auto"><button class="icon-btn" data-act="refNext">›</button>`:''}<span class="spacer"></span><b>${label.charAt(0).toUpperCase()+label.slice(1)}</b></div></div>
+  <div class="grid g4">
+   ${kpi('Gasto no período',brl(spent),`${inP.length} lançamento(s) · média ${brl(spent/days)}/dia`)}
+   ${kpi('Orçamento proporcional',brl(budgetP),`${days} dia(s) de ${dim} · ritmo <b class="${pace>100?'neg':'pos'}">${pctf(pace,0)}</b>`,null,'')}
+   ${kpi('Comparado ao período anterior',signBrl(spent-prevSpent),prevSpent?`${signPct((spent-prevSpent)/prevSpent*100)} (antes: ${brl(prevSpent)})`:'Sem dados anteriores',null,spent>prevSpent?'neg':'pos')}
+   ${kpi('Projeção para o fim do mês',today?brl(proj):'—',today?`Planejado ${brl(planNW)} · <b class="${proj>planNW?'neg':'pos'}">${signBrl(proj-planNW)}</b>`:'Mês ainda não começou',null,proj>planNW?'neg':'')}
+  </div>
+  ${isCur&&diasRest?`<div class="alert ${restante<0?'bad':'ok'}">${restante>=0?`Você ainda pode gastar <b>${brl(restante)}</b> em Needs + Wants neste mês — cerca de <b>${brl(restante/diasRest)} por dia</b> nos ${diasRest} dias restantes.`:`O orçamento de Needs + Wants já foi ultrapassado em <b>${brl(-restante)}</b>. Segure os gastos nos ${diasRest} dias restantes.`}${savedP?` · Poupado no período: <b>${brl(savedP)}</b>.`:''}</div>`:''}
+  <div class="grid g21">
+   <div class="card"><h3>Gasto acumulado × ritmo ideal</h3><div class="sub">Linha tracejada = orçamento distribuído igualmente pelos dias do mês</div><div class="chart-box"><canvas id="chBurn"></canvas></div></div>
+   <div class="card"><h3>Categorias no período</h3><div class="sub">${label}</div>${catArr.length?catArr.slice(0,8).map(([c,v])=>`<div style="margin:9px 0"><div class="stat-line"><span>${esc(c)}</span><b>${brl(v)}</b></div>${bar(v/catArr[0][1]*100)}</div>`).join(''):'<div class="empty">Nenhum gasto no período.</div>'}</div>
+  </div>
+  <div class="card"><h3>Lançamentos do período</h3>${inP.length?`<div class="table-wrap"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Grupo</th><th class="num">Valor</th></tr></thead><tbody>${inP.sort((x,y)=>x.date.localeCompare(y.date)).map(e=>`<tr><td>${fmtDate(e.date)}</td><td>${esc(e.desc)}</td><td>${esc(e.cat)}</td><td>${tipoBadge(e.tipo)}</td><td class="num">${brl(e.valor)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Nada lançado neste período.</div>'}</div>`;
+  setTimeout(()=>{
+    const labels=[...Array(dim)].map((_,i)=>String(i+1));let acc=0;const daily=Array(dim).fill(0);
+    all.filter(e=>e.tipo!=='savings').forEach(e=>daily[+e.date.slice(8)-1]+=e.valor);
+    const cum=daily.map((v,i)=>i<today||!isCur?(acc+=v):null);
+    const sa=+a.slice(8),sb=+b.slice(8);
+    mkChart('chBurn',{type:'line',data:{labels,datasets:[
+      {label:'Gasto acumulado',data:cum,borderColor:cssVar('--accent'),backgroundColor:cssVar('--accent')+'22',fill:true,tension:.25,pointRadius:0},
+      {label:'Ritmo ideal',data:labels.map((_,i)=>planNW*(i+1)/dim),borderColor:cssVar('--muted'),borderDash:[6,5],pointRadius:0},
+      {type:'bar',label:'Gasto do dia',data:daily.map((v,i)=>i+1>=sa&&i+1<=sb?v:0),backgroundColor:cssVar('--wants')+'aa',borderRadius:3}
+    ]},options:{interaction:{mode:'index',intersect:false},scales:{y:moneyAxis,x:{grid:{display:false}}}}});
+  });
+  return h;
+}
+
+/* ============================================================
+   VIEW: RELATÓRIO MENSAL COM DICAS
+   ============================================================ */
+function buildInsights(ym){
+  const inc=incomeTotal(ym),bs=bucketSummary(ym),rows=comparison(ym),m=month(ym),prev=addM(ym,-1);
+  const tips=[];let score=100;
+  const add=(cls,title,text,pen=0)=>{tips.push({cls,title,text});score-=pen};
+  if(!inc){add('warn','Cadastre sua renda','Sem renda lançada não dá para avaliar o mês. Inclua salário e freelas em "Renda & Orçamento".',30);return{tips,score:Math.max(0,score)}}
+  const spent=bs.needs.real+bs.wants.real,saved=bs.savings.real,saveRate=saved/inc*100;
+  // Poupança
+  if(saveRate<bs.savings.pct-0.5)add('bad','Taxa de poupança abaixo da meta',`Você guardou ${pctf(saveRate)} da renda (${brl(saved)}), a meta era ${bs.savings.pct}% (${brl(bs.savings.target)}). Faltaram ${brl(bs.savings.target-saved)}. Dica: programe uma transferência automática para a poupança no dia em que o salário cair — "pague-se primeiro".`,Math.min(25,(bs.savings.pct-saveRate)*1.5));
+  else add('ok','Meta de poupança batida',`Você guardou ${pctf(saveRate)} da renda (${brl(saved)}). Ótimo! Considere direcionar o excedente para a reserva de emergência ou investimentos de longo prazo.`);
+  // Grupos
+  if(bs.needs.real>bs.needs.target*1.0001)add('warn','Necessidades acima do limite',`Custos essenciais consumiram ${pctf(bs.needs.real/inc*100)} da renda (meta ${bs.needs.pct}%). Revise contratos fixos: plano de celular, internet, seguros e tarifas bancárias costumam ter margem para renegociação.`,8);
+  if(bs.wants.real>bs.wants.target*1.0001)add('warn','Desejos acima do limite',`Gastos com desejos ficaram em ${pctf(bs.wants.real/inc*100)} da renda (meta ${bs.wants.pct}%), ${brl(bs.wants.real-bs.wants.target)} além. Experimente a regra das 48h antes de compras não essenciais e defina um "valor livre" semanal.`,8);
+  // Categorias estouradas
+  const over=rows.filter(r=>r.tipo!=='savings'&&r.plan>0&&r.diff>0.005).sort((a,b)=>b.diff-a.diff);
+  over.slice(0,4).forEach(r=>add('bad',`${r.cat}: ${signPct(r.diffPct)} acima`,`Planejado ${brl(r.plan)}, gasto ${brl(r.real)} — ${signBrl(r.diff)}. ${r.diffPct>30?'O desvio é grande: o valor planejado pode estar irreal; ajuste o orçamento do próximo mês ou corte na origem.':'Desvio moderado: acompanhe esta categoria na revisão semanal.'}`,Math.min(6,2+r.diffPct/15)));
+  const unpl=rows.filter(r=>r.unplanned&&r.tipo!=='savings');
+  if(unpl.length)add('warn','Gastos sem orçamento',`${unpl.length} categoria(s) sem valor planejado: ${unpl.map(r=>r.cat+' ('+brl(r.real)+')').join(', ')}. Crie essas categorias no orçamento do próximo mês para não ser pego de surpresa.`,unpl.length*2);
+  // Sobras
+  const under=rows.filter(r=>r.tipo!=='savings'&&r.plan>0&&r.usePct<80);
+  if(under.length){const sobra=sum(under,r=>r.plan-r.real);add('ok','Categorias com folga',`Sobraram ${brl(sobra)} em: ${under.map(r=>r.cat).join(', ')}. Transfira essa sobra para a poupança antes que ela vire gasto em outra coisa.`)}
+  // Dívidas
+  const dp=monthlyDebtPayments(ym),dr=dp/inc*100;
+  if(dr>30)add('bad','Comprometimento com dívidas alto',`Parcelas de dívidas = ${pctf(dr)} da renda (${brl(dp)}). O recomendado é até 30%. Avalie portabilidade de crédito ou renegociação.`,12);
+  else if(dp)add('info','Dívidas sob controle',`Parcelas = ${pctf(dr)} da renda (${brl(dp)}).`);
+  const act=state.debts.filter(d=>debtRemaining(d)>0);
+  if(act.length>1){const hi=[...act].sort((a,b)=>(+b.juros||0)-(+a.juros||0))[0];if(+hi.juros)add('info','Estratégia de quitação',`Use o método avalanche: concentre pagamentos extras em "${hi.nome}" (${num(hi.juros,2)}% a.m., a maior taxa). Amortizar parcelas no fim do contrato reduz os juros pagos.`)}
+  // Cartões
+  state.cards.forEach(c=>{const u=cardUsed(c.id,ym);if(c.limite&&u/c.limite>.5)add('warn',`${c.nome}: limite muito comprometido`,`${pctf(u/c.limite*100,0)} do limite (${brl(u)}) já está comprometido em faturas futuras. Evite novos parcelamentos até liberar ao menos metade do limite.`,5)});
+  // Renda variável
+  const fixed=incomeFixed(ym),varPct=(inc-fixed)/inc*100;
+  if(varPct>15)add('info','Renda variável relevante',`${pctf(varPct,0)} da renda veio de fontes variáveis (freelas). Dica: baseie Needs apenas na renda fixa (${brl(fixed)}) e use a renda variável para poupança, metas e quitação de dívidas. Se não houver retenção de imposto na fonte, separe uma parte de cada pagamento para os tributos (ex.: carnê-leão como pessoa física ou DAS se for MEI).`);
+  const naoPagas=billsOf(ym).filter(x=>x.st.k==='atrasada');if(naoPagas.length)add('bad','Contas fixas não pagas',`${naoPagas.map(x=>x.b.nome).join(', ')} não foram marcadas como pagas. Atraso gera multa e juros — se já pagou, registre em "Contas fixas".`,4*naoPagas.length);
+  // Reservas com destino (ex.: carro)
+  state.goals.filter(g=>g.kind==='fundo').forEach(g=>{const c=fundCalc(g,ym);
+    if(c.faltaAgora>0)add('bad',`${g.nome}: reserva insuficiente`,`Manutenções vencidas ou deste mês somam ${brl(c.devidoAgora)} e a reserva tem ${brl(c.saldo)}. Faltam ${brl(c.faltaAgora)} — essa diferença vai sair do orçamento do mês.`,5);
+    else if((+g.aporteMensal||0)+0.5<c.recomendado)add('warn',`${g.nome}: aporte abaixo do necessário`,`Você guarda ${brl(+g.aporteMensal||0)}/mês, mas o plano de manutenção pede ${brl(c.recomendado)}/mês para ter o dinheiro pronto em cada vencimento.`,3);
+    else add('ok',`${g.nome}: reserva em dia`,`Saldo de ${brl(c.saldo)} e aporte de ${brl(+g.aporteMensal||0)}/mês cobrem o plano de manutenção.`)});
+  // Vale-alimentação
+  state.benefits.forEach(b=>{const cr=benCredit(b,ym);if(!cr)return;const end=ym===todayYM()?todayISO():isoOf(ym,daysIn(ym));const sd=benBalance(b,end),g=sum(benSpentList(b,ym),e=>e.valor);
+    if(sd>cr*0.6)add('info',`${b.nome}: saldo acumulando`,`Sobraram ${brl(sd)} no ${b.nome} (crédito de ${brl(cr)}/mês). Use o vale primeiro nas compras de ${b.cat||'alimentação'} e mande o dinheiro equivalente que deixou de gastar para a poupança.`);
+    else if(sd<0)add('warn',`${b.nome}: saldo negativo no app`,`O saldo calculado está em ${brl(sd)}. Confira se algum gasto foi lançado no vale por engano ou use "Conferir saldo".`,2);
+    else if(g>cr*1.0001)add('warn',`${b.nome}: gasto acima do crédito`,`Você gastou ${brl(g)} no vale com crédito de ${brl(cr)}; o saldo anterior cobriu a diferença. Se repetir, o vale não vai bastar para o mês.`,2)});
+  // Reserva de emergência
+  const reserva=sum(state.goals.filter(g=>/emerg|reserva/i.test(g.nome)),g=>g.guardado);
+  if(bs.needs.real&&reserva<bs.needs.real*6)add('info','Reserva de emergência',`A reserva ideal é de 6 meses de custos essenciais ≈ ${brl(bs.needs.real*6)}. Você tem ${brl(reserva)} (${num(reserva/bs.needs.real,1)} meses).`);
+  // Mês anterior
+  const pr=comparison(prev);if(pr.length){
+    const inc2=rows.filter(r=>r.tipo!=='savings').map(r=>{const p=pr.find(x=>x.tipo===r.tipo&&norm(x.cat)===norm(r.cat));return p&&p.real>50?{cat:r.cat,v:(r.real-p.real)/p.real*100,d:r.real-p.real}:null}).filter(x=>x&&x.v>15).sort((a,b)=>b.d-a.d);
+    if(inc2.length)add('warn','Subiu em relação ao mês passado',inc2.slice(0,4).map(x=>`${x.cat} ${signPct(x.v)} (${signBrl(x.d)})`).join(' · ')+'. Verifique se foi pontual ou se virou hábito.',3);
+  }
+  if(inc-spent-saved<0)add('bad','Mês fechou no negativo',`Saídas superaram a renda em ${brl(-(inc-spent-saved))}. Prioridade: cortar Wants e evitar crédito rotativo/cheque especial.`,15);
+  if(!over.length&&saveRate>=bs.savings.pct)add('ok','Mês exemplar','Nenhuma categoria estourou e a meta de poupança foi cumprida. Mantenha o plano e considere aumentar a meta de Savings em 1–2 pontos percentuais.');
+  return{tips,score:Math.max(0,Math.min(100,Math.round(score)))};
+}
+function vReport(){
+  const ym=curMonth,inc=incomeTotal(ym),bs=bucketSummary(ym),rows=comparison(ym),prev=addM(ym,-1);
+  if(!inc&&!rows.length)return emptyMonthBanner();
+  const{tips,score}=buildInsights(ym);
+  const spent=bs.needs.real+bs.wants.real,saved=bs.savings.real,bal=inc-spent-saved;
+  const pInc=incomeTotal(prev),pb=bucketSummary(prev),pSpent=pb.needs.real+pb.wants.real;
+  const dp=monthlyDebtPayments(ym);
+  const grade=score>=85?['Excelente','ok']:score>=70?['Bom','ok']:score>=50?['Atenção','warn']:['Crítico','bad'];
+  const ring=`<div class="ring score" style="--p:${score};--c:var(--${grade[1]==='ok'?'ok':grade[1]==='warn'?'warn':'bad'})"><b>${score}</b></div>`;
+  const over=rows.filter(r=>r.tipo!=='savings'&&r.diff>0.005).sort((a,b)=>b.diff-a.diff);
+  const ind=[
+    ['Taxa de poupança',inc?saved/inc*100:0,bs.savings.pct,'≥'],
+    ['Necessidades / renda',inc?bs.needs.real/inc*100:0,bs.needs.pct,'≤'],
+    ['Desejos / renda',inc?bs.wants.real/inc*100:0,bs.wants.pct,'≤'],
+    ['Parcelas de dívidas / renda',inc?dp/inc*100:0,30,'≤'],
+    ['Uso do orçamento (N+W)',(bs.needs.plan+bs.wants.plan)?spent/(bs.needs.plan+bs.wants.plan)*100:0,100,'≤']
+  ];
+  let h=`<div class="card"><div class="row"><div><h3 style="font-size:20px">Relatório de ${mLabel(ym,true)}</h3><div class="sub" style="margin:0">Gerado em ${new Date().toLocaleDateString('pt-BR')} · ${month(ym).income.length} fonte(s) de renda · ${actualEntries(ym).length} lançamentos</div></div><span class="spacer"></span><button class="btn no-print" data-act="print">🖨 Imprimir / PDF</button><button class="btn no-print" data-act="exportCsv">⬇ CSV do mês</button></div></div>
+  <div class="grid g21"><div class="card"><div class="row" style="gap:22px;align-items:center">${ring}<div><div class="muted" style="font-size:12px">Nota de saúde financeira</div><div style="font-size:26px;font-weight:800">${grade[0]}</div><div class="muted">Calculada a partir de poupança, estouros, dívidas, cartões e saldo.</div></div></div>
+   <div class="grid g2" style="margin-top:16px">
+    <div><div class="stat-line"><span>Renda</span><b>${brl(inc)}</b></div><div class="stat-line"><span>Gastos (N+W)</span><b>${brl(spent)}</b></div><div class="stat-line"><span>Poupado</span><b class="pos">${brl(saved)}</b></div><div class="stat-line"><span>Saldo final</span><b class="${bal<0?'neg':'pos'}">${brl(bal)}</b></div></div>
+    <div><div class="stat-line"><span>Renda vs mês anterior</span><b>${pInc?signPct((inc-pInc)/pInc*100):'—'}</b></div><div class="stat-line"><span>Gastos vs mês anterior</span><b class="${spent>pSpent?'neg':'pos'}">${pSpent?signPct((spent-pSpent)/pSpent*100):'—'}</b></div><div class="stat-line"><span>Categorias estouradas</span><b class="${over.length?'neg':'pos'}">${over.length}</b></div><div class="stat-line"><span>Dívida total em aberto</span><b>${brl(totalDebt(ym))}</b></div></div>
+   </div></div>
+   <div class="card"><h3>Indicadores</h3><div class="sub">Real × referência</div>${ind.map(([l,v,ref,op])=>{const ok=op==='≥'?v>=ref:v<=ref;return`<div style="margin:11px 0"><div class="stat-line"><span>${l}</span><b class="${ok?'pos':'neg'}">${pctf(v)} <span class="muted" style="font-weight:400">/ ${op} ${ref}%</span></b></div>${bar(ref?v/ref*100:0,ok?'ok':'bad')}</div>`}).join('')}</div></div>
+  <div class="card"><h3>Dicas e pontos de melhoria</h3><div class="sub">Geradas automaticamente a partir dos seus números deste mês</div>
+   <div class="grid g2">${tips.map(t=>`<div class="alert ${t.cls}" style="margin:0"><div><b>${esc(t.title)}</b><div style="margin-top:3px">${esc(t.text)}</div></div></div>`).join('')}</div></div>
+  <div class="grid g2">
+   <div class="card"><h3>Maiores desvios</h3><div class="sub">Categorias que mais passaram do planejado</div>${over.length?`<table><tbody>${over.slice(0,6).map(r=>`<tr><td>${esc(r.cat)}</td><td class="num">${brl(r.plan)} → ${brl(r.real)}</td><td class="num neg">${signBrl(r.diff)}</td><td class="num neg">${r.plan?signPct(r.diffPct):'não orçado'}</td></tr>`).join('')}</tbody></table>`:'<div class="empty">Nenhuma categoria estourou. 🎯</div>'}</div>
+   <div class="card"><h3>Distribuição real × meta</h3><div class="sub">% da renda por grupo</div><div class="chart-box sm"><canvas id="chRepB"></canvas></div></div>
+  </div>
+  <div class="grid g2">
+   <div class="card"><h3>Gasto por semana do mês</h3><div class="sub">Needs + Wants</div><div class="chart-box sm"><canvas id="chRepW"></canvas></div></div>
+   <div class="card"><h3>Top 8 categorias</h3><div class="sub">Onde o dinheiro mais foi</div><div class="chart-box sm"><canvas id="chRepT"></canvas></div></div>
+  </div>
+  <div class="card"><h3>Histórico de notas e poupança</h3><div class="sub">Últimos 6 meses</div><div class="chart-box sm"><canvas id="chRepH"></canvas></div></div>`;
+  setTimeout(()=>{
+    const ks=Object.keys(BUCKETS);
+    mkChart('chRepB',{type:'bar',_pct:true,data:{labels:ks.map(k=>BUCKETS[k].label),datasets:[{label:'Meta',data:ks.map(k=>bs[k].pct),backgroundColor:cssVar('--border'),borderRadius:6},{label:'Real',data:ks.map(k=>inc?bs[k].real/inc*100:0),backgroundColor:ks.map(k=>BUCKETS[k].color),borderRadius:6}]},options:{scales:{y:{ticks:{callback:v=>v+'%'}},x:{grid:{display:false}}}}});
+    const wk=[0,0,0,0,0];actualEntries(ym).filter(e=>e.tipo!=='savings').forEach(e=>wk[Math.min(4,Math.floor((+e.date.slice(8)-1)/7))]+=e.valor);
+    mkChart('chRepW',{type:'bar',data:{labels:['Dias 1–7','8–14','15–21','22–28','29+'],datasets:[{label:'Gasto',data:wk,backgroundColor:cssVar('--accent'),borderRadius:6}]},options:{plugins:{legend:{display:false}},scales:{y:moneyAxis,x:{grid:{display:false}}}}});
+    const top=rows.filter(r=>r.tipo!=='savings'&&r.real>0).sort((a,b)=>b.real-a.real).slice(0,8);
+    mkChart('chRepT',{type:'doughnut',data:{labels:top.map(r=>r.cat),datasets:[{data:top.map(r=>r.real),backgroundColor:PALETTE,borderWidth:0}]},options:{cutout:'60%',plugins:{legend:{position:'right'}}}});
+    const ms=[...Array(6)].map((_,i)=>addM(ym,i-5));
+    mkChart('chRepH',{type:'bar',data:{labels:ms.map(x=>mLabel(x)),datasets:[{type:'line',label:'Nota',data:ms.map(x=>incomeTotal(x)?buildInsights(x).score:null),borderColor:cssVar('--warn'),yAxisID:'y1',tension:.3},{label:'Poupado',data:ms.map(x=>bucketSummary(x).savings.real),backgroundColor:BUCKETS.savings.color,borderRadius:6}]},
+      options:{plugins:{tooltip:{callbacks:{label:c=>' '+c.dataset.label+': '+(c.dataset.yAxisID==='y1'?c.parsed.y:brl(c.parsed.y))}}},scales:{y:moneyAxis,y1:{position:'right',min:0,max:100,grid:{display:false}},x:{grid:{display:false}}}}});
+  });
+  return h;
+}
+
+/* ============================================================
+   VIEW: DÍVIDAS & FINANCIAMENTOS
+   ============================================================ */
+function vDebts(){
+  const tot=sum(state.debts,debtRemaining),orig=sum(state.debts,d=>d.valorOriginal),monthly=monthlyDebtPayments(curMonth),inc=incomeTotal(curMonth);
+  const juros=sum(state.debts,d=>Math.max(0,d.parcela*d.totalParcelas-(+d.valorOriginal||0)));
+  let h=`<div class="grid g4">${kpi('Saldo devedor total',brl(tot),state.debts.length+' contrato(s)',null,'neg')}${kpi('Parcelas por mês',brl(monthly),inc?pctf(monthly/inc*100)+' da renda':'')}${kpi('Valor original contratado',brl(orig),'Soma dos valores emprestados/financiados')}${kpi('Custo total de juros',brl(juros),'Parcelas × prazo − valor original',null,'wrn')}</div>
+  <div class="card"><div class="card-head"><div><h3>Contratos</h3><div class="sub">Empréstimos, financiamento do carro, parcelamentos…</div></div><button class="btn primary sm" data-act="addDebt">+ Dívida / Financiamento</button></div>
+  ${state.debts.length?`<div class="grid g3">${state.debts.map(d=>{const p=(+d.parcelasPagas)/(+d.totalParcelas)*100,rest=(+d.totalParcelas)-(+d.parcelasPagas);const end=d.inicio?addM(d.inicio,+d.totalParcelas-1):addM(curMonth,rest-1);
+   return`<div class="item-card"><div class="row"><span class="t">${d.tipo==='Financiamento de veículo'?'🚗 ':''}${esc(d.nome)}</span><span class="spacer"></span><span class="badge info">${esc(d.tipo)}</span></div><div class="muted" style="font-size:12px;margin:3px 0 10px">${esc(d.credor||'')}${d.bem?' · '+esc(d.bem):''}</div>
+   <div class="stat-line"><span>Parcela</span><b>${brl(d.parcela)}</b></div><div class="stat-line"><span>Pagas</span><b>${d.parcelasPagas} de ${d.totalParcelas}</b></div><div class="stat-line"><span>Saldo restante</span><b class="neg">${brl(debtRemaining(d))}</b></div>${+d.valorBem?`<div class="stat-line"><span>Valor do bem</span><b>${brl(d.valorBem)}</b></div>`:''}<div class="stat-line"><span>Juros</span><b>${d.juros?num(d.juros,2)+'% a.m.':'—'}</b></div><div class="stat-line"><span>Quitação prevista</span><b>${rest>0?mLabel(end,true):'Quitado ✅'}</b></div>
+   <div style="margin:10px 0">${bar(p,p>=100?'ok':'')}<div class="muted" style="font-size:11px;margin-top:3px">${pctf(p,0)} quitado</div></div>
+   <div class="row">${rest>0?`<button class="btn sm primary" data-act="payDebt" data-id="${d.id}">Registrar parcela</button>`:''}<span class="spacer"></span><button class="icon-btn" data-act="editDebt" data-id="${d.id}">✎</button><button class="icon-btn" data-act="delDebt" data-id="${d.id}">🗑</button></div></div>`}).join('')}</div>`:'<div class="empty">Nenhuma dívida cadastrada.</div>'}</div>
+  ${state.debts.length?`<div class="grid g2"><div class="card"><h3>Saldo por tipo</h3><div class="chart-box sm"><canvas id="chDt"></canvas></div></div><div class="card"><h3>Projeção de parcelas — 12 meses</h3><div class="sub">Quanto sairá por mês com dívidas</div><div class="chart-box sm"><canvas id="chDp"></canvas></div></div></div>`:''}`;
+  setTimeout(()=>{if(!state.debts.length)return;const bt={};state.debts.forEach(d=>bt[d.tipo]=(bt[d.tipo]||0)+debtRemaining(d));
+    mkChart('chDt',{type:'doughnut',data:{labels:Object.keys(bt),datasets:[{data:Object.values(bt),backgroundColor:PALETTE,borderWidth:0}]},options:{cutout:'62%',plugins:{legend:{position:'right'}}}});
+    const ms=[...Array(12)].map((_,i)=>addM(curMonth,i));
+    mkChart('chDp',{type:'bar',data:{labels:ms.map(x=>mLabel(x)),datasets:state.debts.map((d,i)=>({label:d.nome,data:ms.map((x,j)=>{if(d.inicio)return debtActiveIn(d,x)?+d.parcela:0;return j<(d.totalParcelas-d.parcelasPagas)?+d.parcela:0}),backgroundColor:PALETTE[i%PALETTE.length],borderRadius:4}))},options:{scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,...moneyAxis}}}});
+  });
+  return h;
+}
+
+/* ============================================================
+   VIEW: CARTÕES
+   ============================================================ */
+function vCards(){
+  const fat=sum(state.cards,c=>cardFatura(c.id,curMonth)),used=sum(state.cards,c=>cardUsed(c.id,curMonth)),lim=sum(state.cards,c=>c.limite);
+  let h=`<div class="grid g4">${kpi('Faturas de '+mLabel(curMonth),brl(fat),state.cards.length+' cartão(ões)')}${kpi('Limite comprometido',brl(used),lim?pctf(used/lim*100,0)+' do limite total':'',null,used/lim>.8?'neg':'')}${kpi('Limite disponível',brl(lim-used),'De '+brl(lim),null,'pos')}${kpi('Compras parceladas ativas',String(state.cardPurchases.filter(p=>mDiff(p.primeiraFatura,curMonth)<p.parcelas).length),'Ainda com parcelas a vencer')}</div>
+  <div class="card"><div class="card-head"><div><h3>Meus cartões</h3><div class="sub">Fatura do mês selecionado e uso do limite</div></div><div class="row"><button class="btn sm" data-act="addCard">+ Cartão</button><button class="btn primary sm" data-act="addPurchase" ${state.cards.length?'':'disabled'}>+ Compra no cartão</button></div></div>
+  ${state.cards.length?`<div class="grid g3">${state.cards.map(c=>{const u=cardUsed(c.id,curMonth),p=c.limite?u/c.limite*100:0;return`<div class="item-card" style="background:linear-gradient(135deg,${c.cor||'#4f8cff'}33,var(--panel2))"><div class="row"><span class="t">💳 ${esc(c.nome)}</span><span class="spacer"></span><button class="icon-btn" data-act="editCard" data-id="${c.id}">✎</button><button class="icon-btn" data-act="delCard" data-id="${c.id}">🗑</button></div>
+   <div class="muted" style="font-size:12px;margin-bottom:10px">Fecha dia ${c.fechamento} · vence dia ${c.vencimento}</div><div class="stat-line"><span>Fatura ${mLabel(curMonth)}</span><b style="font-size:17px">${brl(cardFatura(c.id,curMonth))}</b></div>${pagoFatura(c.id,curMonth)?`<div class="stat-line"><span>Já pago</span><b class="pos">${brl(pagoFatura(c.id,curMonth))}</b></div>`:''}<div class="stat-line"><span>Comprometido</span><b>${brl(u)}</b></div><div class="stat-line"><span>Disponível</span><b class="pos">${brl(c.limite-u)}</b></div><div style="margin-top:8px">${bar(p,p>80?'bad':p>50?'warn':'ok')}<div class="muted" style="font-size:11px;margin-top:3px">${pctf(p,0)} de ${brl(c.limite)}</div></div><button class="btn sm" data-act="pagarFatura" data-id="${c.id}" style="margin-top:10px">💸 Pagar fatura</button></div>`}).join('')}</div>`:'<div class="empty">Cadastre seus cartões para controlar faturas e parcelas.</div>'}</div>`;
+  if(state.cards.length){
+    const ps=state.cardPurchases.slice().sort((a,b)=>b.primeiraFatura.localeCompare(a.primeiraFatura));
+    h+=`<div class="grid g21"><div class="card"><h3>Compras parceladas</h3><div class="sub">Parcela atual referente a ${mLabel(curMonth,true)}</div>${ps.length?`<div class="table-wrap"><table><thead><tr><th>Compra</th><th>Cartão</th><th>Categoria</th><th class="num">Total</th><th class="num">Parcela</th><th>Situação</th><th></th></tr></thead><tbody>${ps.map(p=>{const idx=mDiff(p.primeiraFatura,curMonth),c=cardById(p.cardId);const sit=idx<0?`<span class="badge info">começa ${mLabel(p.primeiraFatura)}</span>`:idx>=p.parcelas?'<span class="badge ok">quitada</span>':`<span class="badge warn">${idx+1}/${p.parcelas}</span>`;return`<tr><td>${esc(p.desc)}</td><td>${esc(c?c.nome:'?')}</td><td>${esc(p.cat)} ${tipoBadge(p.tipo)}</td><td class="num">${brl(p.valorTotal)}</td><td class="num">${p.parcelas}× ${brl(p.valorTotal/p.parcelas)}</td><td>${sit}</td><td class="num"><button class="icon-btn" data-act="editPurchase" data-id="${p.id}">✎</button><button class="icon-btn" data-act="delPurchase" data-id="${p.id}">🗑</button></td></tr>`}).join('')}</tbody></table></div>`:'<div class="empty">Nenhuma compra lançada.</div>'}</div>
+    <div class="card"><h3>Próximas faturas</h3><div class="sub">Parcelas já contratadas — 6 meses</div><div class="chart-box"><canvas id="chFat"></canvas></div></div></div>`;
+    setTimeout(()=>{const ms=[...Array(6)].map((_,i)=>addM(curMonth,i));mkChart('chFat',{type:'bar',data:{labels:ms.map(x=>mLabel(x)),datasets:state.cards.map((c,i)=>({label:c.nome,data:ms.map(x=>cardFatura(c.id,x)),backgroundColor:c.cor||PALETTE[i],borderRadius:4}))},options:{scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,...moneyAxis}}}})});
+  }
+  return h;
+}
+
+/* ============================================================
+   VIEW: METAS & POUPANÇA
+   ============================================================ */
+function vGoals(){
+  const tot=sum(state.goals,g=>g.guardado),alvo=sum(state.goals,g=>g.alvo);
+  const savedM=bucketSummary(curMonth).savings.real;
+  let h=`<div class="grid g4">${kpi('Total guardado',brl(tot),'Em todas as metas',BUCKETS.savings.color,'pos')}${kpi('Objetivo total',brl(alvo),alvo?pctf(tot/alvo*100,0)+' alcançado':'')}${kpi('Poupado em '+mLabel(curMonth),brl(savedM),'Lançamentos do grupo Savings')}${kpi('Necessário por mês',brl(sum(state.goals,g=>g.kind==='fundo'?fundCalc(g).recomendado:goalMonthly(g))),'Metas com prazo + reservas com destino')}</div>
+  <div class="card"><div class="card-head"><div><h3>Metas</h3><div class="sub">Reserva de emergência, viagem, troca de carro…</div></div><button class="btn primary sm" data-act="addGoal">+ Meta</button></div>
+  ${state.goals.some(g=>g.kind!=='fundo')?`<div class="grid g3">${state.goals.filter(g=>g.kind!=='fundo').map((g,i)=>{const p=g.alvo?Math.min(100,g.guardado/g.alvo*100):0;const mm=g.prazo?Math.max(0,mDiff(curMonth,g.prazo)):null;return`<div class="item-card"><div class="row" style="gap:14px"><div class="ring" style="--p:${p};--c:${g.cor||PALETTE[i%PALETTE.length]}"><b>${num(p,0)}%</b></div><div style="flex:1;min-width:0"><div class="t">${esc(g.nome)}</div><div class="muted" style="font-size:12px">${brl(g.guardado)} de ${brl(g.alvo)}</div>${g.prazo?`<div class="muted" style="font-size:12px">Prazo: ${mLabel(g.prazo,true)} (${mm} meses)</div>`:''}</div></div>
+   <div class="stat-line" style="margin-top:10px"><span>Falta</span><b>${brl(Math.max(0,g.alvo-g.guardado))}</b></div>${g.prazo?`<div class="stat-line"><span>Guardar por mês</span><b>${brl(goalMonthly(g))}</b></div>`:''}
+   <div class="row" style="margin-top:8px"><button class="btn sm primary" data-act="contribGoal" data-id="${g.id}">+ Aporte</button><button class="btn sm" data-act="withdrawGoal" data-id="${g.id}">Resgate</button><span class="spacer"></span><button class="icon-btn" data-act="editGoal" data-id="${g.id}">✎</button><button class="icon-btn" data-act="delGoal" data-id="${g.id}">🗑</button></div></div>`}).join('')}</div>`:'<div class="empty">Crie sua primeira meta — comece pela reserva de emergência.</div>'}</div>
+  ${vFunds()}
+  ${state.goals.some(g=>g.kind!=='fundo')?`<div class="card"><h3>Progresso das metas</h3><div class="chart-box sm"><canvas id="chGoal"></canvas></div></div>`:''}`;
+  const GG=state.goals.filter(g=>g.kind!=='fundo');
+  setTimeout(()=>{if(GG.length)mkChart('chGoal',{type:'bar',data:{labels:GG.map(g=>g.nome),datasets:[{label:'Guardado',data:GG.map(g=>g.guardado),backgroundColor:BUCKETS.savings.color,borderRadius:6},{label:'Falta',data:GG.map(g=>Math.max(0,g.alvo-g.guardado)),backgroundColor:cssVar('--border'),borderRadius:6}]},options:{indexAxis:'y',scales:{x:{stacked:true,...moneyAxis},y:{stacked:true,grid:{display:false}}}}})});
+  return h;
+}
+/* ============================================================
+   RESERVAS COM DESTINO (sinking funds) — ex.: manutenção do carro
+   ============================================================ */
+const FUND_CAR_DEFAULT=[ // [item, custo estimado, periodicidade (meses), próxima em (meses a partir de agora), observação]
+  ['Troca de óleo e filtro',250,6,2,'ou a cada 10.000 km'],
+  ['Revisão programada',900,12,6,'conforme manual do carro'],
+  ['Alinhamento e balanceamento',150,6,3,'ou a cada 10.000 km'],
+  ['Pastilhas de freio',400,18,8,'conferir na revisão'],
+  ['Pneus (jogo)',2000,36,14,'ou ~40.000 km / sulco < 1,6 mm'],
+  ['Bateria',500,36,20,'vida média 2–3 anos'],
+  ['Palhetas, filtros de ar e cabine',200,12,5,''],
+  ['IPVA + licenciamento',1500,12,2,'confira o valor do seu estado'],
+  ['Seguro (renovação)',2500,12,9,'']
+];
+function fundCalc(g,ym){
+  ym=ym||curMonth;const saldo=+g.guardado||0;
+  const items=(g.plano||[]).map(it=>({...it,m:mDiff(ym,it.prox||ym)})).sort((a,b)=>(a.prox||'').localeCompare(b.prox||''));
+  let cum=0,req=0,devidoAgora=0;
+  items.forEach(it=>{cum+=+it.custo||0;if(it.m<=0)devidoAgora=cum;else req=Math.max(req,(cum-saldo)/it.m)});
+  const media=sum(items,it=>(+it.custo||0)*12/Math.max(1,+it.period||12))/12;
+  const minimo=Math.max(0,req),recomendado=Math.ceil(Math.max(minimo,media)/10)*10;
+  return{items,saldo,devidoAgora,faltaAgora:Math.max(0,devidoAgora-saldo),minimo,media,recomendado};
+}
+function vFunds(){
+  const F=state.goals.filter(g=>g.kind==='fundo');
+  let h=`<div class="card"><div class="card-head"><div><h3>🎯 Reservas com destino</h3><div class="sub">Dinheiro guardado todo mês para um gasto que com certeza vai chegar — ex.: manutenção do carro. O aporte conta como Poupança no budget; quando você usa a reserva, o gasto <b>não estoura o orçamento do mês</b>, porque já foi poupado antes.</div></div><button class="btn primary sm" data-act="addFund">+ Reserva com destino</button></div>`;
+  if(!F.length)return h+`<div class="empty"><p style="margin:0 0 12px">Crie a reserva <b>🚗 Manutenção do carro</b> com um plano de manutenção preventiva pronto (óleo, revisão, pneus, freios, IPVA, seguro…). O app calcula quanto guardar por mês.</p><button class="btn primary" data-act="addFund">+ Criar reserva do carro</button></div></div>`;
+  F.forEach((g,gi)=>{
+    const c=fundCalc(g),ap=+g.aporteMensal||0,usos=state.expenses.filter(e=>e.fundId===g.id).sort((a,b)=>b.date.localeCompare(a.date));
+    const proximo=c.items.find(it=>it.m>=0);
+    const st=c.faltaAgora>0?['bad',`⚠️ Itens vencidos ou deste mês somam <b>${brl(c.devidoAgora)}</b> e a reserva tem <b>${brl(c.saldo)}</b> — faltam <b>${brl(c.faltaAgora)}</b>. Faça um aporte extra ou adie o que não for urgente.`]
+      :ap+0.5<c.recomendado?['warn',`💡 Para ter o dinheiro pronto em cada vencimento, guarde <b>${brl(c.recomendado)}/mês</b> (hoje: ${brl(ap)}). Clique em <b>Levar aporte para o budget</b>.`]
+      :['ok',`✅ Reserva em dia: o aporte de ${brl(ap)}/mês e o saldo atual cobrem o plano de manutenção.`];
+    h+=`<div class="item-card" style="margin-top:12px;border-left:4px solid ${g.cor||'#f5a524'}">
+     <div class="row"><span class="t" style="font-size:16px">${g.icone||'🚗'} ${esc(g.nome)}</span><span class="spacer"></span>
+      <button class="btn sm primary" data-act="contribGoal" data-id="${g.id}">+ Aporte</button><button class="btn sm" data-act="useFund" data-id="${g.id}">Usar a reserva</button><button class="btn sm" data-act="fundToBudget" data-id="${g.id}">Levar aporte para o budget</button><button class="icon-btn" data-act="editFund" data-id="${g.id}">✎</button><button class="icon-btn" data-act="delFund" data-id="${g.id}">🗑</button></div>
+     <div class="grid g4" style="margin-top:12px">
+      ${kpi('Saldo da reserva',brl(c.saldo),usos.length?'Último uso: '+fmtDate(usos[0].date):'Ainda não usada',g.cor,c.saldo<0?'neg':'pos')}
+      ${kpi('Aporte mensal',brl(ap),'Recomendado: '+brl(c.recomendado),null,ap+0.5<c.recomendado?'wrn':'')}
+      ${kpi('Próxima manutenção',proximo?esc(proximo.item):'—',proximo?`${mLabel(proximo.prox,true)} · ${brl(proximo.custo)}`:'Cadastre o plano')}
+      ${kpi('Custo médio do carro',brl(c.media)+'/mês',brl(c.media*12)+' por ano em manutenção')}
+     </div>
+     <div class="alert ${st[0]}" style="margin-top:12px">${st[1]}</div>
+     <div class="card-head" style="margin:14px 0 4px"><h3 style="font-size:14px;margin:0">Plano de manutenção preventiva</h3><button class="btn sm" data-act="addFundItem" data-id="${g.id}">+ Item</button></div>
+     ${c.items.length?`<div class="table-wrap"><table><thead><tr><th>Item</th><th>Próxima</th><th>Repete a cada</th><th class="num">Custo estimado</th><th class="num">Acumulado</th><th>Status</th><th></th></tr></thead><tbody>
+     ${(()=>{let acc=0;return c.items.map(it=>{acc+=+it.custo||0;const cobre=c.saldo>=acc;const s=it.m<0?['bad','Atrasado']:it.m===0?['warn','Este mês']:it.m<=2?['warn',`Em ${it.m} mês(es)`]:['info',`Em ${it.m} meses`];
+       return`<tr><td><b>${esc(it.item)}</b>${it.obs?`<div class="muted" style="font-size:11px">${esc(it.obs)}</div>`:''}</td><td>${mLabel(it.prox,true)}</td><td>${it.period} meses</td><td class="num">${brl(it.custo)}</td><td class="num ${cobre?'pos':'muted'}" title="${cobre?'O saldo atual já cobre até este item':'Ainda precisa guardar'}">${brl(acc)}${cobre?' ✓':''}</td><td><span class="badge ${s[0]}">${s[1]}</span></td>
+       <td class="num" style="white-space:nowrap"><button class="btn sm" data-act="doneFundItem" data-id="${g.id}|${it.id}">✓ Feito</button><button class="icon-btn" data-act="editFundItem" data-id="${g.id}|${it.id}">✎</button><button class="icon-btn" data-act="delFundItem" data-id="${g.id}|${it.id}">🗑</button></td></tr>`}).join('')})()}
+     <tr class="total"><td colspan="3">Próximos 12 meses</td><td class="num">${brl(sum(c.items.filter(it=>it.m<12),it=>+it.custo||0))}</td><td colspan="3"></td></tr></tbody></table></div>`:'<div class="empty">Nenhum item. Adicione troca de óleo, revisão, pneus…</div>'}
+     <div class="muted" style="font-size:12px;margin-top:6px">"Acumulado ✓" = o saldo atual já cobre até aquele item. Custos são estimativas: ajuste com o orçamento da sua oficina.</div>
+     ${usos.length?`<h3 style="font-size:14px;margin:14px 0 4px">Histórico de uso</h3><div class="table-wrap"><table><tbody>${usos.slice(0,8).map(e=>`<tr><td>${fmtDate(e.date)}/${e.date.slice(2,4)}</td><td>${esc(e.desc)}</td><td class="num neg">${signBrl(-e.valor)}</td><td class="num"><button class="icon-btn" data-act="editExpense" data-id="${e.id}">✎</button><button class="icon-btn" data-act="delExpense" data-id="${e.id}" title="Excluir (o valor volta para a reserva)">🗑</button></td></tr>`).join('')}</tbody></table></div>`:''}
+    </div>`;
+  });
+  return h+'</div>';
+}
+function fundForm(g){
+  const isNew=!g;g=g||{nome:'Manutenção do carro',icone:'🚗',guardado:0,aporteMensal:200,cor:'#f5a524'};
+  const fields=[
+    {name:'nome',label:'Nome da reserva',value:g.nome,required:true},
+    {name:'icone',label:'Ícone (emoji)',value:g.icone},
+    {name:'guardado',label:'Quanto já tem guardado (R$)',type:'number',step:'0.01',min:0,value:g.guardado},
+    {name:'aporteMensal',label:'Aporte mensal (R$)',type:'number',step:'0.01',min:0,value:g.aporteMensal},
+    {name:'cor',label:'Cor',type:'color',value:g.cor}];
+  if(isNew){fields.push({type:'html',html:'<b>Plano de manutenção preventiva sugerido</b><div class="muted" style="font-size:12px">Marque o que se aplica ao seu carro. Custos e datas são estimativas — ajuste depois na tabela.</div>'});
+    FUND_CAR_DEFAULT.forEach(([n,c,per,off],i)=>fields.push({name:'p'+i,type:'checkbox',value:true,label:`${n} — ${brl(c)} a cada ${per} meses`}))}
+  openForm({title:isNew?'Nova reserva com destino':'Editar reserva',fields,onSave:d=>{
+    const base={nome:d.nome,icone:d.icone||'🎯',guardado:d.guardado,aporteMensal:d.aporteMensal,cor:d.cor};
+    if(isNew){const plano=FUND_CAR_DEFAULT.filter((_,i)=>d['p'+i]).map(([n,c,per,off,obs])=>({id:uid(),item:n,custo:c,period:per,prox:addM(curMonth,off),obs}));
+      state.goals.push({id:uid(),kind:'fundo',alvo:0,plano,...base});toast('Reserva criada — confira o aporte recomendado')}
+    else{Object.assign(g,base);toast('Reserva atualizada')}}});
+}
+function fundItemForm(g,it){
+  const isNew=!it;it=it||{custo:0,period:12,prox:addM(curMonth,1)};
+  openForm({title:isNew?'Novo item de manutenção':'Editar item',fields:[
+    {name:'item',label:'Item',value:it.item,required:true,full:true,placeholder:'Ex.: Troca da correia dentada'},
+    {name:'custo',label:'Custo estimado (R$)',type:'number',step:'0.01',min:0,value:it.custo,required:true},
+    {name:'period',label:'Repete a cada (meses)',type:'number',min:1,step:'1',value:it.period,required:true},
+    {name:'prox',label:'Próxima vez',type:'month',value:it.prox,required:true},
+    {name:'obs',label:'Observação (km, oficina…)',value:it.obs}
+  ],onSave:d=>{d.period=Math.max(1,Math.round(d.period));g.plano=g.plano||[];if(isNew)g.plano.push({id:uid(),...d});else Object.assign(it,d);toast('Item salvo')}});
+}
+function useFundForm(g,itemId){
+  const it=(g.plano||[]).find(x=>x.id===itemId);const opts=[['','— nenhum (gasto avulso) —'],...(g.plano||[]).map(x=>[x.id,x.item])];
+  openForm({title:'Usar a reserva — '+g.nome,saveLabel:'Registrar',fields:[
+    {name:'desc',label:'Descrição',value:it?it.item:'',required:true,full:true,placeholder:'Ex.: Revisão dos 40 mil km'},
+    {name:'valor',label:'Valor pago (R$)',type:'number',step:'0.01',min:0,value:it?it.custo:'',required:true},
+    {name:'date',label:'Data',type:'date',value:curMonth===todayYM()?todayISO():isoOf(curMonth,1),required:true},
+    {name:'itemId',label:'Item do plano (reagenda o próximo)',type:'select',options:opts,value:itemId||''},
+    {type:'html',html:`<div class="muted" style="font-size:12px">Saldo da reserva: <b>${brl(g.guardado)}</b>. O valor coberto pela reserva fica <b>fora do budget do mês</b>; se passar do saldo, a diferença entra como gasto normal em Necessidades.</div>`}
+  ],onSave:d=>{
+    const cob=Math.max(0,Math.min(d.valor,+g.guardado||0)),exc=Math.round((d.valor-cob)*100)/100;
+    if(cob>0){state.expenses.push({id:uid(),desc:d.desc,valor:cob,date:d.date,cat:g.nome,tipo:'needs',pay:'Reserva '+g.nome,fundId:g.id});g.guardado=Math.round(((+g.guardado)-cob)*100)/100}
+    if(exc>0)state.expenses.push({id:uid(),desc:d.desc+' (parte não coberta pela reserva)',valor:exc,date:d.date,cat:g.nome,tipo:'needs',pay:'Pix'});
+    const P=(g.plano||[]).find(x=>x.id===d.itemId);if(P){P.ultima=d.date;P.prox=addM(d.date.slice(0,7),+P.period||12)}
+    toast(exc>0?`Reserva cobriu ${brl(cob)}; ${brl(exc)} entraram no budget do mês`:`${brl(cob)} pagos pela reserva${P?' · próximo "'+P.item+'" em '+mLabel(P.prox,true):''}`)}});
+}
+function goalMonthly(g){if(!g.prazo)return 0;const mm=Math.max(1,mDiff(curMonth,g.prazo));return Math.max(0,g.alvo-g.guardado)/mm}
+
+/* ============================================================
+   COACH FINANCEIRO — aulas, insight a cada gasto e perfil
+   (conteúdo educativo; não é recomendação de investimento)
+   ============================================================ */
+const clamp=(v,a=0,b=100)=>Math.max(a,Math.min(b,isFinite(v)?v:a));
+function reservaInfo(){const r=sum(state.goals.filter(g=>/emerg|reserva/i.test(g.nome)&&g.kind!=='fundo'),g=>+g.guardado);const ms=[1,2,3].map(i=>addM(curMonth,-i)).filter(x=>actualEntries(x).length);const needs=ms.length?sum(ms,x=>bucketSummary(x).needs.real)/ms.length:bucketSummary(curMonth).needs.plan;return{valor:r,needs,meses:needs?r/needs:0}}
+function incRef(ym){return month(ym).income.length?incomeTotal(ym):(incomeTotal(todayYM())||incomeTotal(curMonth)||incomeTotal(ym))}
+function horasTrab(valor,ym=curMonth){const inc=incRef(ym),h=+(state.profile||{}).horas||176;return inc?valor/(inc/h):0}
+
+/* ---------------- AULAS ---------------- */
+const LESSONS=[
+ {id:'orcamento',ic:'🧭',t:'O que é um orçamento — e por que ele funciona',min:3,pilar:'plan',
+  p:['Orçamento não é cortar tudo: é decidir <b>antes</b> para onde vai cada real, em vez de descobrir depois para onde ele foi.',
+     'Dinheiro sem destino o cérebro trata como "livre" — e ele some em gastos pequenos que ninguém lembra.',
+     '<b>Base zero:</b> renda − tudo o que foi planejado = R$ 0. Até a sobra recebe um destino (poupança, meta, reserva).',
+     'Orçamento bom é <b>realista</b>: parte do que você gastou nos últimos meses, não do que gostaria de gastar.'],
+  me:()=>{const inc=incomeTotal(curMonth),pl=sum(month().budget,b=>b.valor);return inc?`Renda de ${mLabel(curMonth,true)}: <b>${brl(inc)}</b> · planejado: <b>${brl(pl)}</b> → ${Math.abs(inc-pl)<1?'✅ cada real tem destino.':inc>pl?'falta dar destino a <b>'+brl(inc-pl)+'</b>.':'o plano passa da renda em <b>'+brl(pl-inc)+'</b>.'}`:'Você ainda não cadastrou renda neste mês.'},
+  go:['budget','Abrir Renda & Orçamento'],
+  q:['No orçamento base zero, quanto deve ficar "sem destino"?',['R$ 0 — até a sobra ganha um destino','Uns 10% da renda, para imprevistos','O que sobrar no fim do mês'],0]},
+ {id:'503020',ic:'🥧',t:'A regra 50/30/20 (Needs, Wants, Savings)',min:3,pilar:'gastar',
+  p:['<b>50% Necessidades</b>: o que você não consegue cortar sem prejuízo — moradia, mercado, contas, transporte, parcelas.',
+     '<b>30% Desejos</b>: o que deixa a vida boa, mas é opcional — restaurante, lazer, streaming, compras.',
+     '<b>20% Poupança</b>: reserva, metas, investimentos e pagamento extra de dívidas.',
+     'É um ponto de partida, não uma lei. Aluguel caro? Talvez 60/20/20. O importante é <b>escolher</b> as porcentagens e acompanhar.'],
+  me:()=>{const inc=incomeTotal(curMonth),b=bucketSummary(curMonth);return inc?`Neste mês, até agora: Necessidades <b>${pctf(b.needs.real/inc*100,0)}</b> · Desejos <b>${pctf(b.wants.real/inc*100,0)}</b> · Poupança <b>${pctf(b.savings.real/inc*100,0)}</b> da renda (metas: ${b.needs.pct}/${b.wants.pct}/${b.savings.pct}).`:'Cadastre a renda do mês para ver sua divisão.'},
+  go:['compare','Ver Planejado × Real'],
+  q:['Assinatura de streaming entra em qual grupo?',['Desejos (Wants)','Necessidades (Needs)','Poupança (Savings)'],0]},
+ {id:'necdes',ic:'⚖️',t:'Necessidade ou desejo? O teste das 3 perguntas',min:2,pilar:'gastar',
+  p:['1) <b>Se eu não comprar, algo importante para?</b> (trabalho, saúde, moradia) → necessidade.',
+     '2) <b>Existe versão mais barata que resolve?</b> A diferença entre a básica e a "melhor" é desejo.',
+     '3) <b>Eu compraria isso se tivesse que pagar à vista, hoje?</b> Se a resposta é não, é desejo — e talvez nem isso.',
+     'Mercado é necessidade; o vinho e os importados no carrinho são desejo. Classificar com honestidade deixa o budget verdadeiro.'],
+  me:()=>{const r=comparison(curMonth).filter(r=>r.tipo==='wants').sort((a,b)=>b.real-a.real).slice(0,3);return r.length?'Seus maiores Desejos do mês: '+r.map(x=>`<b>${esc(x.cat)}</b> (${brl(x.real)})`).join(', ')+'.':'Ainda não há gastos em Desejos neste mês.'},
+  q:['Você precisa de um tênis para trabalhar e escolhe um de R$ 600 em vez de um de R$ 200. Como classificar?',['R$ 200 necessidade + R$ 400 desejo','Tudo necessidade','Tudo desejo'],0]},
+ {id:'pagueprimeiro',ic:'💰',t:'Pague-se primeiro',min:2,pilar:'poupar',
+  p:['Quem poupa "o que sobrar" quase nunca poupa: o gasto se expande até ocupar a renda inteira.',
+     'Inverta a ordem: <b>no dia do salário</b>, transfira primeiro o valor da poupança/metas; viva com o resto.',
+     'Automatize: agende a transferência. Decisão tomada uma vez vale mais que força de vontade todo mês.',
+     'Recebeu aumento ou freela extra? Aumente a poupança <b>antes</b> de aumentar o padrão de vida.'],
+  me:()=>{const b=bucketSummary(curMonth),inc=incomeTotal(curMonth);return inc?`Taxa de poupança de ${mLabel(curMonth,true)}: <b>${pctf(b.savings.real/inc*100)}</b> (${brl(b.savings.real)}). Meta: ${b.savings.pct}% = ${brl(b.savings.target)}.`:'Cadastre a renda para ver sua taxa de poupança.'},
+  go:['goals','Abrir Metas & Reservas'],
+  q:['Qual o melhor momento para separar o dinheiro da poupança?',['Logo que o salário cai','No fim do mês, com o que sobrar','Quando aparecer um dinheiro extra'],0]},
+ {id:'reserva',ic:'🛟',t:'Reserva de emergência',min:3,pilar:'protecao',
+  p:['É o dinheiro que transforma um imprevisto (demissão, conserto do carro, saúde) em um <b>problema</b>, e não em uma <b>dívida</b>.',
+     'Tamanho: de <b>3 a 6 meses das suas Necessidades</b>. Renda variável ou dependentes? Mire em 6 a 12.',
+     'Onde guardar: algo seguro e com resgate no mesmo dia (liquidez diária). Rentabilidade aqui é o menos importante.',
+     'Usou? Reponha antes de voltar às outras metas.'],
+  me:()=>{const r=reservaInfo();return r.needs?`Você tem <b>${brl(r.valor)}</b> em reserva = <b>${num(r.meses,1)} mês(es)</b> das suas Necessidades (${brl(r.needs)}/mês). Meta de 6 meses: ${brl(r.needs*6)}.`:'Cadastre uma meta chamada "Reserva de emergência" em Metas.'},
+  go:['goals','Abrir Metas & Reservas'],
+  q:['Para que serve a reserva de emergência?',['Pagar imprevistos sem fazer dívida','Comprar à vista com desconto','Investir em ações'],0]},
+ {id:'dividas',ic:'⛓',t:'Dívidas: os juros jogam contra você',min:4,pilar:'dividas',
+  p:['Juros compostos crescem sobre os próprios juros. No rotativo do cartão e no cheque especial, a dívida pode <b>dobrar em poucos meses</b>.',
+     'Ordem de ataque: liste as dívidas pela <b>taxa de juros</b> e quite primeiro a mais cara (método avalanche).',
+     'Precisa de motivação? Quite primeiro a menor (bola de neve) — cada dívida eliminada dá energia para a próxima.',
+     'Trocar dívida cara por barata (portabilidade, consignado) ajuda — desde que você <b>não volte</b> a usar a cara.',
+     'Ideal: parcelas de dívidas até <b>30% da renda</b> (melhor ainda abaixo de 15%).'],
+  me:()=>{const inc=incomeTotal(curMonth),dp=monthlyDebtPayments(curMonth),d=[...state.debts].sort((a,b)=>(+b.juros||0)-(+a.juros||0));return(inc?`Parcelas de dívidas: <b>${brl(dp)}/mês = ${pctf(dp/inc*100,0)}</b> da renda. `:'')+(d.length?'Ordem avalanche: '+d.map(x=>`<b>${esc(x.nome)}</b> (${num(+x.juros||0,2)}% a.m.)`).join(' → '):'Nenhuma dívida cadastrada 🎉')},
+  go:['debts','Abrir Dívidas'],
+  q:['Pelo método avalanche, qual dívida você quita primeiro?',['A de maior taxa de juros','A de menor saldo','A mais antiga'],0]},
+ {id:'cartao',ic:'💳',t:'Cartão de crédito sem armadilhas',min:3,pilar:'dividas',
+  p:['Limite <b>não é renda</b>. É um empréstimo de curto prazo que o banco deixa disponível.',
+     'Pague <b>sempre a fatura total</b>. O pagamento mínimo joga o resto no rotativo — um dos juros mais altos do país.',
+     'Parcelado "sem juros" ainda é dinheiro dos meses seguintes: cada parcela já é orçamento gasto.',
+     'Lance as compras no cartão na hora (aqui no app) para a fatura não ser surpresa.'],
+  me:()=>{const f=sum(state.cards,c=>cardFatura(c.id,curMonth)),nx=sum(state.cards,c=>cardFatura(c.id,addM(curMonth,1))),inc=incomeTotal(curMonth);return state.cards.length?`Faturas de ${mLabel(curMonth)}: <b>${brl(f)}</b>${inc?' ('+pctf(f/inc*100,0)+' da renda)':''} · já comprometido para ${mLabel(addM(curMonth,1))}: <b>${brl(nx)}</b>.`:'Nenhum cartão cadastrado.'},
+  go:['cards','Abrir Cartões'],
+  q:['O que acontece quando você paga só o mínimo da fatura?',['O restante entra no rotativo, com juros altos','Nada, é só um parcelamento','O banco perdoa o restante'],0]},
+ {id:'cafezinho',ic:'☕',t:'O efeito cafezinho: gastos pequenos e frequentes',min:2,pilar:'gastar',
+  p:['R$ 15 por dia parecem nada — mas são cerca de <b>R$ 450 por mês</b> e R$ 5.400 por ano.',
+     'O problema não é o café: é o gasto <b>automático</b>, que você não escolheu de verdade.',
+     'Defina um teto semanal para essas categorias (delivery, lanche, app de transporte) e acompanhe.',
+     'Corte o que não te faz falta e mantenha o que realmente te faz feliz — sem culpa.'],
+  me:()=>{const m={};actualEntries(curMonth).filter(e=>e.src==='exp'&&e.tipo!=='savings').forEach(e=>{m[e.cat]=m[e.cat]||{n:0,v:0};m[e.cat].n++;m[e.cat].v+=e.valor});const L=Object.entries(m).filter(([,x])=>x.n>=3).sort((a,b)=>b[1].n-a[1].n).slice(0,3);return L.length?'Categorias com mais lançamentos no mês: '+L.map(([c,x])=>`<b>${esc(c)}</b> ${x.n}× = ${brl(x.v)}`).join(' · '):'Poucos lançamentos repetidos neste mês — ótimo sinal (ou lance tudo para ver).'},
+  go:['expenses','Ver meus gastos'],
+  q:['R$ 20 de delivery, 5 vezes por semana, dão quanto por mês (aprox.)?',['R$ 400','R$ 100','R$ 1.000'],0]},
+ {id:'decisao',ic:'🧠',t:'Decidir melhor: regra das 24 horas e o custo em horas',min:3,pilar:'gastar',
+  p:['Compra de desejo acima de um valor (ex.: R$ 200)? Espere <b>24 horas</b>. Acima de R$ 1.000, espere <b>30 dias</b>. A vontade costuma passar.',
+     'Converta o preço em <b>horas de trabalho</b>: preço ÷ (renda ÷ horas trabalhadas no mês). Vale tantas horas da sua vida?',
+     'Pergunte: "isso me aproxima ou me afasta da minha meta?"',
+     'Compare o custo por uso: um item caro usado todo dia pode sair mais barato que um barato usado uma vez.'],
+  me:()=>{const inc=incomeTotal(curMonth),h=+(state.profile||{}).horas||176;return inc?`Sua hora de trabalho vale cerca de <b>${brl(inc/h)}</b> (renda ${brl(inc)} ÷ ${h} h). Um gasto de R$ 300 = <b>${num(300/(inc/h),1)} h</b> de trabalho.`:'Cadastre a renda do mês (e as horas no Meu perfil) para calcular.'},
+  go:['profile','Ajustar horas no Meu perfil'],
+  q:['Renda de R$ 4.400 e 176 h de trabalho no mês. Uma compra de R$ 250 custa quantas horas?',['10 horas','2,5 horas','25 horas'],0]},
+ {id:'variavel',ic:'📈',t:'Renda variável (freelas) sem sustos',min:3,pilar:'plan',
+  p:['Faça o orçamento das <b>Necessidades com a renda fixa</b>. A variável não é garantida.',
+     'Trate o freela como bônus com destino: uma parte para metas/reserva, uma parte para desejos.',
+     'Use a <b>média dos últimos 6 meses</b> (ou o pior mês) para planejar, não o melhor mês.',
+     'Com renda variável alta, a reserva de emergência deve ser maior (6 a 12 meses).'],
+  me:()=>{const ms=[...Array(6)].map((_,i)=>addM(curMonth,-i));const v=ms.map(x=>sum(month(x).income.filter(i=>i.natureza==='variavel'),i=>i.valor));const n=v.filter(Boolean).length;return n?`Renda variável dos últimos 6 meses: média <b>${brl(sum(v)/6)}</b>, menor mês ${brl(Math.min(...v))}, maior ${brl(Math.max(...v))}.`:'Nenhuma renda variável cadastrada nos últimos 6 meses.'},
+  go:['budget','Abrir Renda & Orçamento'],
+  q:['Qual valor de freela usar para planejar o mês?',['A média (ou o pior mês) recente','O melhor mês do ano','O valor que você espera ganhar'],0]},
+ {id:'metas',ic:'🎯',t:'Metas que funcionam e reservas com destino',min:3,pilar:'poupar',
+  p:['Meta boa é <b>específica</b> (o quê), tem <b>valor</b>, <b>prazo</b> e um <b>aporte mensal</b> calculado: falta ÷ meses.',
+     'Gastos que você <b>sabe que vão vir</b> (IPVA, revisão do carro, presentes de fim de ano) não são imprevistos: crie uma reserva com destino e guarde um pouco por mês.',
+     'Pagos pela reserva, eles não estouram o mês — o dinheiro já estava separado.',
+     'Poucas metas por vez. Prioridade: reserva → dívidas caras → metas de médio prazo → longo prazo.'],
+  me:()=>{const g=state.goals.filter(x=>x.kind!=='fundo');return g.length?g.map(x=>`<b>${esc(x.nome)}</b>: ${pctf(x.alvo?x.guardado/x.alvo*100:0,0)}${x.prazo?' · '+brl(goalMonthly(x))+'/mês até '+mLabel(x.prazo):''}`).join('<br>'):'Nenhuma meta cadastrada.'},
+  go:['goals','Abrir Metas & Reservas'],
+  q:['A revisão anual do carro é…',['Um gasto previsível — merece reserva com destino','Um imprevisto — pague com a reserva de emergência','Um desejo'],0]},
+ {id:'rotina',ic:'🔁',t:'O hábito que muda tudo: revisar',min:2,pilar:'plan',
+  p:['<b>Diário (1 min):</b> lance os gastos no dia. Em 3 toques no botão +.',
+     '<b>Semanal (5 min):</b> abra a Revisão do período — o ritmo está dentro do budget?',
+     '<b>Mensal (15 min):</b> leia o Relatório do mês, ajuste o budget do mês seguinte e faça o backup.',
+     'Ninguém acerta o orçamento de primeira: o 3º mês é bem mais fiel que o 1º. Consistência vence perfeição.'],
+  me:()=>{const lim=toISO(new Date(Date.now()-30*864e5)),d=new Set(state.expenses.filter(e=>e.date>=lim).map(e=>e.date)).size;return`Nos últimos 30 dias você lançou gastos em <b>${d} dia(s)</b> diferentes.`},
+  go:['review','Abrir Revisão do período'],
+  q:['Com que frequência vale lançar os gastos?',['No mesmo dia','Uma vez por mês','Só os grandes'],0]}
+];
+function learnState(){state.learn=state.learn||{done:{}};state.learn.done=state.learn.done||{};return state.learn}
+function nextLesson(){const L=learnState(),P=profileCalc(),weak=Object.entries(P.pil).sort((a,b)=>a[1].s-b[1].s).map(x=>x[0]);for(const w of weak){const l=LESSONS.find(x=>x.pilar===w&&!L.done[x.id]);if(l)return l}return LESSONS.find(x=>!L.done[x.id])}
+function vLearn(){
+  const L=learnState(),n=LESSONS.filter(x=>L.done[x.id]).length,nx=nextLesson(),on=state.settings.coach!==false;
+  return`<div class="card hero"><div class="lbl">🎓 Aprender — fundamentos de dinheiro</div><div class="big">${n} de ${LESSONS.length} aulas</div>${bar(n/LESSONS.length*100)}
+   <div class="mini"><span>Aulas curtas com os <b>seus</b> números e um exercício no final.</span></div></div>
+  ${nx?`<div class="card" data-act="openLesson" data-id="${nx.id}" style="cursor:pointer"><div class="muted" style="font-size:12px">⭐ Próxima aula recomendada para você</div><div class="row" style="margin-top:6px"><span style="font-size:26px">${nx.ic}</span><b style="flex:1">${nx.t}</b><span class="pill">${nx.min} min</span></div></div>`:'<div class="alert ok">🏆 Você concluiu todas as aulas! Reveja quando quiser.</div>'}
+  <div class="card"><h3>Aulas</h3><div class="mlist">${LESSONS.map((l,i)=>`<div class="mrow" data-act="openLesson" data-id="${l.id}"><div class="ic" style="background:var(--panel2)">${l.ic}</div><div class="tx"><b>${i+1}. ${l.t}</b><small>${l.min} min${L.done[l.id]?' · concluída '+fmtDate(L.done[l.id].slice(0,10)):''}</small></div><div class="vl">${L.done[l.id]?'<span class="pos">✓</span>':'›'}</div></div>`).join('')}</div></div>
+  <div class="card"><div class="row"><div style="flex:1"><h3>🤖 Coach a cada gasto</h3><div class="sub" style="margin:0">Depois de cada lançamento, mostra se a categoria está dentro, no limite ou acima do budget — com uma dica.</div></div><button class="btn ${on?'primary':''}" data-act="toggleCoach">${on?'Ligado':'Desligado'}</button></div></div>
+  <div class="muted" style="font-size:12px;padding:0 4px">Conteúdo educativo. Não é recomendação de investimento nem consultoria financeira individual.</div>`;
+}
+function openLesson(id){
+  const l=LESSONS.find(x=>x.id===id);if(!l)return;const L=learnState(),f=$('#modalForm');let me='';try{me=l.me?l.me():''}catch(e){}
+  const ord=[0,1,2].sort(()=>Math.random()-.5);
+  f.innerHTML=`<header>${l.ic} ${l.t}</header><div class="body"><div class="full">
+   <ul style="margin:4px 0 0;padding-left:18px;line-height:1.55">${l.p.map(x=>`<li style="margin-bottom:8px">${x}</li>`).join('')}</ul>
+   ${me?`<div class="alert info" style="margin-top:6px"><b>📊 Seus números</b><br>${me}</div>`:''}
+   ${l.go?`<button type="button" class="btn sm" data-act="nav" data-id="${l.go[0]}" style="margin:4px 0 10px">${l.go[1]} ›</button>`:''}
+   <div class="q-label" style="margin-top:10px">✍️ Exercício</div><p style="margin:0 0 10px"><b>${l.q[0]}</b></p>
+   <div style="display:grid;gap:8px" id="quiz">${ord.map(i=>`<button type="button" class="chip" style="justify-content:flex-start;border-radius:12px;text-align:left" data-quiz="${i}">${l.q[1][i]}</button>`).join('')}</div>
+   <div id="quizFb" style="margin-top:10px"></div>
+  </div></div><footer><button type="button" class="btn" data-act="closeModal">${L.done[id]?'Fechar':'Depois'}</button><button type="button" class="btn primary" data-act="lessonNext" data-id="${id}">Próxima aula ›</button></footer>`;
+  f.onsubmit=e=>e.preventDefault();
+  f.onclick=e=>{const b=e.target.closest('[data-quiz]');if(!b)return;const ok=+b.dataset.quiz===l.q[2];
+    f.querySelectorAll('[data-quiz]').forEach(x=>{x.disabled=true;if(+x.dataset.quiz===l.q[2])x.classList.add('on')});
+    if(!ok)b.style.borderColor='var(--bad)';
+    f.querySelector('#quizFb').innerHTML=ok?'<div class="alert ok">✅ Isso mesmo! Aula concluída.</div>':`<div class="alert bad">Quase! A resposta certa é: <b>${l.q[1][l.q[2]]}</b>. Aula concluída — reveja quando quiser.</div>`;
+    if(!L.done[id]){L.done[id]=new Date().toISOString();save()}};
+  $('#modal').classList.remove('hidden');f.querySelector('.body').scrollTop=0;
+}
+
+/* ---------------- COACH A CADA GASTO ---------------- */
+function coachFor(x){ // x={cat,tipo,valor,date,ym?,valorMes?,parcelas?,benefitId?}
+  const ym=x.ym||x.date.slice(0,7),vm=x.valorMes??x.valor,inc=incRef(ym);
+  const r=comparison(ym).find(r=>r.tipo===x.tipo&&norm(r.cat)===norm(x.cat))||{real:vm,plan:0};
+  const dim=daysIn(ym),isCur=ym===todayYM(),dia=isCur?new Date().getDate():ym<todayYM()?dim:1,rest=Math.max(1,dim-dia+1),frac=dia/dim*100;
+  const L=[];let cls='ok',tit,act=null,pct=0;
+  if(x.tipo==='savings'){const b=bucketSummary(ym);tit='💚 Dinheiro trabalhando para você';
+    L.push(`${esc(x.cat)}: ${brl(r.real)}${r.plan?' de '+brl(r.plan)+' planejados':''} neste mês.`);
+    if(inc)L.push(`Taxa de poupança do mês: <b>${pctf(b.savings.real/inc*100)}</b> (meta ${b.savings.pct}%). ${b.savings.real>=b.savings.target?'Meta do mês batida! 🎉':'Faltam '+brl(b.savings.target-b.savings.real)+' para a meta.'}`);
+    pct=r.plan?r.real/r.plan*100:100}
+  else if(!r.plan&&month(ym)._empty){tit='💳 Lançado para '+mLabel(ym,true);pct=0;
+    L.push(`${mLabel(ym,true)} ainda não tem orçamento. Quando você montar o mês (ex.: "Copiar do mês anterior"), este valor já aparece em ${esc(x.cat)}.`)}
+  else if(!r.plan){cls='warn';tit='🟠 Gasto fora do orçamento';pct=100;
+    L.push(`"${esc(x.cat)}" não tem budget em ${mLabel(ym,true)} — já são ${brl(r.real)}.`);
+    L.push('Dinheiro sem destino compete com suas metas. Crie a categoria com um valor realista ou junte com uma que já existe.');act=['orcar',x.tipo+'::'+x.cat,'Orçar categoria']}
+  else{pct=r.real/r.plan*100;const sobra=r.plan-r.real;
+    if(pct>100.0001){cls='bad';tit='🔴 Acima do budget';
+      L.push(`${esc(x.cat)}: ${brl(r.real)} de ${brl(r.plan)} — passou <b>${brl(-sobra)}</b> (${pctf(pct,0)}).`);
+      L.push(x.tipo==='wants'?'Dica do coach: segure novos gastos de desejo nesta categoria até o fim do mês. Se for inevitável, tire de outra categoria de Desejos — nunca da poupança.':'Necessidade que estoura costuma indicar budget irreal. Use 💡 Sugerir valores no orçamento e ajuste o próximo mês; neste, compense em Desejos.')}
+    else if(pct>=85){cls='warn';tit='🟡 No limite';L.push(`${esc(x.cat)}: ${pctf(pct,0)} do budget usado. Restam <b>${brl(sobra)}</b>${isCur?` para ${rest} dia(s) — <b>${brl(sobra/rest)}/dia</b>`:''}.`);
+      if(x.tipo==='wants')L.push('Antes do próximo gasto aqui, pergunte: "isso vale mais do que a folga do fim do mês?"')}
+    else if(isCur&&pct>frac+20&&dia<dim-2){cls='warn';tit='🟡 Ritmo acelerado';L.push(`Você já usou <b>${pctf(pct,0)}</b> do budget de ${esc(x.cat)} com ${pctf(frac,0)} do mês. Nesse ritmo, termina em ~${brl(r.real/dia*dim)} (budget ${brl(r.plan)}).`);
+      L.push(`Para fechar dentro: até <b>${brl(sobra/rest)}/dia</b> daqui para frente.`)}
+    else{tit='🟢 Dentro do budget';L.push(`${esc(x.cat)}: restam <b>${brl(sobra)}</b>${isCur?' ('+brl(sobra/rest)+'/dia até o fim do mês)':''} — ${pctf(pct,0)} usado.`);
+      if(isCur&&pct<frac-15)L.push('Você está abaixo do ritmo do mês. Se sobrar no fim, mande a diferença para a poupança — é assim que a sobra vira patrimônio.')}}
+  // extras
+  if(inc&&x.valor>=inc*.05&&x.tipo!=='savings'){const h=horasTrab(x.valor,ym);L.push(`Este gasto = <b>${num(h,h<10?1:0)} h de trabalho</b> (${pctf(x.valor/inc*100)} da renda do mês).${x.tipo==='wants'?' Para desejos grandes, a regra das 24 h evita arrependimento.':''}`)}
+  if(x.parcelas>1)L.push(`Parcelado em ${x.parcelas}×: compromete <b>${brl(x.valor/x.parcelas)}/mês</b> até ${mLabel(addM(ym,x.parcelas-1),true)}. Parcela futura já é orçamento gasto.`);
+  else if(x.parcelas===1&&x.ym&&x.ym!==x.date.slice(0,7))L.push(`No cartão: entra na fatura de ${mLabel(x.ym,true)}.`);
+  if(x.benefitId){const b=find(state.benefits,x.benefitId);if(b){const ref=x.date,s=benBalance(b,ref),nx=benNext(b,ref),d=Math.max(1,dDiff(ref,nx));L.push(`🧺 Saldo do ${esc(b.nome)}: <b>${brl(s)}</b> — ${brl(Math.max(0,s)/d)}/dia até a recarga de ${fmtDate(nx)}.`)}}
+  if(x.tipo!=='savings'&&!x.parcelas){const es=state.expenses.filter(e=>(e.date||'').slice(0,7)===ym&&e.tipo===x.tipo&&norm(e.cat)===norm(x.cat));if(es.length>=6){const av=sum(es,e=>e.valor)/es.length;if(av<80)L.push(`${es.length}º lançamento em ${esc(x.cat)} no mês (média ${brl(av)}). Pequenos e frequentes somam ${brl(sum(es,e=>e.valor))} — o "efeito cafezinho".`)}}
+  if(x.tipo==='wants'&&inc&&!month(ym)._empty){const b=bucketSummary(ym);if(b.wants.real>b.wants.target&&cls!=='bad')L.push(`No total, os Desejos do mês (${brl(b.wants.real)}) já passaram da meta de ${b.wants.pct}% da renda (${brl(b.wants.target)}).`)}
+  return{cls,tit,lines:L.slice(0,4),pct,act};
+}
+function coachShow(x,undo,msg){
+  if(state.settings.coach===false){toast(msg,'',undo?{label:'Desfazer',fn:undo}:null);return}
+  let c;try{c=coachFor(x)}catch(e){console.warn(e);toast(msg,'',undo?{label:'Desfazer',fn:undo}:null);return}
+  let el=$('#coach');if(!el){el=document.createElement('div');el.id='coach';document.body.appendChild(el)}
+  el.className='coach '+c.cls;
+  el.innerHTML=`<div class="row" style="justify-content:space-between;gap:8px"><b>${c.tit}</b><span class="muted" style="font-size:12px">${esc(msg)}</span></div>${bar(c.pct,c.cls==='ok'?'ok':c.cls==='warn'?'warn':'bad')}<div class="coach-lines">${c.lines.map(l=>`<div>${l}</div>`).join('')}</div>
+   <div class="row" style="margin-top:8px">${undo?'<button type="button" class="btn sm" id="coachUndo">Desfazer</button>':''}${c.act?`<button type="button" class="btn sm" id="coachAct">${c.act[2]}</button>`:''}<span class="spacer"></span><button type="button" class="btn sm primary" id="coachOk">Entendi</button></div>`;
+  clearTimeout(window._coachT);const close=()=>{el.remove()};
+  el.querySelector('#coachOk').onclick=close;
+  if(undo)el.querySelector('#coachUndo').onclick=()=>{close();undo()};
+  if(c.act)el.querySelector('#coachAct').onclick=()=>{close();ACT[c.act[0]](c.act[1])};
+  window._coachT=setTimeout(close,20000);
+}
+
+/* ---------------- PERFIL FINANCEIRO ---------------- */
+const PILARES={poupar:['💰','Poupar'],gastar:['🛒','Controle dos gastos'],dividas:['⛓','Dívidas'],protecao:['🛟','Proteção (reserva)'],plan:['📋','Planejamento']};
+function monthMetrics(ym){const inc=incomeTotal(ym),bs=bucketSummary(ym),rows=comparison(ym).filter(r=>r.tipo!=='savings'&&r.plan>0);
+  return{ym,inc,needs:bs.needs.real,wants:bs.wants.real,sav:bs.savings.real,adesao:rows.length?rows.filter(r=>r.real<=r.plan+.005).length/rows.length*100:null,
+    debtPay:monthlyDebtPayments(ym),cardFat:sum(state.cards,c=>cardFatura(c.id,ym)),hasBudget:month(ym).budget.length>0,varInc:sum(month(ym).income.filter(i=>i.natureza==='variavel'),i=>i.valor)}}
+function scorePilares(ms){
+  ms=ms.filter(m=>m.inc>0);const res=reservaInfo();
+  if(!ms.length)return null;
+  const S=k=>sum(ms,m=>m[k]),inc=S('inc'),sr=S('sav')/inc*100,wp=S('wants')/inc*100,ad=ms.filter(m=>m.adesao!=null),adv=ad.length?sum(ad,m=>m.adesao)/ad.length:null,dr=S('debtPay')/inc*100,cf=S('cardFat')/inc*100;
+  const lim=toISO(new Date(Date.now()-30*864e5)),dias=new Set(state.expenses.filter(e=>e.date>=lim).map(e=>e.date)).size;
+  const cm=month(curMonth),cinc=incomeTotal(curMonth),bz=cinc?Math.abs(cinc-sum(cm.budget,b=>b.valor))/cinc:1;
+  const p={
+    poupar:{s:clamp(sr/20*100),d:`Taxa de poupança: ${pctf(sr)} da renda (ideal: 20%+)`},
+    gastar:{s:clamp((adv??60)*.6+clamp(100-Math.max(0,wp-30)*4)*.4),d:`${adv!=null?pctf(adv,0)+' das categorias dentro do budget · ':''}Desejos: ${pctf(wp,0)} da renda`},
+    dividas:{s:clamp((dr<=10?100:dr>=45?0:100-(dr-10)/35*100)-Math.max(0,cf-30)),d:`Parcelas: ${pctf(dr,0)} da renda${state.cards.length?' · faturas: '+pctf(cf,0):''} (ideal: até 30%)`},
+    protecao:{s:clamp(res.meses/6*100),d:`Reserva: ${num(res.meses,1)} mês(es) de Necessidades (ideal: 6)`},
+    plan:{s:clamp(ms.filter(m=>m.hasBudget).length/ms.length*40+30*Math.max(0,1-bz*5)+Math.min(30,dias/12*30)),d:`Lançou gastos em ${dias} dia(s) nos últimos 30 · base zero ${bz<.05?'✔':'incompleto'}`}};
+  const total=p.poupar.s*.25+p.gastar.s*.25+p.dividas.s*.2+p.protecao.s*.15+p.plan.s*.15;
+  return{pil:p,total,sr,wp,dr,adv,inc:inc/ms.length,varPct:S('varInc')/inc*100,res};
+}
+function profileCalc(ref=curMonth){
+  const ms=[0,1,2].map(i=>monthMetrics(addM(ref,-i)));
+  return scorePilares(ms)||{pil:Object.fromEntries(Object.keys(PILARES).map(k=>[k,{s:0,d:'Sem dados suficientes'}])),total:0,empty:true,res:reservaInfo()};
+}
+function arquetipo(P){const p=k=>P.pil[k].s;
+  if(P.empty)return['🌱','Começando','Ainda há poucos dados. Cadastre renda, orçamento e lance os gastos por algumas semanas para o perfil ficar preciso.'];
+  if(p('dividas')<40)return['🧗','Em recuperação de dívidas','As parcelas pesam na renda. A prioridade é atacar a dívida mais cara e não contrair novas — cada parcela quitada libera fôlego.'];
+  if(p('protecao')<35&&p('poupar')<50)return['⚠️','Vivendo no limite','Sobra pouco e não há colchão para imprevistos. O primeiro passo é uma reserva pequena (1 mês) e cortar os desejos que menos importam.'];
+  if(p('poupar')>=70&&p('protecao')>=70&&p('gastar')>=60)return['🧱','Construtor de patrimônio','Você poupa com consistência e está protegido. Agora é otimizar: metas de longo prazo e aumentar a poupança a cada aumento de renda.'];
+  if(p('gastar')<50)return['🎉','Aproveitador do presente','Você vive bem o hoje, mas os gastos passam do planejado. Pequenos ajustes nos Desejos podem acelerar muito suas metas.'];
+  if(p('poupar')>=60)return['🐜','Poupador disciplinado','Guardar dinheiro já é um hábito. Atenção para não negligenciar a reserva e o controle do dia a dia.'];
+  if(p('plan')>=70)return['📋','Organizado em evolução','Você acompanha e planeja bem. O próximo passo é transformar a organização em mais poupança.'];
+  return['⚖️','Em equilíbrio','Base razoável em todos os pilares. Escolha o pilar mais fraco e foque nele por um mês.'];}
+function faseVida(pf,P){const i=+pf.idade,L=[];
+  if(i){if(i<25)L.push('<b>Fase de base (até 24):</b> o maior ativo é o hábito. Orçamento todo mês, reserva inicial de 1–3 meses, fuja do rotativo e invista em estudo/carreira.');
+    else if(i<35)L.push('<b>Fase de construção (25–34):</b> reserva de 6 meses, quitar dívidas caras e começar o longo prazo cedo — o tempo é o maior aliado dos juros compostos. A cada aumento de renda, aumente a poupança antes do padrão de vida.');
+    else if(i<50)L.push('<b>Fase de aceleração (35–49):</b> renda costuma ser maior: aumente a taxa de poupança, pense em aposentadoria e proteja quem depende de você.');
+    else L.push('<b>Fase de consolidação (50+):</b> reduza dívidas antes de parar de trabalhar, reforce a reserva e planeje a renda da aposentadoria.')}
+  if(+pf.dependentes>0)L.push(`Com ${pf.dependentes} dependente(s), uma reserva maior (6+ meses) e proteção para a família ganham prioridade.`);
+  if(P.varPct>25)L.push(`${pctf(P.varPct,0)} da sua renda é variável: orce as Necessidades só com a parte fixa e trate o freela como bônus com destino.`);
+  if(pf.moradia==='Aluguel'&&P.inc)L.push('Moradia de aluguel: o ideal é que aluguel + condomínio fiquem até ~30% da renda.');
+  if(pf.trabalho==='Autônomo / PJ')L.push('Como autônomo, separe também impostos e previdência todo mês — não conte com esse dinheiro como renda livre.');
+  return L;}
+function mudancas(){
+  const ref=curMonth===todayYM()&&new Date().getDate()<25?addM(curMonth,-1):curMonth;
+  const A=[0,1,2].map(i=>monthMetrics(addM(ref,-i))).filter(m=>m.inc>0),B=[3,4,5].map(i=>monthMetrics(addM(ref,-i))).filter(m=>m.inc>0);
+  if(!A.length||!B.length)return null;
+  const avg=(X,f)=>sum(X,f)/X.length,pos=[],neg=[];
+  const cmp=(nome,a,b,fmt,bomSubir,lim=0)=>{const d=a-b;if(Math.abs(d)<=lim)return;(d>0===bomSubir?pos:neg).push(`${nome}: ${fmt(b)} → <b>${fmt(a)}</b>`)};
+  cmp('Renda média',avg(A,m=>m.inc),avg(B,m=>m.inc),brl,true,avg(B,m=>m.inc)*.03);
+  cmp('Taxa de poupança',avg(A,m=>m.sav/m.inc*100),avg(B,m=>m.sav/m.inc*100),v=>pctf(v),true,1);
+  cmp('Desejos (% da renda)',avg(A,m=>m.wants/m.inc*100),avg(B,m=>m.wants/m.inc*100),v=>pctf(v),false,1);
+  cmp('Necessidades (R$/mês)',avg(A,m=>m.needs),avg(B,m=>m.needs),brl,false,avg(B,m=>m.needs)*.03);
+  const aA=A.filter(m=>m.adesao!=null),aB=B.filter(m=>m.adesao!=null);if(aA.length&&aB.length)cmp('Categorias dentro do budget',avg(aA,m=>m.adesao),avg(aB,m=>m.adesao),v=>pctf(v,0),true,3);
+  cmp('Parcelas de dívidas (% da renda)',avg(A,m=>m.debtPay/m.inc*100),avg(B,m=>m.debtPay/m.inc*100),v=>pctf(v),false,1);
+  cmp('Faturas de cartão (R$/mês)',avg(A,m=>m.cardFat),avg(B,m=>m.cardFat),brl,false,50);
+  return{pos,neg,a:`${mLabel(addM(ref,-2))}–${mLabel(ref)}`,b:`${mLabel(addM(ref,-5))}–${mLabel(addM(ref,-3))}`};
+}
+function vProfile(){
+  const pf=state.profile||{},P=profileCalc(),[ic,nome,desc]=arquetipo(P),ch=mudancas(),fase=faseVida(pf,P);
+  const weak=Object.entries(P.pil).sort((a,b)=>a[1].s-b[1].s).slice(0,3);
+  const cor=s=>s>=70?'ok':s>=45?'warn':'bad';
+  let h='';
+  if(!pf.idade)h+=`<div class="alert info"><div class="row"><span>👤 Conte um pouco sobre você (idade, dependentes, trabalho, objetivo) para o perfil ficar mais preciso.</span><span class="spacer"></span><button class="btn sm primary" data-act="editProfile">Completar perfil</button></div></div>`;
+  h+=`<div class="card"><div class="row" style="gap:16px;flex-wrap:nowrap"><div class="ring score" style="--p:${P.total};--c:var(--${cor(P.total)==='ok'?'ok':cor(P.total)==='warn'?'warn':'bad'})"><b>${Math.round(P.total)}</b></div>
+   <div style="min-width:0"><div class="muted" style="font-size:12px">Seu perfil financeiro${pf.objetivo?' · objetivo: '+esc(pf.objetivo):''}</div><h2 style="margin:4px 0 6px;font-size:21px">${ic} ${nome}</h2><div class="muted" style="font-size:13px;line-height:1.45">${desc}</div></div></div>
+   <div class="row" style="margin-top:12px"><button class="btn sm" data-act="editProfile">✎ ${pf.idade?'Editar meus dados':'Completar perfil'}</button><span class="muted" style="font-size:12px">Nota de 0 a 100 · últimos 3 meses</span></div></div>
+  <div class="card"><h3>Os 5 pilares</h3><div class="sub">De onde vem a sua nota</div>
+   ${Object.entries(PILARES).map(([k,[e,l]])=>{const x=P.pil[k];return`<div style="margin:12px 0"><div class="stat-line"><span>${e} ${l}</span><b class="${cor(x.s)==='ok'?'pos':cor(x.s)==='warn'?'wrn':'neg'}">${Math.round(x.s)}</b></div>${bar(x.s,cor(x.s))}<div class="muted" style="font-size:12px;margin-top:4px">${x.d}</div></div>`}).join('')}</div>
+  <div class="grid g2"><div class="card"><h3>Equilíbrio dos pilares</h3><div class="chart-box"><canvas id="chRadar"></canvas></div></div>
+   <div class="card"><h3>Evolução da nota</h3><div class="sub">Por mês (cada ponto usa os 3 meses anteriores)</div><div class="chart-box"><canvas id="chScore"></canvas></div></div></div>`;
+  h+=`<div class="card"><h3>📈 O que mudou</h3>${ch?`<div class="sub">${ch.a} comparado com ${ch.b}</div>
+   ${ch.pos.map(x=>`<div class="alert ok">✅ ${x}</div>`).join('')}${ch.neg.map(x=>`<div class="alert bad">⚠️ ${x}</div>`).join('')}${!ch.pos.length&&!ch.neg.length?'<div class="empty">Nada mudou de forma relevante — estabilidade também é uma conquista.</div>':''}`
+   :'<div class="empty">Preciso de pelo menos 6 meses com renda cadastrada para comparar períodos.</div>'}</div>`;
+  if(fase.length)h+=`<div class="card"><h3>🧭 Para o seu momento</h3>${fase.map(x=>`<div class="alert">${x}</div>`).join('')}</div>`;
+  h+=`<div class="card"><h3>🎯 Próximos passos</h3><div class="sub">Focados nos seus pilares mais fracos</div>
+   ${weak.map(([k,x])=>{const l=LESSONS.find(y=>y.pilar===k);return`<div class="mrow" ${l?`data-act="openLesson" data-id="${l.id}"`:''}><div class="ic" style="background:var(--panel2)">${PILARES[k][0]}</div><div class="tx"><b>${PILARES[k][1]} — ${Math.round(x.s)} pts</b><small>${l?'Aula: '+l.t:x.d}</small></div><div class="vl">›</div></div>`}).join('')}</div>
+  <div class="muted" style="font-size:12px;padding:0 4px">O perfil é calculado só com os dados deste app e serve para orientar hábitos. Não é recomendação de investimento nem consultoria financeira.</div>`;
+  setTimeout(()=>{
+    const ks=Object.keys(PILARES);
+    mkChart('chRadar',{type:'radar',_pct:true,data:{labels:ks.map(k=>PILARES[k][1]),datasets:[{label:'Nota',data:ks.map(k=>Math.round(P.pil[k].s)),borderColor:cssVar('--accent'),backgroundColor:cssVar('--accent')+'33',pointRadius:3}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+c.parsed.r+' pts'}}},scales:{r:{min:0,max:100,ticks:{display:false,stepSize:25},grid:{color:cssVar('--border')},angleLines:{color:cssVar('--border')},pointLabels:{font:{size:11}}}}}});
+    const ms=[...Array(6)].map((_,i)=>addM(curMonth,i-5)),sc=ms.map(x=>{const r=scorePilares([0,1,2].map(i=>monthMetrics(addM(x,-i))));return r?Math.round(r.total):null});
+    mkChart('chScore',{type:'line',data:{labels:ms.map(x=>mLabel(x)),datasets:[{label:'Nota',data:sc,borderColor:cssVar('--accent'),backgroundColor:cssVar('--accent')+'22',fill:true,tension:.3,spanGaps:true}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+c.parsed.y+' pts'}}},scales:{y:{min:0,max:100},x:{grid:{display:false}}}}});
+  });
+  return h;
+}
+function profileForm(){
+  const pf=state.profile||{};
+  openForm({title:'Meus dados',fields:[
+    {type:'html',html:'<p class="muted" style="margin:0">Renda, gastos, dívidas e metas já vêm do app. Aqui entram só informações que o app não tem.</p>'},
+    {name:'idade',label:'Idade',type:'number',step:'1',min:14,value:pf.idade},
+    {name:'dependentes',label:'Pessoas que dependem da sua renda',type:'number',step:'1',min:0,value:pf.dependentes??0},
+    {name:'trabalho',label:'Trabalho',type:'select',options:['CLT','Autônomo / PJ','CLT + freelas','Servidor público','Estudante','Outro'],value:pf.trabalho||'CLT + freelas'},
+    {name:'moradia',label:'Moradia',type:'select',options:['Aluguel','Própria (quitada)','Financiada','Com a família','Outro'],value:pf.moradia||'Aluguel'},
+    {name:'objetivo',label:'Objetivo principal agora',type:'select',options:['Organizar o dia a dia','Sair das dívidas','Montar a reserva de emergência','Comprar ou trocar de carro','Comprar um imóvel','Viajar','Investir para o futuro','Aposentadoria'],value:pf.objetivo||'Organizar o dia a dia'},
+    {name:'horas',label:'Horas trabalhadas por mês (para o "custo em horas")',type:'number',step:'1',min:1,value:pf.horas||176}
+  ],onSave:d=>{state.profile=Object.assign({},pf,d,{atualizado:new Date().toISOString()});toast('Perfil atualizado')}});
+}
+
+/* ============================================================
+   INVESTIR — programa "Para onde foi meu dinheiro?", guia de investimentos,
+   perfil de investidor, minha carteira, simuladores e segurança.
+   Conteúdo educativo, não é recomendação individual de investimento.
+   Regras conferidas em nov/2026.
+   ============================================================ */
+function inv(){state.invest=state.invest||{};const I=state.invest;I.taxas=I.taxas||{selic:13.75,ipca:5.2,ref:'set/2026'};I.prog=I.prog||{done:{},cortes:[]};I.prog.done=I.prog.done||{};I.prog.cortes=I.prog.cortes||[];I.apos=I.apos||{};state.investimentos=state.investimentos||[];return I}
+const CLASSES={pos:['Reserva / pós-fixados','#22c58b'],infl:['Inflação e prefixados','#4f8cff'],fii:['Fundos imobiliários','#f5a524'],acoes:['Ações e ETFs Brasil','#a970ff'],intl:['Internacional','#2ec4d6'],prev:['Previdência','#9bd04b'],cripto:['Cripto','#ff7ab6'],outros:['Outros','#8a97aa']};
+const RISCO=['','Muito baixo','Baixo','Médio','Alto','Muito alto'];
+/* ---------- guia: todos os tipos ---------- */
+const INV_GRUPOS=[['rfpub','🏛 Renda fixa — Tesouro Direto'],['rfban','🏦 Renda fixa — bancos'],['rfpriv','🏭 Renda fixa — crédito privado'],['fundos','🧺 Fundos de investimento'],['rv','📈 Renda variável'],['prev','👵 Previdência privada'],['alt','🪙 Alternativos'],['nao','🚫 Parecem investimento, mas não são']];
+const INVS=[
+ {id:'poupanca',g:'rfban',n:'Poupança',ic:'🐷',cl:'pos',r:1,liq:'Diária, mas só rende no "aniversário" mensal',ir:'Isenta',fgc:true,min:'Qualquer valor',pz:['curto'],
+  o:'Rende 0,5% ao mês + TR quando a Selic está acima de 8,5% ao ano (abaixo disso, 70% da Selic + TR).',
+  pq:'Quem está começando e precisa de algo simples — mas há opções tão seguras quanto e que rendem mais.',
+  c:'Com a Selic alta, Tesouro Selic e CDB de liquidez diária a partir de 100% do CDI costumam render mais, mesmo depois do IR. Dinheiro sacado antes do aniversário perde o rendimento do mês.'},
+ {id:'tselic',g:'rfpub',n:'Tesouro Selic',ic:'🛟',cl:'pos',r:1,liq:'Resgate rápido, em dias úteis',ir:'Tabela regressiva (22,5% → 15%) + IOF nos primeiros 30 dias',fgc:false,min:'Cerca de R$ 100–200 (frações do título)',pz:['curto','medio'],
+  o:'Título público pós-fixado: acompanha a taxa Selic. Quem paga é o Tesouro Nacional — o menor risco de crédito do país.',
+  pq:'Reserva de emergência e objetivos de curto prazo. É a referência de "porto seguro".',
+  c:'Não tem FGC porque o garantidor é o próprio governo. Há taxa de custódia da B3 em alguns casos — confira as regras atuais no site do Tesouro Direto.'},
+ {id:'tpre',g:'rfpub',n:'Tesouro Prefixado',ic:'📌',cl:'infl',r:2,liq:'Resgate antecipado a preço de mercado',ir:'Tabela regressiva',fgc:false,min:'Cerca de R$ 30–40 (frações)',pz:['medio'],
+  o:'Você sabe exatamente quanto vai receber no vencimento (taxa fixa). Existe versão com juros semestrais.',
+  pq:'Objetivos com data marcada, quando você acha que os juros vão cair.',
+  c:'Se precisar vender antes do vencimento, o preço pode estar abaixo do que você pagou (marcação a mercado). Se a inflação subir muito, a taxa fixa perde valor real.'},
+ {id:'tipca',g:'rfpub',n:'Tesouro IPCA+',ic:'🛡',cl:'infl',r:2,liq:'Resgate antecipado a preço de mercado',ir:'Tabela regressiva',fgc:false,min:'Cerca de R$ 30–60 (frações)',pz:['medio','longo'],
+  o:'Paga a inflação (IPCA) + uma taxa real. Protege o poder de compra no longo prazo. Existe versão com juros semestrais.',
+  pq:'Aposentadoria, compra de imóvel, educação dos filhos — objetivos de 5 anos ou mais.',
+  c:'Oscila bastante no caminho: segure até o vencimento para garantir a taxa contratada.'},
+ {id:'trenda',g:'rfpub',n:'Tesouro RendA+ e Educa+',ic:'🎓',cl:'infl',r:2,liq:'Pensado para segurar até o fim',ir:'Tabela regressiva',fgc:false,min:'Baixo (frações)',pz:['longo'],
+  o:'RendA+ paga uma renda mensal corrigida pela inflação por 20 anos a partir da data escolhida para se aposentar. Educa+ paga 5 anos de renda mensal para a faculdade.',
+  pq:'Quem quer montar aposentadoria ou a educação de um filho no "piloto automático".',
+  c:'Resgatar antes da data de conversão pode ter perda e penalidade. É para longo prazo de verdade.'},
+ {id:'cdb',g:'rfban',n:'CDB',ic:'🏦',cl:'pos',r:2,liq:'Diária (alguns) ou só no vencimento',ir:'Tabela regressiva',fgc:true,min:'A partir de R$ 1 em muitos bancos',pz:['curto','medio'],
+  o:'Você empresta para o banco. Pode ser pós-fixado (% do CDI), prefixado ou atrelado à inflação.',
+  pq:'Reserva (os de liquidez diária a 100% do CDI ou mais) e objetivos com prazo (os com vencimento pagam mais).',
+  c:'Banco pagando muito acima do mercado = risco maior. Respeite o limite do FGC: R$ 250 mil por CPF por conglomerado, contando os juros.'},
+ {id:'lcilca',g:'rfban',n:'LCI e LCA',ic:'🌾',cl:'pos',r:2,liq:'Só após a carência mínima (meses)',ir:'Isentas para pessoa física (Lei 11.033/2004)',fgc:true,min:'Varia — R$ 100 a R$ 1.000',pz:['medio'],
+  o:'Títulos de bancos que financiam o setor imobiliário (LCI) e o agronegócio (LCA).',
+  pq:'Dinheiro que pode ficar parado alguns meses ou anos. Compare sempre a taxa líquida com a de um CDB.',
+  c:'Têm prazo mínimo de carência: não sirvem para reserva de emergência. Já houve propostas de taxar, que não foram aprovadas — fique de olho em mudanças.'},
+ {id:'lcrdb',g:'rfban',n:'LC e RDB',ic:'🧾',cl:'pos',r:2,liq:'Geralmente no vencimento',ir:'Tabela regressiva',fgc:true,min:'Baixo',pz:['curto','medio'],
+  o:'Parecidos com o CDB, emitidos por financeiras (LC) e bancos/cooperativas (RDB).',
+  pq:'Quem busca um pouco mais de taxa com proteção do FGC.',
+  c:'Costumam ter pouca ou nenhuma liquidez antes do vencimento.'},
+ {id:'cricra',g:'rfpriv',n:'CRI e CRA',ic:'🏗',cl:'infl',r:3,liq:'Baixa — no vencimento ou mercado secundário',ir:'Isentos para pessoa física',fgc:false,min:'R$ 1.000 em geral',pz:['medio','longo'],
+  o:'Títulos lastreados em dívidas do setor imobiliário (CRI) ou do agronegócio (CRA).',
+  pq:'Investidor com alguma experiência, que já tem reserva e diversifica.',
+  c:'NÃO têm FGC. Se o devedor não pagar, você pode perder. Leia a nota de crédito (rating) e não concentre.'},
+ {id:'deb',g:'rfpriv',n:'Debêntures (comuns e incentivadas)',ic:'🏭',cl:'infl',r:3,liq:'Baixa',ir:'Comuns: tabela regressiva · Incentivadas: isentas',fgc:false,min:'R$ 1.000 em geral',pz:['medio','longo'],
+  o:'Você empresta para uma empresa. As incentivadas financiam infraestrutura e são isentas de IR para pessoa física.',
+  pq:'Quem já tem a base pronta e quer taxas maiores, aceitando risco de crédito.',
+  c:'Sem FGC. Prefira empresas grandes, diversifique entre emissores e evite o que não entende.'},
+ {id:'fdi',g:'fundos',n:'Fundos DI e de renda fixa',ic:'🧺',cl:'pos',r:2,liq:'D+0 a D+30',ir:'Tabela regressiva + come-cotas em maio e novembro',fgc:false,min:'Varia',pz:['curto','medio'],
+  o:'Um gestor compra títulos por você. Os DI seguem o CDI.',
+  pq:'Quem prefere praticidade.',
+  c:'Taxa de administração come a rentabilidade: em fundo DI, evite taxas acima de ~0,5% a.a. Muitas vezes o Tesouro Selic rende igual ou mais.'},
+ {id:'fmm',g:'fundos',n:'Fundos multimercado e de ações',ic:'🎛',cl:'acoes',r:4,liq:'D+1 a D+60',ir:'Multimercado: tabela regressiva + come-cotas · Ações: 15% no resgate',fgc:false,min:'Varia',pz:['longo'],
+  o:'Gestor profissional investe em várias classes (multimercado) ou em ações.',
+  pq:'Quem quer gestão ativa e aceita oscilação.',
+  c:'Compare com o índice de referência por 5 anos ou mais. Taxa de performance e de administração altas podem anular o ganho.'},
+ {id:'coe',g:'fundos',n:'COE',ic:'🧩',cl:'outros',r:3,liq:'Praticamente nenhuma',ir:'Tabela regressiva',fgc:false,min:'R$ 1.000+',pz:['medio'],
+  o:'Produto estruturado, com retorno ligado a algum índice ou ativo.',
+  pq:'Quase nunca é para iniciante.',
+  c:'Difícil de entender, com custos embutidos e sem liquidez. Se o gerente insistir, desconfie.'},
+ {id:'acoes',g:'rv',n:'Ações',ic:'📈',cl:'acoes',r:5,liq:'D+2 (venda na bolsa)',ir:'15% sobre o lucro (day trade: 20%). Vendas até R$ 20 mil/mês isentas (swing trade)',fgc:false,min:'O preço de 1 ação (fracionário)',pz:['longo'],
+  o:'Você vira sócio de empresas: ganha com valorização e dividendos.',
+  pq:'Objetivos de 5 anos ou mais, com reserva pronta e estômago para quedas de 30% ou mais.',
+  c:'Diversifique (10+ empresas de setores diferentes ou um ETF). Dividendos são isentos, mas desde 2026 os acima de R$ 50 mil/mês da mesma empresa têm 10% retido na fonte.'},
+ {id:'etf',g:'rv',n:'ETFs (fundos de índice)',ic:'🧺',cl:'acoes',r:4,liq:'D+2',ir:'15% sobre o lucro (não tem a isenção de R$ 20 mil)',fgc:false,min:'Preço de 1 cota (às vezes < R$ 100)',pz:['longo'],
+  o:'Uma cesta que replica um índice (ex.: Ibovespa, S&P 500) — diversificação instantânea com custo baixo.',
+  pq:'O jeito mais simples de começar em renda variável e no exterior.',
+  c:'Veja a taxa de administração e o índice que ele segue. ETF internacional tem risco cambial (dólar).'},
+ {id:'fii',g:'rv',n:'Fundos imobiliários (FIIs) e Fiagro',ic:'🏢',cl:'fii',r:3,liq:'D+2',ir:'Rendimentos mensais isentos para pessoa física (com condições da lei) · lucro na venda: 20%',fgc:false,min:'Preço de 1 cota (muitas ≈ R$ 10–100)',pz:['medio','longo'],
+  o:'Cotas de imóveis (shoppings, galpões, lajes) ou de dívidas imobiliárias/agro, que pagam renda mensal.',
+  pq:'Quem quer renda mensal e exposição a imóveis sem comprar um imóvel.',
+  c:'A cota oscila como ação. Diversifique entre tipos de fundo e não escolha só pelo maior dividendo.'},
+ {id:'bdr',g:'rv',n:'BDRs e investimentos no exterior',ic:'🌎',cl:'intl',r:4,liq:'D+2',ir:'15% sobre o lucro · dividendos tributados',fgc:false,min:'Preço de 1 unidade',pz:['longo'],
+  o:'Recibos de empresas estrangeiras negociados na B3, ou ETFs de índices globais.',
+  pq:'Diversificar fora do Brasil e se proteger de crises locais.',
+  c:'Variação do dólar mexe muito no resultado. Comece por ETFs amplos antes de ações individuais.'},
+ {id:'pgbl',g:'prev',n:'Previdência PGBL',ic:'👵',cl:'prev',r:2,liq:'Baixa (pensada para longo prazo)',ir:'Sobre o valor total resgatado · tabela regressiva cai até 10% após 10 anos',fgc:false,min:'Varia',pz:['longo'],
+  o:'Permite deduzir até 12% da renda bruta tributável no IR — se você faz a declaração completa e contribui para o INSS.',
+  pq:'Quem declara no modelo completo e quer economizar IR hoje.',
+  c:'Fuja de taxa de carregamento e de taxa de administração alta. Escolha o regime de tributação (regressivo ou progressivo) na contratação.'},
+ {id:'vgbl',g:'prev',n:'Previdência VGBL',ic:'👴',cl:'prev',r:2,liq:'Baixa',ir:'Só sobre o rendimento · tabela regressiva até 10%',fgc:false,min:'Varia',pz:['longo'],
+  o:'Igual ao PGBL, mas sem dedução no IR — o imposto incide só sobre o ganho.',
+  pq:'Quem declara no modelo simplificado ou já usou o limite do PGBL; também facilita sucessão (não entra em inventário).',
+  c:'Compare taxas e rentabilidade com alternativas como o Tesouro IPCA+.'},
+ {id:'cripto',g:'alt',n:'Criptoativos',ic:'🪙',cl:'cripto',r:5,liq:'Imediata (24h), mas com volatilidade extrema',ir:'Vendas até R$ 35 mil/mês em corretoras brasileiras: isentas · acima: 15% a 22,5% sobre o lucro · no exterior: 15% com apuração anual',fgc:false,min:'Qualquer valor',pz:['longo'],
+  o:'Ativos digitais como Bitcoin. Podem subir ou cair mais de 50% em pouco tempo.',
+  pq:'Só para uma pequena parte do patrimônio (ex.: até 5%), depois da reserva e sem dívidas caras.',
+  c:'Use corretoras conhecidas e autenticação em dois fatores. "Rendimento fixo em cripto" e "robôs" são campo fértil de golpes.'},
+ {id:'ouro',g:'alt',n:'Ouro e dólar',ic:'🥇',cl:'intl',r:3,liq:'Boa (via ETF na bolsa)',ir:'15% sobre o lucro',fgc:false,min:'Baixo via ETF',pz:['longo'],
+  o:'Ativos de proteção que costumam subir em crises.',
+  pq:'Uma pequena fatia de proteção numa carteira diversificada.',
+  c:'Não pagam juros nem dividendos: o ganho vem só da valorização.'},
+ {id:'cap',g:'nao',n:'Título de capitalização',ic:'🎟',cl:'outros',r:1,liq:'Carência e multa',ir:'—',fgc:false,min:'—',pz:[],
+  o:'Um "sorteio" em que você devolve parte do dinheiro no fim, quase sempre abaixo da inflação.',
+  pq:'Ninguém que queira investir.',
+  c:'Muito oferecido por gerentes de banco. Não é investimento: é um produto de sorteio.'},
+ {id:'consorcio',g:'nao',n:'Consórcio',ic:'🚗',cl:'outros',r:2,liq:'Só quando for contemplado',ir:'—',fgc:false,min:'—',pz:[],
+  o:'Compra planejada em grupo, com taxa de administração. Não rende juros.',
+  pq:'Quem quer disciplina para comprar um bem e não tem pressa.',
+  c:'Compare o custo total (taxa de administração + fundo de reserva) com juntar o dinheiro investindo.'},
+ {id:'imovel',g:'nao',n:'Imóvel para morar',ic:'🏠',cl:'outros',r:2,liq:'Muito baixa',ir:'Ganho de capital na venda',fgc:false,min:'—',pz:[],
+  o:'É moradia e segurança, não uma fonte de renda: gera custos (IPTU, condomínio, manutenção).',
+  pq:'Decisão de vida, não de investimento.',
+  c:'Faça a conta de aluguel × compra antes de financiar 30 anos.'}
+];
+const PERFIS={
+ conservador:{n:'Conservador',ic:'🛡',d:'Prioriza segurança e liquidez. Aceita render menos para não ver o saldo cair.',alv:{pos:70,infl:22,fii:3,acoes:3,intl:2}},
+ moderado:{n:'Moderado',ic:'⚖️',d:'Aceita oscilações moderadas em parte da carteira em troca de mais retorno no longo prazo.',alv:{pos:40,infl:25,fii:8,acoes:15,intl:10,cripto:2}},
+ arrojado:{n:'Arrojado',ic:'🚀',d:'Foca no longo prazo e aceita quedas grandes no caminho para buscar retornos maiores.',alv:{pos:20,infl:20,fii:12,acoes:30,intl:15,cripto:3}}
+};
+const QUIZ=[
+ ['Em quanto tempo você deve precisar da maior parte desse dinheiro?',['Menos de 1 ano','1 a 3 anos','3 a 10 anos','Mais de 10 anos']],
+ ['Seus investimentos caem 15% em um mês. O que você faz?',['Vendo tudo para não perder mais','Vendo uma parte','Mantenho e espero','Aproveito para comprar mais']],
+ ['Qual é o seu principal objetivo?',['Preservar o que tenho','Ter uma renda estável','Crescer de forma moderada','Crescer o máximo possível']],
+ ['O que você já investiu?',['Nunca investi','Poupança ou CDB','Tesouro Direto ou fundos','Ações, FIIs ou ETFs']],
+ ['Você tem reserva de emergência?',['Não tenho','Menos de 3 meses','De 3 a 6 meses','Mais de 6 meses']],
+ ['Como é a sua renda?',['Instável','Parte fixa, parte variável','Estável','Estável e com renda extra']],
+ ['Você tem dívidas caras (cartão rotativo, cheque especial, empréstimo pessoal)?',['Sim, várias','Algumas','Só financiamento com juros baixos','Nenhuma']]
+];
+/* ---------- utilidades financeiras ---------- */
+const mensal=a=>Math.pow(1+a/100,1/12)-1;
+function fv(ini,ap,taxaAA,meses){const i=mensal(taxaAA);let v=ini;const s=[v];for(let k=1;k<=meses;k++){v=v*(1+i)+ap;s.push(v)}return s}
+function pmt(alvo,ini,taxaAA,meses){const i=mensal(taxaAA);if(meses<=0)return Math.max(0,alvo-ini);const f=Math.pow(1+i,meses);return i?Math.max(0,(alvo-ini*f)*i/(f-1)):Math.max(0,(alvo-ini)/meses)}
+function carteiraTotal(){return sum(state.investimentos||[],x=>+x.atual||+x.aplicado||0)}
+function invPerfil(){const p=inv().perfil;return p&&PERFIS[p.tipo]?p:null}
+function horizonte(m){return m<=24?['curto','Curto prazo (até 2 anos)']:m<=60?['medio','Médio prazo (2 a 5 anos)']:['longo','Longo prazo (mais de 5 anos)']}
+const PRAZO_TXT={curto:'Segurança e liquidez: Tesouro Selic, CDB de liquidez diária ≥ 100% do CDI. Nada de renda variável.',medio:'Renda fixa com vencimento próximo da data: CDB/LCI/LCA, Tesouro Prefixado ou IPCA+ com vencimento compatível.',longo:'Aqui cabe diversificar: Tesouro IPCA+, previdência barata, FIIs, ações/ETFs e um pouco de exterior, conforme o seu perfil.'};
+
+/* ---------- programa: dívidas ---------- */
+function simDividas(lista,extra,metodo){
+  let ds=lista.map(d=>({n:d.n,s:+d.saldo,i:(+d.juros||0)/100,p:+d.parc||0})).filter(d=>d.s>0.5);
+  const ordem=()=>ds.filter(d=>d.s>0.5).sort((a,b)=>metodo==='bola'?a.s-b.s:b.i-a.i);
+  let mes=0,juros=0,ordemQuit=[];
+  while(ds.some(d=>d.s>0.5)&&mes<600){mes++;let livre=extra;
+    ds.forEach(d=>{if(d.s<=0.5)return;const j=d.s*d.i;juros+=j;d.s+=j;const pg=Math.min(d.s,d.p);d.s-=pg;if(d.s<=0.5&&!ordemQuit.find(x=>x.n===d.n))ordemQuit.push({n:d.n,m:mes})});
+    ds.forEach(d=>{if(d.s<=0.5&&d.p){livre+=d.p;d.p=0}});
+    for(const d of ordem()){if(livre<=0)break;const pg=Math.min(d.s,livre);d.s-=pg;livre-=pg;if(d.s<=0.5&&!ordemQuit.find(x=>x.n===d.n))ordemQuit.push({n:d.n,m:mes})}}
+  return{meses:mes,juros,ordem:ordemQuit,nunca:mes>=600};
+}
+function dividasLista(){
+  /* saldo devedor = valor presente das parcelas que faltam (sem os juros futuros) */
+  const L=state.debts.filter(d=>debtRemaining(d)>0).map(d=>{const n=Math.max(0,(+d.totalParcelas)-(+d.parcelasPagas)),i=(+d.juros||0)/100,pv=i?(+d.parcela)*(1-Math.pow(1+i,-n))/i:debtRemaining(d);return{n:d.nome,saldo:Math.round(pv*100)/100,juros:+d.juros||0,parc:+d.parcela}});
+  state.cards.forEach(c=>{const u=cardUsed(c.id,curMonth);if(u>0)L.push({n:'💳 '+c.nome+' (parcelas futuras)',saldo:u,juros:0,parc:cardFatura(c.id,curMonth)||u})});
+  return L;
+}
+/* ---------- programa: diagnóstico ---------- */
+function diagnostico(){
+  const ms=[1,2,3].map(i=>addM(curMonth,-i)).filter(x=>actualEntries(x).length);if(curMonth===todayYM()&&!ms.length)ms.push(curMonth);
+  const cats={};let tot=0,inc=0;
+  ms.forEach(x=>{inc+=incomeTotal(x);actualEntries(x).filter(e=>e.tipo!=='savings').forEach(e=>{const k=e.tipo+'|'+e.cat;cats[k]=cats[k]||{cat:e.cat,tipo:e.tipo,v:0,n:0,peq:0};cats[k].v+=e.valor;cats[k].n++;if(e.valor<60)cats[k].peq+=e.valor;tot+=e.valor})});
+  const L=Object.values(cats).map(c=>({...c,mes:c.v/ms.length})).sort((a,b)=>b.v-a.v);
+  const fixas=sum(state.bills.filter(b=>billActive(b,curMonth)),b=>+b.valor)+monthlyDebtPayments(curMonth);
+  return{ms,L,tot:tot/Math.max(1,ms.length),inc:inc/Math.max(1,ms.length),peq:sum(L,c=>c.peq)/Math.max(1,ms.length),fixas};
+}
+function progEtapas(){
+  const I=inv(),r=reservaInfo(),D=dividasLista(),caras=D.filter(d=>d.juros>=1.5),pf=state.profile||{},vari=(profileCalc().varPct||0)>25||+pf.dependentes>0,metaRes=r.needs*(vari?9:6),mini=Math.max(1000,r.needs);
+  const temCorte=I.prog.cortes.length>0;
+  return[
+   {id:'diag',ic:'🔍',t:'Para onde foi meu dinheiro?',d:'Diagnóstico dos últimos 3 meses: categorias, gastos invisíveis e quanto da renda já está comprometida.',ok:!!I.prog.done.diag,pct:I.prog.done.diag?100:0},
+   {id:'cortes',ic:'✂️',t:'Conter os vazamentos',d:'Escolha até 3 categorias para reduzir e acompanhe o resultado mês a mês.',ok:temCorte&&!!I.prog.done.cortes,pct:temCorte?(I.prog.done.cortes?100:50):0},
+   {id:'mini',ic:'🧯',t:'Mini-reserva',d:`Um colchão de ${brl(mini)} (1 mês de Necessidades) para imprevistos não virarem dívida.`,ok:r.valor>=mini,pct:clamp(r.valor/mini*100)},
+   {id:'divida',ic:'⛓',t:'Plano de quitação de dívidas',d:'Simule avalanche × bola de neve e descubra quando fica livre — e quanto economiza em juros.',ok:!caras.length,pct:D.length?(caras.length?(I.prog.done.divida?50:10):100):100},
+   {id:'reserva',ic:'🛟',t:'Reserva de emergência completa',d:`${vari?9:6} meses de Necessidades = ${brl(metaRes)}${vari?' (renda variável ou dependentes pedem mais)':''}.`,ok:r.needs>0&&r.valor>=metaRes,pct:metaRes?clamp(r.valor/metaRes*100):0},
+   {id:'investir',ic:'🌱',t:'Começar a investir com segurança',d:'Descubra seu perfil de investidor, entenda os tipos de investimento e registre o primeiro na sua carteira.',ok:!!invPerfil()&&state.investimentos.length>0,pct:(invPerfil()?50:0)+(state.investimentos.length?50:0)},
+   {id:'apos',ic:'🏖',t:'Longo prazo e aposentadoria',d:'Calcule quanto precisa juntar para a independência financeira e o aporte mensal que leva até lá.',ok:!!I.apos.salvo,pct:I.apos.salvo?100:0}
+  ];
+}
+/* ---------- telas ---------- */
+const INV_TABS=[['prog','🧭 Programa'],['guia','📚 Guia'],['perfil','🧑‍💼 Perfil'],['carteira','💼 Carteira'],['sim','🧮 Simular'],['seg','🔐 Segurança']];
+function vInvest(){invAtualiza();
+  inv();const tab=ui.invTab||'prog';
+  const tabs=`<div class="chips" style="flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch">${INV_TABS.map(([k,l])=>`<button class="chip ${tab===k?'on':''}" data-act="invTab" data-id="${k}" style="flex:none">${l}</button>`).join('')}</div>`;
+  let h='';try{h={prog:vProg,guia:vGuia,perfil:vInvPerfil,carteira:vCarteira,sim:vSim,seg:vSeg}[tab]()}catch(e){console.error(e);h=`<div class="card empty">Erro: ${esc(e.message)}</div>`}
+  return tabs+h+`<div class="muted" style="font-size:12px;padding:0 4px">Conteúdo educativo, com regras conferidas em nov/2026. Não é recomendação individual de investimento. Antes de decidir, confira as condições do produto e, se precisar, procure um profissional certificado.</div>`;
+}
+function vProg(){
+  const E=progEtapas(),n=E.filter(e=>e.ok).length,at=E.find(e=>!e.ok),sel=ui.invStep||(at?at.id:'diag');
+  let h=`<div class="card hero"><div class="lbl">🧭 Programa "Para onde foi meu dinheiro?"</div><div class="big">${at?'Etapa '+(E.indexOf(at)+1)+' de 7':'🏆 Programa concluído'}</div><div class="mini" style="margin:-4px 0 8px"><span>${n} de 7 etapas concluídas</span></div>${bar(n/7*100)}
+   <div class="mini"><span>Da dívida à prosperidade com pequenas mudanças — uma etapa por vez.</span></div></div>
+  <div class="card"><div class="mlist">${E.map((e,i)=>`<div class="mrow ${sel===e.id?'sel':''}" data-act="invStep" data-id="${e.id}" style="${sel===e.id?'background:var(--panel2);border-radius:12px':''}"><div class="ic" style="background:${e.ok?'color-mix(in srgb,var(--ok) 20%,transparent)':'var(--panel2)'}">${e.ok?'✅':e.ic}</div><div class="tx"><b>${i+1}. ${e.t}</b><small>${e.ok?'Concluída':e===at?'👉 Você está aqui · '+Math.round(e.pct)+'%':Math.round(e.pct)+'%'}</small></div><div class="vl">${sel===e.id?'▾':'›'}</div></div>`).join('')}</div></div>`;
+  const e=E.find(x=>x.id===sel);
+  h+=`<div class="card" id="stepBox"><h3>${e.ic} ${e.t}</h3><div class="sub">${e.d}</div>${({diag:stDiag,cortes:stCortes,mini:stMini,divida:stDivida,reserva:stReserva,investir:stInvestir,apos:stApos}[sel])()}</div>`;
+  return h;
+}
+function stDiag(){
+  const D=diagnostico(),I=inv();if(!D.L.length)return'<div class="empty">Lance seus gastos por algumas semanas para ver o diagnóstico.</div>';
+  const top=D.L.slice(0,8),inc=D.inc||1;
+  const peqTxt=D.peq>0?`<div class="alert warn">☕ <b>Gastos invisíveis:</b> compras abaixo de R$ 60 somam em média <b>${brl(D.peq)}/mês</b> (${pctf(D.peq/inc*100,0)} da renda) — ${brl(D.peq*12)} por ano.</div>`:'';
+  setTimeout(()=>mkChart('chDiag',{type:'doughnut',data:{labels:top.map(c=>c.cat),datasets:[{data:top.map(c=>c.mes),backgroundColor:PALETTE,borderWidth:0}]},options:{cutout:'60%',plugins:{legend:{position:'bottom',labels:{boxWidth:8,font:{size:11}}}}}}));
+  return`<div class="grid g4">${kpi('Renda média',brl(D.inc),D.ms.length+' mês(es) analisado(s)')}${kpi('Gasto médio',brl(D.tot),pctf(D.tot/inc*100,0)+' da renda',null,D.tot>D.inc?'neg':'')}${kpi('Já comprometido',brl(D.fixas),'contas fixas + parcelas · '+pctf(D.fixas/inc*100,0))}${kpi('Sobra média',brl(D.inc-D.tot),'antes da poupança',null,D.inc-D.tot<0?'neg':'pos')}</div>
+   <div class="chart-box" style="margin-top:12px"><canvas id="chDiag"></canvas></div>
+   <h3 style="font-size:14px;margin:14px 0 4px">Para onde vai cada R$ 100 da sua renda</h3>
+   ${top.map(c=>`<div style="margin:9px 0"><div class="stat-line"><span>${esc(c.cat)} ${tipoBadge(c.tipo)}</span><b>${brl(c.mes)}/mês · R$ ${num(c.mes/inc*100,0)}</b></div>${bar(c.mes/top[0].mes*100)}</div>`).join('')}
+   ${peqTxt}
+   <div class="alert">🧠 <b>Leitura do especialista:</b> ${D.tot>D.inc?'você está gastando mais do que ganha. A prioridade absoluta é a etapa 2 (conter) e não contrair novas dívidas.':D.fixas/inc>0.6?'mais de 60% da renda já sai comprometida antes do mês começar. Renegociar contas fixas e parcelas libera mais dinheiro do que cortar o cafezinho.':D.inc-D.tot<D.inc*0.1?'sobra menos de 10% da renda. Pequenos cortes nas 2 ou 3 maiores categorias de Desejos já mudam o jogo.':'a base é boa: agora é direcionar a sobra com intenção — reserva primeiro, depois investimentos.'}</div>
+   <button class="btn primary" data-act="progDone" data-id="diag" style="margin-top:6px">${I.prog.done.diag?'✔ Diagnóstico entendido':'Entendi meu diagnóstico ›'}</button>`;
+}
+function stCortes(){
+  const I=inv(),D=diagnostico(),dcat=new Set(state.debts.map(d=>norm(d.cat))),cand=D.L.filter(c=>c.tipo!=='savings'&&!dcat.has(norm(c.cat))).sort((a,b)=>(a.tipo==='wants'?0:1)-(b.tipo==='wants'?0:1)||b.mes-a.mes).slice(0,10);
+  const atual=c=>{const r=comparison(curMonth).find(r=>r.tipo===c.tipo&&norm(r.cat)===norm(c.cat));return r?r.real:0};
+  const cortes=I.prog.cortes;
+  let h=`<div class="alert">💡 Corte onde dói menos e rende mais: categorias grandes de <b>Desejos</b> e contas fixas renegociáveis (planos de celular/internet, assinaturas, seguros). Meta realista: 10% a 30% por categoria.</div>`;
+  if(cortes.length)h+=`<h3 style="font-size:14px;margin:12px 0 4px">Suas metas de corte</h3>${cortes.map((c,i)=>{const alvo=c.base*(1-c.meta/100),a=atual(c),proj=curMonth===todayYM()?a/new Date().getDate()*daysIn(curMonth):a,ok=proj<=alvo;
+    return`<div class="item-card" style="margin:8px 0"><div class="row" style="justify-content:space-between"><b>${esc(c.cat)}</b><span class="badge ${ok?'ok':'warn'}">${ok?'No caminho':'Acima da meta'}</span></div>
+     <div class="stat-line"><span>Antes (média)</span><b>${brl(c.base)}/mês</b></div><div class="stat-line"><span>Meta (−${c.meta}%)</span><b>${brl(alvo)}/mês</b></div><div class="stat-line"><span>${mLabel(curMonth)}${curMonth===todayYM()?' (projeção)':''}</span><b class="${ok?'pos':'neg'}">${brl(proj)}</b></div>
+     <div class="muted" style="font-size:12px">Economia potencial: <b>${brl(c.base-alvo)}/mês = ${brl((c.base-alvo)*12)}/ano</b></div>
+     <div class="row" style="margin-top:8px"><button class="btn sm" data-act="corteBudget" data-id="${i}">Aplicar meta no budget</button><button class="btn sm danger" data-act="corteDel" data-id="${i}">Remover</button></div></div>`}).join('')}
+    <div class="alert ok">💰 Se cumprir as metas, sobram <b>${brl(sum(cortes,c=>c.base*c.meta/100))}/mês</b> para a reserva e as dívidas.</div>`;
+  if(cortes.length<3)h+=`<h3 style="font-size:14px;margin:12px 0 4px">Escolher categoria para reduzir</h3>${cand.filter(c=>!cortes.some(x=>norm(x.cat)===norm(c.cat)&&x.tipo===c.tipo)).map(c=>`<div class="mrow" data-act="corteAdd" data-id="${esc(c.tipo+'::'+c.cat)}"><div class="tx"><b>${esc(c.cat)}</b><small>${BUCKETS[c.tipo].label} · média ${brl(c.mes)}/mês</small></div><div class="vl">＋</div></div>`).join('')||'<div class="empty">Sem categorias suficientes ainda.</div>'}`;
+  if(cortes.length&&!I.prog.done.cortes)h+=`<button class="btn primary" data-act="progDone" data-id="cortes" style="margin-top:10px">Assumir o compromisso ›</button>`;
+  return h;
+}
+function stMini(){const r=reservaInfo(),mini=Math.max(1000,r.needs),f=mini-r.valor,cortes=sum(inv().prog.cortes,c=>c.base*c.meta/100);
+  return`<div class="stat-line"><span>Guardado em reserva</span><b>${brl(r.valor)}</b></div><div class="stat-line"><span>Meta da mini-reserva</span><b>${brl(mini)}</b></div>${bar(r.valor/mini*100,r.valor>=mini?'ok':'warn')}
+   ${f>0?`<div class="alert">Faltam <b>${brl(f)}</b>.${cortes?` Com a economia das suas metas de corte (${brl(cortes)}/mês), chega lá em <b>${Math.ceil(f/cortes)} mês(es)</b>.`:''} Onde guardar: <b>Tesouro Selic</b> ou <b>CDB de liquidez diária ≥ 100% do CDI</b>, separado da conta do dia a dia.</div>`:'<div class="alert ok">✅ Mini-reserva pronta! Imprevistos pequenos já não viram dívida.</div>'}
+   <div class="muted" style="font-size:12px">O app conta como reserva as metas com "reserva" ou "emergência" no nome.</div>
+   <div class="row" style="margin-top:8px">${state.goals.some(g=>/emerg|reserva/i.test(g.nome)&&g.kind!=='fundo')?'':'<button class="btn sm primary" data-act="criarReserva">Criar meta "Reserva de emergência"</button>'}<button class="btn sm" data-act="nav" data-id="goals">Abrir Metas</button></div>`}
+function stDivida(){
+  const I=inv(),L=dividasLista();if(!L.length)return'<div class="alert ok">🎉 Nenhuma dívida cadastrada. Se tiver alguma fora do app, cadastre em Dívidas para simular.</div><button class="btn sm" data-act="nav" data-id="debts">Abrir Dívidas</button>';
+  const extra=+(I.prog.extra??Math.round(sum(I.prog.cortes,c=>c.base*c.meta/100)));
+  const base=simDividas(L,0,'avalanche'),av=simDividas(L,extra,'avalanche'),bo=simDividas(L,extra,'bola');
+  const fmtM=m=>m>=600?'nunca (os juros superam a parcela)':m>=12?Math.floor(m/12)+' ano(s) e '+(m%12)+' mês(es)':m+' mês(es)';
+  return`<div class="table-wrap"><table><thead><tr><th>Dívida</th><th class="num">Saldo</th><th class="num">Juros a.m.</th><th class="num">Parcela</th></tr></thead><tbody>${[...L].sort((a,b)=>b.juros-a.juros).map(d=>`<tr><td>${esc(d.n)}${d.juros>=4?' <span class="badge bad">cara</span>':d.juros>=1.5?' <span class="badge warn">média</span>':''}</td><td class="num">${brl(d.saldo)}</td><td class="num">${num(d.juros,2)}%</td><td class="num">${brl(d.parc)}</td></tr>`).join('')}</tbody></table></div>
+   <label style="display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--muted);font-weight:600;margin-top:10px">Quanto a mais você consegue pagar por mês? (R$)<input type="text" inputmode="decimal" data-progextra value="${extra||''}" placeholder="Ex.: 300"></label>
+   <div class="grid g3" style="margin-top:10px">${kpi('Só as parcelas',fmtM(base.meses),'juros: '+brl(base.juros))}${kpi('🏔 Avalanche',fmtM(av.meses),'juros: '+brl(av.juros),null,'pos')}${kpi('⛄ Bola de neve',fmtM(bo.meses),'juros: '+brl(bo.juros))}</div>
+   ${extra>0&&base.juros>av.juros?`<div class="alert ok">💰 Pagando ${brl(extra)} a mais por mês pelo método avalanche, você economiza <b>${brl(base.juros-av.juros)}</b> em juros e fica livre <b>${base.meses-av.meses} mês(es)</b> antes.</div>`:''}
+   <div class="alert"><b>Ordem de ataque (avalanche):</b> ${av.ordem.map((o,i)=>`${i+1}º ${esc(o.n)} (mês ${o.m})`).join(' → ')||'—'}<br><span class="muted" style="font-size:12px">Avalanche = maior juros primeiro (economiza mais). Bola de neve = menor saldo primeiro (motiva mais). Os dois funcionam — o pior é não ter método.</span></div>
+   <div class="alert warn">🛠 <b>Táticas do especialista:</b> 1) pare de usar cartão rotativo e cheque especial — tire o limite se preciso; 2) renegocie: bancos dão desconto à vista e o <b>Desenrola</b>/feirões de renegociação aparecem periodicamente; 3) troque dívida cara por barata (portabilidade, consignado) só se não voltar a usar a cara; 4) cada dívida quitada: some a parcela dela à próxima.</div>
+   <button class="btn primary" data-act="progDone" data-id="divida">${I.prog.done.divida?'✔ Plano definido':'Vou seguir este plano ›'}</button>`;
+}
+function stReserva(){const r=reservaInfo(),pf=state.profile||{},vari=(profileCalc().varPct||0)>25||+pf.dependentes>0,ms=vari?9:6,meta=r.needs*ms,f=Math.max(0,meta-r.valor),ap=Math.max(100,Math.round(f/24/10)*10);
+  return`<div class="stat-line"><span>Necessidades por mês</span><b>${brl(r.needs)}</b></div><div class="stat-line"><span>Meta (${ms} meses)</span><b>${brl(meta)}</b></div><div class="stat-line"><span>Você tem</span><b>${brl(r.valor)} · ${num(r.meses,1)} mês(es)</b></div>${bar(meta?r.valor/meta*100:0,r.valor>=meta?'ok':'warn')}
+   ${f>0?`<div class="alert">Faltam ${brl(f)}. Guardando <b>${brl(ap)}/mês</b> em Tesouro Selic (${num(inv().taxas.selic,2)}% a.a. bruto), chega lá em cerca de <b>${(()=>{const s=fv(r.valor,ap,inv().taxas.selic*0.82,240);const k=s.findIndex(v=>v>=meta);return k<0?'mais de 20 anos':k+' meses'})()}</b>.</div>`:'<div class="alert ok">✅ Reserva completa! Agora o dinheiro novo pode ir para investimentos de prazo maior.</div>'}
+   <div class="alert">📍 <b>Regras da reserva:</b> segura (Tesouro Selic ou CDB de banco sólido com FGC), resgate no mesmo dia, separada da conta corrente. Rentabilidade é o critério menos importante aqui.</div>`}
+function stInvestir(){const p=invPerfil();return`<div class="row" style="gap:8px">${p?`<span class="badge ok">${PERFIS[p.tipo].ic} Perfil ${PERFIS[p.tipo].n}</span>`:'<span class="badge warn">Perfil não definido</span>'}${state.investimentos.length?`<span class="badge ok">${state.investimentos.length} investimento(s) na carteira</span>`:'<span class="badge warn">Carteira vazia</span>'}</div>
+  <div class="alert" style="margin-top:10px">🪜 <b>Ordem segura para começar:</b> 1) reserva pronta; 2) sem dívidas caras; 3) defina o objetivo e o prazo de cada dinheiro; 4) comece simples (Tesouro e CDB) e só depois adicione renda variável, em pequenas doses; 5) aporte todo mês — constância vale mais que acertar o momento.</div>
+  <div class="row"><button class="btn sm primary" data-act="invTab" data-id="perfil">${p?'Rever meu perfil':'Descobrir meu perfil'}</button><button class="btn sm" data-act="invTab" data-id="guia">Ver tipos de investimento</button><button class="btn sm" data-act="invTab" data-id="carteira">Minha carteira</button></div>`}
+function stApos(){const I=inv();return I.apos.salvo?`<div class="alert ok">✅ Plano salvo: juntar <b>${brl(I.apos.alvo)}</b> até os ${I.apos.idadeA} anos, aportando <b>${brl(I.apos.aporte)}/mês</b>.</div><button class="btn sm" data-act="invTab" data-id="sim">Rever simulação</button>`:`<div class="alert">Use o simulador de aposentadoria para descobrir quanto juntar e salve seu plano.</div><button class="btn sm primary" data-act="invTab" data-id="sim">Abrir simulador</button>`}
+
+function vGuia(){
+  const f=ui.invFiltro||'todos',open=ui.invOpen;
+  const ok=x=>f==='todos'||(f==='seguro'?x.r<=2&&x.g!=='nao':x.pz.includes(f));
+  const filt=[['todos','Todos'],['curto','Curto prazo'],['medio','Médio prazo'],['longo','Longo prazo'],['seguro','Baixo risco']];
+  let h=`<div class="card"><h3>📚 Guia de investimentos no Brasil</h3><div class="sub">Toque em um investimento para ver o que é, o risco, o imposto, a proteção e os cuidados.</div>
+   <div class="chips">${filt.map(([k,l])=>`<button class="chip ${f===k?'on':''}" data-act="invFiltro" data-id="${k}">${l}</button>`).join('')}</div></div>`;
+  INV_GRUPOS.forEach(([g,gl])=>{const L=INVS.filter(x=>x.g===g&&ok(x));if(!L.length)return;
+    h+=`<div class="card"><h3>${gl}</h3><div class="mlist">${L.map(x=>`<div class="mrow" data-act="invOpen" data-id="${x.id}"><div class="ic" style="background:var(--panel2)">${x.ic}</div><div class="tx"><b>${x.n}</b><small>Risco ${RISCO[x.r].toLowerCase()} · ${x.fgc?'com FGC':'sem FGC'}${x.pz.length?' · '+x.pz.map(p=>({curto:'curto',medio:'médio',longo:'longo'}[p])).join('/')+' prazo':''}</small></div><div class="vl">${open===x.id?'▾':'›'}</div></div>
+     ${open===x.id?`<div class="item-card" style="margin:6px 0 10px"><p style="margin:0 0 8px">${x.o}</p>
+      <div class="stat-line"><span>Risco</span><b>${'●'.repeat(x.r)}${'○'.repeat(5-x.r)} ${RISCO[x.r]}</b></div>
+      <div class="stat-line"><span>Liquidez</span><b style="text-align:right;max-width:65%">${x.liq}</b></div>
+      <div class="stat-line"><span>Imposto de renda</span><b style="text-align:right;max-width:65%">${x.ir}</b></div>
+      <div class="stat-line"><span>FGC</span><b>${x.fgc?'✅ Até R$ 250 mil por CPF por instituição':x.g==='rfpub'?'Não (garantia do Tesouro Nacional)':'❌ Não tem'}</b></div>
+      <div class="stat-line"><span>Mínimo</span><b style="text-align:right;max-width:65%">${x.min}</b></div>
+      <div class="alert ok" style="margin-top:8px">👤 <b>Para quem:</b> ${x.pq}</div><div class="alert warn">⚠️ <b>Cuidados:</b> ${x.c}</div></div>`:''}`).join('')}</div></div>`});
+  h+=`<div class="card"><h3>🧾 Imposto de renda — resumo (nov/2026)</h3>
+   <div class="stat-line"><span>Renda fixa (CDB, Tesouro, LC, debêntures comuns)</span><b>22,5% → 15%</b></div>
+   <div class="muted" style="font-size:12px;margin-bottom:8px">Até 180 dias 22,5% · 181–360 dias 20% · 361–720 dias 17,5% · acima de 720 dias 15%. Resgates com menos de 30 dias também pagam IOF.</div>
+   <div class="stat-line"><span>Poupança, LCI, LCA, CRI, CRA, debêntures incentivadas</span><b>Isentos</b></div>
+   <div class="stat-line"><span>Ações (swing trade)</span><b>15% · isento até R$ 20 mil de vendas/mês</b></div>
+   <div class="stat-line"><span>FIIs</span><b>Rendimentos isentos* · venda 20%</b></div>
+   <div class="stat-line"><span>Previdência (regime regressivo)</span><b>35% → 10% em 10 anos</b></div>
+   <div class="stat-line"><span>Cripto (corretora brasileira)</span><b>Isento até R$ 35 mil de vendas/mês</b></div>
+   <div class="muted" style="font-size:12px;margin-top:8px">*com as condições da lei. A MP 1.303/2025, que mudaria várias dessas regras, não foi aprovada; o assunto pode voltar ao Congresso — confira antes de decidir.</div></div>`;
+  return h;
+}
+function vInvPerfil(){
+  const p=invPerfil(),I=inv(),r=reservaInfo(),caras=dividasLista().filter(d=>d.juros>=1.5);
+  let h='';
+  if(!p||ui.invQuiz){const resp=ui.quizResp||{};
+    h+=`<div class="card"><h3>🧑‍💼 Qual é o seu perfil de investidor?</h3><div class="sub">7 perguntas, igual às que as corretoras fazem (suitability).</div>
+     ${QUIZ.map(([q,ops],i)=>`<div style="margin:14px 0"><b>${i+1}. ${q}</b><div style="display:grid;gap:6px;margin-top:8px">${ops.map((o,j)=>`<button class="chip ${resp[i]===j?'on':''}" style="justify-content:flex-start;border-radius:12px" data-act="quizResp" data-id="${i}:${j}">${o}</button>`).join('')}</div></div>`).join('')}
+     <button class="btn primary" data-act="quizFim" ${Object.keys(resp).length<QUIZ.length?'disabled style="opacity:.5"':''}>Ver meu perfil (${Object.keys(resp).length}/${QUIZ.length})</button></div>`;
+    return h;}
+  const P=PERFIS[p.tipo];
+  if(r.meses<1||caras.length)h+=`<div class="alert bad">🚦 <b>Antes de assumir risco:</b> ${r.meses<1?'monte a reserva de emergência':''}${r.meses<1&&caras.length?' e ':''}${caras.length?'quite as dívidas caras ('+caras.map(d=>esc(d.n)).join(', ')+')':''}. Nenhum investimento rende de forma garantida mais do que os juros dessas dívidas custam.</div>`;
+  h+=`<div class="card"><div class="row" style="flex-wrap:nowrap;gap:14px"><span style="font-size:42px">${P.ic}</span><div><div class="muted" style="font-size:12px">Seu perfil de investidor · ${p.pts}/21 pontos · ${fmtDate(p.data.slice(0,10))}</div><h2 style="margin:2px 0 4px">${P.n}</h2><div class="muted" style="font-size:13px">${P.d}</div></div></div>
+   <button class="btn sm" data-act="quizRefazer" style="margin-top:10px">Refazer questionário</button></div>
+  <div class="card"><h3>Carteira de referência — ${P.n}</h3><div class="sub">Distribuição para o dinheiro de longo prazo, <b>fora</b> da reserva de emergência. É ponto de partida educativo, não recomendação.</div>
+   <div class="chart-box sm"><canvas id="chModelo"></canvas></div>
+   ${Object.entries(P.alv).map(([k,v])=>`<div class="stat-line"><span><span class="dot" style="background:${CLASSES[k][1]}"></span> ${CLASSES[k][0]}</span><b>${v}%</b></div>`).join('')}</div>
+  <div class="card"><h3>Os 3 perfis</h3>${Object.entries(PERFIS).map(([k,x])=>`<div class="alert ${k===p.tipo?'ok':''}"><b>${x.ic} ${x.n}</b> — ${x.d}<br><span class="muted" style="font-size:12px">${Object.entries(x.alv).map(([c,v])=>CLASSES[c][0]+' '+v+'%').join(' · ')}</span></div>`).join('')}</div>`;
+  const G=state.goals.filter(g=>g.prazo&&g.kind!=='fundo');
+  h+=`<div class="card"><h3>🎯 Seus objetivos por prazo</h3><div class="sub">O prazo de cada objetivo decide onde investir — mais até que o perfil.</div>
+   ${G.length?G.map(g=>{const m=Math.max(1,mDiff(todayYM(),g.prazo)),[k,l]=horizonte(m);return`<div class="item-card" style="margin:8px 0"><div class="row" style="justify-content:space-between"><b>${esc(g.nome)}</b><span class="pill">${l}</span></div><div class="muted" style="font-size:12px;margin:4px 0">${m} mês(es) · faltam ${brl(Math.max(0,g.alvo-g.guardado))} · ${brl(goalMonthly(g))}/mês</div><div style="font-size:13px">${PRAZO_TXT[k]}</div></div>`}).join(''):'<div class="empty">Cadastre metas com prazo em Metas & Reservas.</div>'}
+   ${Object.entries(PRAZO_TXT).map(([k,t])=>`<div class="stat-line" style="display:block"><b>${({curto:'⏱ Curto (até 2 anos)',medio:'📅 Médio (2–5 anos)',longo:'🌳 Longo (5+ anos)'})[k]}:</b> <span class="muted">${t}</span></div>`).join('')}</div>`;
+  setTimeout(()=>mkChart('chModelo',{type:'doughnut',_pct:true,data:{labels:Object.keys(P.alv).map(k=>CLASSES[k][0]),datasets:[{data:Object.values(P.alv),backgroundColor:Object.keys(P.alv).map(k=>CLASSES[k][1]),borderWidth:0}]},options:{cutout:'62%',plugins:{legend:{display:false}}}}));
+  return h;
+}
+function vCarteira(){
+  const L=state.investimentos,p=invPerfil(),tot=carteiraTotal(),apl=sum(L,x=>+x.aplicado||0);
+  if(!L.length)return`<div class="card welcome"><h2>💼 Minha carteira</h2><p class="muted">Registre seus investimentos (onde, quanto, vencimento) e o app acompanha a distribuição, o limite do FGC por banco, os vencimentos e o rebalanceamento conforme o seu perfil.</p><button class="btn primary" data-act="invAdd">+ Adicionar investimento</button></div>`;
+  const porCl={};L.forEach(x=>{const c=(INVS.find(i=>i.id===x.tipo)||{}).cl||'outros';porCl[c]=(porCl[c]||0)+(+x.atual||+x.aplicado||0)});
+  const fgc={};L.forEach(x=>{const t=INVS.find(i=>i.id===x.tipo);if(t&&t.fgc&&x.inst){const k=norm(x.inst);fgc[k]=fgc[k]||{n:x.inst,v:0};fgc[k].v+=+x.atual||+x.aplicado||0}});
+  const fgcAl=Object.values(fgc).filter(f=>f.v>200000);
+  const venc=L.filter(x=>x.venc&&x.venc>=todayISO()&&dDiff(todayISO(),x.venc)<=90).sort((a,b)=>a.venc.localeCompare(b.venc));
+  const velho=L.filter(x=>!x.atualizado||dDiff(x.atualizado.slice(0,10),todayISO())>35);
+  let h=`<div class="grid g4">${kpi('Patrimônio investido',brl(tot),L.length+' investimento(s)')}${kpi('Total aplicado',brl(apl),'')}${kpi('Resultado',signBrl(tot-apl),apl?signPct((tot-apl)/apl*100):'—',null,tot>=apl?'pos':'neg')}${kpi('Perfil',p?PERFIS[p.tipo].ic+' '+PERFIS[p.tipo].n:'—',p?'':'<a data-act="invTab" data-id="perfil" style="cursor:pointer;color:var(--accent)">definir perfil</a>')}</div>`;
+  if(velho.length)h+=`<div class="alert warn">🗓 <b>Check-up mensal:</b> ${velho.length} investimento(s) sem valor atualizado há mais de 35 dias. Abra o app do banco/corretora e toque em "Atualizar valor".</div>`;
+  fgcAl.forEach(f=>h+=`<div class="alert ${f.v>250000?'bad':'warn'}">🏦 <b>FGC:</b> ${brl(f.v)} em <b>${esc(f.n)}</b>. O FGC cobre até R$ 250 mil por CPF por conglomerado (contando os juros). ${f.v>250000?'Uma parte está descoberta — distribua em outra instituição.':'Você está perto do limite.'}</div>`);
+  venc.forEach(x=>h+=`<div class="alert">⏰ <b>${esc(x.nome)}</b> vence em ${fmtDate(x.venc)} (${dDiff(todayISO(),x.venc)} dias). Planeje para onde vai o dinheiro.</div>`);
+  h+=`<div class="card"><div class="card-head"><div><h3>Distribuição</h3><div class="sub">${p?'Atual × referência do perfil '+PERFIS[p.tipo].n:'Defina o perfil para comparar com uma referência'}</div></div></div><div class="chart-box sm"><canvas id="chCart"></canvas></div>
+   ${Object.keys(CLASSES).filter(k=>porCl[k]||(p&&PERFIS[p.tipo].alv[k])).map(k=>{const a=tot?(porCl[k]||0)/tot*100:0,al=p?PERFIS[p.tipo].alv[k]||0:null,d=al==null?0:a-al;return`<div style="margin:9px 0"><div class="stat-line"><span><span class="dot" style="background:${CLASSES[k][1]}"></span> ${CLASSES[k][0]}</span><b>${pctf(a,0)}${al!=null?` <span class="muted">/ ${al}%</span>`:''}</b></div>${bar(a)}${al!=null&&Math.abs(d)>=5?`<div class="${d>0?'wrn':'muted'}" style="font-size:12px;margin-top:3px">${d>0?'Acima da referência — direcione os próximos aportes para outras classes':'Abaixo da referência — bom destino para os próximos aportes'} (${signPct(d)} p.p.)</div>`:''}</div>`}).join('')}
+   <div class="muted" style="font-size:12px">💡 Rebalanceie aportando no que está abaixo, em vez de vender o que está acima (evita IR e custos). A reserva de emergência entra em "Reserva / pós-fixados".</div></div>
+  <div class="card"><div class="card-head"><h3>Investimentos</h3><button class="btn sm primary" data-act="invAdd">+ Adicionar</button></div><div class="mlist">
+   ${L.map(x=>{const t=INVS.find(i=>i.id===x.tipo)||{n:'Outro',ic:'💠',cl:'outros'},at=+x.atual||+x.aplicado||0,ren=+x.aplicado?(at-x.aplicado)/x.aplicado*100:0;return`<div class="mrow" data-act="invEdit" data-id="${x.id}"><div class="ic" style="background:${CLASSES[t.cl][1]}22;color:${CLASSES[t.cl][1]}">${t.ic}</div><div class="tx"><b>${esc(x.nome)}</b><small>${t.n}${x.inst?' · '+esc(x.inst):''}${x.venc?' · vence '+fmtDate(x.venc)+'/'+x.venc.slice(2,4):''}</small></div><div class="vl" style="text-align:right">${brl(at)}<div class="${ren>=0?'pos':'neg'}" style="font-size:11px;font-weight:600">${signPct(ren)}</div></div></div>`}).join('')}</div></div>`;
+  setTimeout(()=>{const ks=Object.keys(porCl);mkChart('chCart',{type:'doughnut',data:{labels:ks.map(k=>CLASSES[k][0]),datasets:[{data:ks.map(k=>porCl[k]),backgroundColor:ks.map(k=>CLASSES[k][1]),borderWidth:0}]},options:{cutout:'62%',plugins:{legend:{position:'bottom',labels:{boxWidth:8}}}}})});
+  return h;
+}
+function invForm(x){
+  const isNew=!x;x=x||{tipo:'tselic',data:todayISO(),liq:'Diária'};
+  openForm({title:isNew?'Adicionar investimento':'Editar investimento',fields:[
+    {name:'nome',label:'Nome',value:x.nome,required:true,full:true,placeholder:'Ex.: Tesouro Selic 2029 — reserva'},
+    {name:'tipo',label:'Tipo',type:'select',options:INVS.filter(i=>i.g!=='nao').map(i=>[i.id,i.n]).concat([['outro','Outro']]),value:x.tipo},
+    {name:'inst',label:'Banco / corretora',value:x.inst,placeholder:'Ex.: Nubank, XP, Inter'},
+    {name:'aplicado',label:'Valor aplicado (R$)',type:'number',step:'0.01',min:0,value:x.aplicado,required:true},
+    {name:'atual',label:'Valor atual (R$)',type:'number',step:'0.01',min:0,value:x.atual??x.aplicado},
+    {name:'data',label:'Data da aplicação',type:'date',value:x.data},
+    {name:'venc',label:'Vencimento (se tiver)',type:'date',value:x.venc},
+    {name:'liq',label:'Liquidez',type:'select',options:['Diária','D+1 a D+30','Só no vencimento','Carência','Bolsa (D+2)'],value:x.liq},
+    {name:'obs',label:'Objetivo / observação',value:x.obs,full:true,placeholder:'Ex.: reserva de emergência'}
+  ],extra:isNew?'':`<button type="button" class="btn danger" data-act="invDel" data-id="${x.id}">🗑</button>`,
+  onSave:d=>{if(!d.atual)d.atual=d.aplicado;d.atualizado=new Date().toISOString();if(isNew)state.investimentos.push({id:uid(),hist:[{d:todayISO(),v:d.atual}],...d});else{if(+d.atual!==+x.atual){x.hist=x.hist||[];x.hist.push({d:todayISO(),v:d.atual})}Object.assign(x,d)}toast('Investimento salvo')}});
+}
+function vSim(){
+  const I=inv(),T=I.taxas,s=ui.sim||(ui.sim={ini:carteiraTotal()||1000,ap:500,taxa:+(T.selic*0.85).toFixed(2),anos:10}),pf=state.profile||{},A=Object.assign({idade:+pf.idade||30,idadeA:60,renda:Math.round((incomeTotal(curMonth)||5000)*0.7/100)*100,real:4.5,atual:carteiraTotal()},I.apos,ui.apos||{});ui.apos=A;
+  const ms=Math.round(s.anos*12),serie=fv(+s.ini,+s.ap,+s.taxa,ms),final=serie[ms],aport=+s.ini+(+s.ap)*ms,infl=+T.ipca,real=final/Math.pow(1+infl/100,s.anos);
+  const anosA=Math.max(1,A.idadeA-A.idade),alvo=A.renda*12/0.04,apNec=pmt(alvo,+A.atual,+A.real,anosA*12),serieA=fv(+A.atual,apNec,+A.real,anosA*12);
+  const inp=(grp,k,l,v,step)=>`<label style="display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--muted);font-weight:600">${l}<input type="text" inputmode="decimal" data-sim="${grp}.${k}" value="${String(v).replace('.',',')}"></label>`;
+  setTimeout(()=>{
+    const lab=[];const dJ=[],dA=[];for(let k=0;k<=ms;k+=Math.max(1,Math.round(ms/24))){lab.push(k%12===0?(k/12)+'a':'');dJ.push(serie[k]);dA.push(+s.ini+(+s.ap)*k)}
+    mkChart('chSimJ',{type:'line',data:{labels:lab,datasets:[{label:'Patrimônio',data:dJ,borderColor:cssVar('--accent'),backgroundColor:cssVar('--accent')+'22',fill:true,tension:.3,pointRadius:0},{label:'Só o que você aportou',data:dA,borderColor:cssVar('--muted'),borderDash:[5,4],pointRadius:0}]},options:{interaction:{mode:'index',intersect:false},scales:{y:moneyAxis,x:{grid:{display:false}}}}});
+    const la=[],da=[];for(let k=0;k<=anosA*12;k+=12){la.push(String(A.idade+k/12));da.push(serieA[k])}
+    mkChart('chSimA',{type:'bar',data:{labels:la,datasets:[{label:'Patrimônio (em R$ de hoje)',data:da,backgroundColor:cssVar('--savings'),borderRadius:4}]},options:{plugins:{legend:{display:false}},scales:{y:moneyAxis,x:{grid:{display:false},ticks:{maxTicksLimit:8}}}}});
+  });
+  return`<div class="card"><h3>📊 Taxas de referência</h3><div class="sub">Usadas nas simulações. Selic de ${num(T.selic,2)}% a.a. (ref. ${esc(T.ref)}) — atualize quando o Copom mudar.</div><div class="grid g2">${inp('tx','selic','Selic (% a.a.)',T.selic)}${inp('tx','ipca','Inflação esperada — IPCA (% a.a.)',T.ipca)}</div></div>
+  <div class="card"><h3>🌱 Juros compostos</h3><div class="sub">Quanto o dinheiro vira com aportes todo mês</div>
+   <div class="grid g4">${inp('s','ini','Valor inicial (R$)',s.ini)}${inp('s','ap','Aporte mensal (R$)',s.ap)}${inp('s','taxa','Rentabilidade líquida (% a.a.)',s.taxa)}${inp('s','anos','Prazo (anos)',s.anos)}</div>
+   <div class="grid g3" style="margin-top:10px">${kpi('Valor final',brl(final),'em '+s.anos+' ano(s)',null,'pos')}${kpi('Você aportou',brl(aport),'')}${kpi('Juros trabalharam',brl(final-aport),pctf(aport?(final-aport)/aport*100:0,0)+' a mais')}</div>
+   <div class="muted" style="font-size:12px;margin:6px 0">Em poder de compra de hoje (descontando ${num(infl,1)}% de inflação ao ano): <b>${brl(real)}</b>.</div>
+   <div class="chart-box"><canvas id="chSimJ"></canvas></div></div>
+  <div class="card"><h3>🏖 Aposentadoria / independência financeira</h3><div class="sub">Tudo em reais de hoje. A taxa é <b>real</b> (acima da inflação). Regra dos 4%: retirar 4% ao ano tende a preservar o patrimônio.</div>
+   <div class="grid g3">${inp('a','idade','Sua idade',A.idade)}${inp('a','idadeA','Idade para se aposentar',A.idadeA)}${inp('a','renda','Renda mensal desejada (R$ de hoje)',A.renda)}${inp('a','atual','Já tem investido (R$)',A.atual)}${inp('a','real','Rentabilidade real (% a.a.)',A.real)}</div>
+   <div class="grid g3" style="margin-top:10px">${kpi('Patrimônio necessário',brl(alvo),'= renda × 300 (regra dos 4%)')}${kpi('Aporte mensal necessário',brl(apNec),'por '+anosA+' ano(s)',null,'pos')}${kpi('% da sua renda atual',incomeTotal(curMonth)?pctf(apNec/incomeTotal(curMonth)*100,0):'—','')}</div>
+   <div class="alert">🧠 ${apNec>incomeTotal(curMonth)*0.3?'O aporte está alto para a renda atual: aumente o prazo, reduza a renda desejada ou comece com o que der e aumente a cada reajuste. Começar cedo vale mais que aportar muito.':'Viável! Automatize esse aporte no dia do salário. Bons veículos de longo prazo: Tesouro IPCA+ / RendA+, previdência com taxas baixas e, conforme o perfil, ações/ETFs.'} O INSS entra como complemento, se você contribui.</div>
+   <div class="chart-box"><canvas id="chSimA"></canvas></div>
+   <button class="btn primary" data-act="aposSalvar" style="margin-top:8px">${I.apos.salvo?'Atualizar meu plano':'Salvar como meu plano'}</button></div>`;
+}
+function vSeg(){
+  const golpes=[['📈','Retorno garantido alto','"1% ao dia", "dobra em 3 meses", "sem risco". Nenhum investimento real garante isso. Retorno alto sempre vem com risco alto.'],
+   ['🔺','Pirâmide e "indique amigos"','Se o ganho depende de trazer novas pessoas, é pirâmide — crime contra a economia popular. Quem entra por último perde tudo.'],
+   ['🤖','Robôs, sinais e "trader de sucesso"','Robôs que "não perdem", grupos de sinais pagos e mentores ostentando: a renda deles vem de quem paga o curso, não do mercado.'],
+   ['💸','Pix para pessoa física para "investir"','Instituição séria nunca pede depósito na conta de uma pessoa. Invista só pela sua conta em banco/corretora autorizada.'],
+   ['📞','Falsa central, falso gerente','Banco não liga pedindo senha, código, token ou para "regularizar" a conta. Desligue e ligue você no número oficial.'],
+   ['🪙','Cripto com rendimento fixo','"Staking garantido", "arbitragem automática", plataforma desconhecida: frequentemente golpe. Sacar costuma ser impossível.'],
+   ['🎁','Pressa e exclusividade','"Só hoje", "vagas limitadas", "não conte para ninguém". Pressão para decidir rápido é tática de golpe.']];
+  const check=[['Instituição autorizada','Confira se banco/corretora é autorizada pelo Banco Central (bcb.gov.br) e, para valores mobiliários, pela CVM (gov.br/cvm).'],
+   ['Profissional certificado','Assessor, consultor ou analista precisa de registro (CVM / ANCORD / Apimec). Peça o número e confira.'],
+   ['Entendo o produto','Se não consegue explicar em 2 frases como ele rende e como pode perder, não invista.'],
+   ['Sei o risco de crédito','Quem me deve? Governo (Tesouro), banco com FGC, ou empresa sem garantia (CRI, CRA, debêntures)?'],
+   ['Respeito o FGC','No máximo R$ 250 mil por CPF por conglomerado, contando os juros (e teto de R$ 1 milhão a cada 4 anos).'],
+   ['Conheço os custos','Taxa de administração, performance, carregamento, custódia, corretagem e IR — custos pequenos viram fortunas em 20 anos.'],
+   ['Liquidez combina com o objetivo','Reserva em produto com resgate no mesmo dia. Nunca prenda a reserva em LCI/LCA com carência ou em renda variável.'],
+   ['Diversifiquei','Nada de colocar tudo num só produto, banco ou ação. Diversificar é o único "almoço grátis".'],
+   ['Sem alavancagem','Opções, day trade alavancado e derivativos podem gerar perdas maiores que o valor investido.'],
+   ['Proteção da conta','Senha forte, autenticação em dois fatores e alertas de movimentação ativados no app.'],
+   ['Declaro no IR','Todos os investimentos vão para a declaração anual, mesmo os isentos.']];
+  const I=inv(),C=I.check||{};
+  return`<div class="card"><h3>🚨 Sinais de golpe</h3><div class="sub">Se aparecer qualquer um destes, pare.</div>${golpes.map(([i,t,d])=>`<div class="alert bad"><b>${i} ${t}</b><br>${d}</div>`).join('')}</div>
+  <div class="card"><h3>✅ Checklist antes de investir</h3><div class="sub">Toque para marcar — ${Object.values(C).filter(Boolean).length} de ${check.length}</div>
+   ${check.map(([t,d],i)=>`<div class="mrow" data-act="segCheck" data-id="${i}"><div class="ic" style="background:${C[i]?'color-mix(in srgb,var(--ok) 22%,transparent)':'var(--panel2)'}">${C[i]?'✔':i+1}</div><div class="tx" style="white-space:normal"><b>${t}</b><small style="white-space:normal">${d}</small></div></div>`).join('')}</div>
+  <div class="card"><h3>🧭 Os 10 mandamentos do especialista</h3><ol style="margin:0;padding-left:20px;line-height:1.6">
+   <li>Gaste menos do que ganha — sempre. Investimento nenhum salva quem gasta mais.</li><li>Reserva antes de investimento; dívida cara antes de tudo.</li><li>Todo dinheiro tem um objetivo e um prazo.</li><li>O prazo escolhe o produto; o perfil escolhe as proporções.</li><li>Comece simples e aumente a complexidade com o conhecimento.</li><li>Aporte todo mês: constância vence o "momento certo".</li><li>Diversifique entre classes, instituições e países.</li><li>Fuja das taxas altas e dos produtos que você não entende.</li><li>Revise uma vez por mês, rebalanceie uma ou duas vezes por ano — sem pânico nas quedas.</li><li>Aumente a poupança a cada aumento de renda.</li></ol></div>`;
+}
+
+
+/* ---------- Renda & Orçamento: abas Poupança, Investimentos e Reserva ---------- */
+const ehReserva=g=>/emerg|reserva/i.test(g.nome)&&g.kind!=='fundo';
+function budPoupanca(){
+  const bs=bucketSummary(curMonth),inc=incomeTotal(curMonth),G=state.goals.filter(g=>g.kind!=='fundo'&&!ehReserva(g)),F=state.goals.filter(g=>g.kind==='fundo');
+  const sav=actualEntries(curMonth).filter(e=>e.tipo==='savings');
+  let h=`<div class="card"><h3>🐷 Poupança de ${mLabel(curMonth,true)}</h3><div class="sub">Tudo o que você separou no mês (categorias de Savings)</div>
+   <div class="stat-line"><span>Guardado no mês</span><b class="pos">${brl(bs.savings.real)}</b></div><div class="stat-line"><span>Meta do mês (${bs.savings.pct}% da renda)</span><b>${brl(bs.savings.target)}</b></div>
+   <div class="stat-line"><span>Taxa de poupança</span><b>${inc?pctf(bs.savings.real/inc*100):'—'}</b></div>${bar(bs.savings.target?bs.savings.real/bs.savings.target*100:0,bs.savings.real>=bs.savings.target?'ok':'warn')}
+   ${sav.length?`<div class="mlist" style="margin-top:8px">${sav.sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8).map(expRow).join('')}</div>`:'<div class="muted" style="margin-top:8px;font-size:13px">Nenhum aporte lançado neste mês. Use o + e escolha uma categoria de Savings.</div>'}</div>`;
+  h+=`<div class="card"><div class="card-head"><div><h3>🎯 Metas</h3><div class="sub">Objetivos com valor e prazo</div></div><button class="btn sm" data-act="nav" data-id="goals">Gerenciar</button></div>
+   ${G.length?G.map(g=>`<div style="margin:12px 0"><div class="stat-line"><span>${esc(g.nome)}${g.prazo?` <span class="muted" style="font-size:12px">até ${mLabel(g.prazo)}</span>`:''}</span><b>${brl(g.guardado)} / ${brl(g.alvo)}</b></div>${bar(g.alvo?g.guardado/g.alvo*100:0)}
+     <div class="row" style="justify-content:space-between;margin-top:4px"><span class="muted" style="font-size:12px">${g.prazo?'Guardar '+brl(goalMonthly(g))+'/mês':'Sem prazo'}</span><button class="btn sm" data-act="contribGoal" data-id="${g.id}">+ Aporte</button></div></div>`).join(''):'<div class="empty">Nenhuma meta. Crie em Metas & Poupança.</div>'}</div>`;
+  if(F.length)h+=`<div class="card"><h3>🔧 Reservas com destino</h3><div class="sub">Dinheiro separado para gastos previsíveis (carro, IPVA, presentes…)</div>
+   ${F.map(g=>{const c=fundCalc(g);return`<div class="stat-line"><span>${esc(g.nome)}</span><b>${brl(c.saldo)} · guardar ${brl(c.recomendado)}/mês</b></div>`}).join('')}</div>`;
+  return h;
+}
+function budInvest(){
+  const L=state.investimentos||[],tot=carteiraTotal(),apl=sum(L,x=>+x.aplicado||0),p=invPerfil();
+  const ap=actualEntries(curMonth).filter(e=>e.tipo==='savings'&&/invest|a[cç][aã]o|a[cç]oes|tesouro|cdb|fii|etf|cripto|previd/i.test(e.cat+' '+e.desc));
+  return`<div class="grid g4">${kpi('Patrimônio investido',brl(tot),L.length+' investimento(s)')}${kpi('Resultado',signBrl(tot-apl),apl?signPct((tot-apl)/apl*100):'—',null,tot>=apl?'pos':'neg')}${kpi('Aportado no mês',brl(sum(ap,e=>e.valor)),'categorias de investimento')}${kpi('Perfil',p?PERFIS[p.tipo].ic+' '+PERFIS[p.tipo].n:'—','')}</div>
+  <div class="card"><div class="card-head"><div><h3>📈 Investimentos</h3><div class="sub">Resumo da sua carteira</div></div><button class="btn sm primary" data-act="invTab" data-id="carteira">Abrir carteira</button></div>
+   ${L.length?`<div class="mlist">${L.map(x=>{const t=INVS.find(i=>i.id===x.tipo)||{n:'Outro',ic:'💠',cl:'outros'},at=+x.atual||+x.aplicado||0;return`<div class="mrow" data-act="invEdit" data-id="${x.id}"><div class="ic" style="background:${CLASSES[t.cl][1]}22">${t.ic}</div><div class="tx"><b>${esc(x.nome)}</b><small>${t.n}${x.inst?' · '+esc(x.inst):''}</small></div><div class="vl">${brl(at)}</div></div>`}).join('')}</div>`:'<div class="empty">Nenhum investimento registrado ainda.<br><br><button class="btn primary" data-act="invAdd">+ Adicionar investimento</button></div>'}
+   <div class="row" style="margin-top:10px"><button class="btn sm" data-act="invTab" data-id="perfil">Meu perfil de investidor</button><button class="btn sm" data-act="invTab" data-id="guia">Guia de investimentos</button><button class="btn sm" data-act="invTab" data-id="sim">Simuladores</button></div></div>
+  <div class="muted" style="font-size:12px;padding:0 4px">Para o aporte aparecer em "Aportado no mês", lance-o com uma categoria de Savings que tenha "Investimento" (ou Tesouro, CDB, FII, ETF…) no nome.</div>`;
+}
+function budReserva(){return`<div class="card"><h3>🛟 Reserva de emergência</h3><div class="sub">O colchão que impede que um imprevisto vire dívida</div>${stReserva()}
+  <div class="row" style="margin-top:10px">${state.goals.some(ehReserva)?state.goals.filter(ehReserva).map(g=>`<button class="btn sm primary" data-act="contribGoal" data-id="${g.id}">+ Aporte em ${esc(g.nome)}</button>`).join(''):'<button class="btn sm primary" data-act="criarReserva">Criar meta "Reserva de emergência"</button>'}<button class="btn sm" data-act="invTab" data-id="prog">Ver no programa</button></div></div>`}
+
+/* ---------- Saldo em conta (estimado) e resumo "Seu dinheiro hoje" ---------- */
+const PAY_CONTA=['Pix','Débito','Boleto','Transferência','Débito automático'];
+const BANCOS=[['Nubank','#8a05be'],['Itaú','#ec7000'],['Bradesco','#cc092f'],['Santander','#ec0000'],['Banco do Brasil','#f2c500'],['Caixa','#005ca9'],['Inter','#ff7a00'],['C6 Bank','#3a3a3a'],['PicPay','#21c25e'],['Mercado Pago','#00b1ea'],['PagBank','#1bb99a'],['Neon','#00a5e1'],['Next','#00e38c'],['BTG','#0b2a5b'],['XP','#2d2d2d'],['Sicoob','#00a091'],['Sicredi','#3fa110'],['Outro','#8a97aa']];
+const TIPOS_CONTA=[['corrente','Conta corrente'],['poupanca','Poupança'],['digital','Conta digital / pagamento'],['carteira','Dinheiro em espécie']];
+const corBanco=b=>(BANCOS.find(x=>norm(x[0])===norm(b||''))||[0,'#8a97aa'])[1];
+const tipoContaLbl=t=>(TIPOS_CONTA.find(x=>x[0]===t)||[0,'Conta'])[1];
+function contaPrincipal(){const C=state.contas||[];return C.find(c=>c.principal)||C.find(c=>c.auto)||null}
+const contaDe=x=>x&&x.contaId&&find(state.contas||[],x.contaId)?x.contaId:(contaPrincipal()||{}).id;
+function contaSaldo(c){
+  const _tr=(()=>{const d0=(c.data||todayISO()).slice(0,10),ts0=Date.parse(c.data)||0,hoje=todayISO();return sum((state.transfers||[]).filter(t=>t.date<=hoje&&(t.date>d0||(t.date===d0&&(t.criado||0)>ts0))),t=>(t.para===c.id?+t.valor:0)-(t.de===c.id?+t.valor:0))})();
+  if(!c.auto)return{v:(+c.saldo||0)+_tr,ent:0,sai:0,fat:0};
+  const d0=(c.data||todayISO()).slice(0,10),ts0=Date.parse(c.data)||0,hoje=todayISO(),dentro=(d,x)=>d&&d<=hoje&&(d>d0||(d===d0&&x&&(x.criado||0)>ts0));
+  const minha=x=>contaDe(x)===c.id;
+  let ent=0;Object.values(state.months).forEach(m=>(m.income||[]).forEach(i=>{if(dentro(i.date,i)&&minha(i))ent+=+i.valor||0}));
+  const sai=sum(state.expenses.filter(e=>dentro(e.date,e)&&minha(e)&&(PAY_CONTA.includes(e.pay)||(e.contaId&&e.pay==='Dinheiro'))&&!e.benefitId&&!e.fundId),e=>+e.valor||0);
+  let fat=0;state.cards.filter(cc=>contaDe(cc)===c.id).forEach(cc=>{for(let ym=d0.slice(0,7);ym<=hoje.slice(0,7);ym=addM(ym,1)){if(dentro(isoOf(ym,+cc.vencimento||10)))fat+=Math.max(0,cardFatura(cc.id,ym)-pagoFatura(cc.id,ym))}});
+  fat+=sum((state.cardPayments||[]).filter(p=>(p.contaId||contaDe(find(state.cards,p.cardId)||{}))===c.id&&dentro(p.date,p)),p=>+p.valor);
+  return{v:(+c.saldo||0)+ent-sai-fat+_tr,ent,sai,fat};
+}
+function proxFatura(c){const hoje=todayISO();let ym=todayYM();if(isoOf(ym,+c.vencimento||10)<hoje)ym=addM(ym,1);return{ym,venc:isoOf(ym,+c.vencimento||10),v:cardFatura(c.id,ym),aberto:cardUsed(c.id,ym)}}
+function vDinheiroHoje(){
+  state.contas=state.contas||[];const C=state.contas,ref=benRef();
+  const contas=C.map(c=>({c,s:contaSaldo(c)})),totC=sum(contas,x=>x.s.v);
+  const vales=state.benefits.map(b=>({b,v:benBalance(b,ref)})),cards=state.cards.map(c=>({c,...proxFatura(c)}));
+  const totFat=sum(cards,x=>x.v),totAb=sum(cards,x=>x.aberto);
+  let h=`<div class="card money"><div class="card-head"><div><h3>💼 Seu dinheiro hoje</h3></div><div class="row"><button class="btn sm" data-act="nav" data-id="contas">Contas</button><button class="btn sm" data-act="editConta">${C.length?'+ Conta':'Informar saldo'}</button></div></div>`;
+  if(C.length>1)h+=`<div class="stat-line" style="margin-bottom:4px"><span>Total em ${C.length} contas</span><b class="${totC<0?'neg':'pos'}" style="font-size:17px">${brl(totC)}</b></div>`;
+  const mostrar=contas.length>4?[...contas].sort((a,b)=>(b.c.principal?1e12:0)+b.s.v-((a.c.principal?1e12:0)+a.s.v)).slice(0,3):contas;
+  h+=C.length?mostrar.map(({c,s})=>`<div class="mrow" data-act="editConta" data-id="${c.id}"><div class="ic" style="background:${c.cor||corBanco(c.banco)}26;color:${c.cor||corBanco(c.banco)};font-size:13px;font-weight:800">${esc((c.banco||c.nome||'?').slice(0,2))}</div><div class="tx"><b>${esc(c.nome)}${c.principal?' ⭐':''}</b><small>${tipoContaLbl(c.tipo)} · ${c.auto?'estimado, ':''}conferido em ${fmtDate((c.data||'').slice(0,10))}${c.auto&&(s.ent||s.sai||s.fat)?` · ${s.ent?'+'+brl(s.ent)+' ':''}${s.sai||s.fat?'−'+brl(s.sai+s.fat):''}`:''}</small></div><div class="vl ${s.v<0?'neg':''}">${brl(s.v)}</div></div>`).join('')
+    +(contas.length>mostrar.length?`<div class="mrow" data-act="nav" data-id="contas"><div class="ic" style="background:var(--panel2)">＋</div><div class="tx"><b>Mais ${contas.length-mostrar.length} conta(s)</b><small>${brl(sum(contas.filter(x=>!mostrar.includes(x)),x=>x.s.v))} · ver todas</small></div><div class="vl">›</div></div>`:'')
+    :`<div class="mrow" data-act="editConta"><div class="ic" style="background:var(--panel2)">🏦</div><div class="tx"><b>Saldo em conta</b><small>Toque para informar o saldo do banco</small></div><div class="vl">—</div></div>`;
+  h+=vales.map(({b,v})=>{const nx=benNext(b,ref);return`<div class="mrow" data-act="nav" data-id="vale"><div class="ic" style="background:${(b.cor||'#22c58b')}22">🧺</div><div class="tx"><b>${esc(b.nome)}</b><small>Recarga em ${fmtDate(nx)} · ${brl(Math.max(0,v)/Math.max(1,dDiff(ref,nx)))}/dia</small></div><div class="vl ${v<0?'neg':''}">${brl(v)}</div></div>`}).join('');
+  const totLim=sum(cards,x=>+x.c.limite||0),totLivre=sum(cards,x=>Math.max(0,(+x.c.limite||0)-x.aberto));
+  if(cards.length)h+=`<div class="stat-line" style="margin:12px 0 2px"><span>💳 Limite disponível nos cartões</span><b class="pos" style="font-size:17px">${brl(totLivre)}</b></div>`;
+  h+=cards.map(x=>{const lim=+x.c.limite||0,lv=Math.max(0,lim-x.aberto),uso=lim?x.aberto/lim*100:0;return`<div class="mrow" data-act="editCard" data-id="${x.c.id}" style="flex-wrap:wrap"><div class="ic" style="background:${(x.c.cor||'#ff7a7a')}22">💳</div><div class="tx"><b>${esc(x.c.nome)} <span class="muted" style="font-size:12px;font-weight:400">✎</span></b><small>Usado ${brl(x.aberto)} de ${brl(lim)} · fatura ${brl(x.v)} vence ${fmtDate(x.venc)}</small></div><div class="vl" style="text-align:right"><span class="${lv<=0?'neg':'pos'}">${brl(lv)}</span><div class="muted" style="font-size:11px;font-weight:600">livre</div></div><div style="flex:1 1 100%;padding-left:50px">${bar(uso,uso>=90?'bad':uso>=70?'warn':'ok')}</div></div>`}).join('');
+  if(C.length&&cards.length)h+=`<div class="stat-line" style="margin-top:8px"><span>Saldo em conta − próximas faturas</span><b class="${totC-totFat<0?'neg':'pos'}">${brl(totC-totFat)}</b></div>`;
+  if(cards.length>1)h+=`<div class="stat-line"><span>Dívida total nos cartões (com parcelas futuras)</span><b class="neg">${brl(totAb)}</b></div>`;
+  return h+'</div>';
+}
+function contaForm(c,preset){
+  state.contas=state.contas||[];const isNew=!c;c=c||Object.assign({banco:'Nubank',tipo:'corrente',auto:true,principal:!state.contas.length},preset);
+  const est=!isNew?contaSaldo(c).v:'';
+  openForm({title:isNew?'Nova conta':'Saldo — '+c.nome,onRender:f=>{const t=f.elements.tipo,a=f.elements.auto;t.addEventListener('change',()=>{a.checked=t.value==='corrente'||t.value==='digital'})},fields:[
+    {type:'html',html:`<p class="muted" style="margin:0">Confira o saldo no app do banco e digite aqui.${!isNew&&c.auto?` Estimativa atual: <b>${brl(est)}</b>.`:''}</p>`},
+    {name:'banco',label:'Banco',value:c.banco,list:BANCOS.map(b=>b[0]),required:true,placeholder:'Ex.: Nubank, Bradesco'},
+    {name:'tipo',label:'Tipo',type:'select',options:TIPOS_CONTA,value:c.tipo},
+    {name:'apelido',label:'Apelido (opcional)',value:c.apelido,placeholder:'Ex.: Conta salário'},
+    {name:'saldo',label:'Saldo agora (R$)',type:'number',step:'0.01',value:isNew?'':Math.round(est*100)/100,required:true},
+    {name:'auto',type:'checkbox',value:!!c.auto,label:'Atualizar sozinho com os lançamentos ligados a esta conta (gastos no Pix/débito/boleto, rendas e faturas pagas por ela)'},
+    {name:'principal',type:'checkbox',value:!!c.principal,label:'⭐ Conta principal — lançamentos sem conta escolhida caem aqui'}
+  ],extra:isNew?'':`<button type="button" class="btn danger" data-act="delConta" data-id="${c.id}">🗑</button>`,
+  onSave:d=>{const nome=(d.apelido||d.banco+' — '+tipoContaLbl(d.tipo).replace('Conta digital / pagamento','Conta').replace('Dinheiro em espécie','Dinheiro'));
+    const x={banco:d.banco,tipo:d.tipo,apelido:d.apelido,nome,saldo:d.saldo,auto:!!d.auto,principal:!!d.principal,cor:corBanco(d.banco),data:new Date().toISOString()};
+    if(x.principal)state.contas.forEach(o=>{if(o!==c)o.principal=false});
+    if(isNew)state.contas.push({id:uid(),...x});else Object.assign(c,x);
+    if(!state.contas.some(o=>o.principal)&&state.contas.length)(state.contas.find(o=>o.auto)||state.contas[0]).principal=true;toast('Conta salva')}});
+}
+function vContas(){
+  state.contas=state.contas||[];const C=state.contas.map(c=>({c,s:contaSaldo(c)})),tot=sum(C,x=>x.s.v);
+  const porTipo={};C.forEach(x=>porTipo[x.c.tipo||'corrente']=(porTipo[x.c.tipo||'corrente']||0)+x.s.v);
+  const porBanco={};C.forEach(x=>{const b=x.c.banco||'Outro';(porBanco[b]=porBanco[b]||[]).push(x)});
+  const cards=state.cards.map(c=>({c,...proxFatura(c)}));
+  let h=`<div class="grid g4">${kpi('Total em contas',brl(tot),C.length+' conta(s)',null,tot<0?'neg':'pos')}${TIPOS_CONTA.filter(([k])=>porTipo[k]!=null).map(([k,l])=>kpi(l,brl(porTipo[k]),'')).join('')}${cards.length?kpi('Faturas a vencer',brl(sum(cards,x=>x.v)),'total em aberto '+brl(sum(cards,x=>x.aberto)),null,'neg'):''}</div>`;
+  h+=`<div class="card"><div class="card-head"><div><h3>🏦 Contas e saldos</h3><div class="sub">Toque numa conta para conferir/atualizar o saldo</div></div><div class="row"><button class="btn sm" data-act="transferir">⇄ Transferir</button><button class="btn sm primary" data-act="editConta">+ Conta</button></div></div>`;
+  if(!C.length)h+=`<div class="empty">Cadastre suas contas — corrente, poupança, carteiras digitais — com o saldo de hoje.<br><br><div class="chips" style="justify-content:center">${BANCOS.slice(0,10).map(b=>`<button class="chip" data-act="contaBanco" data-id="${esc(b[0])}"><span class="dot" style="background:${b[1]}"></span>${b[0]}</button>`).join('')}</div></div>`;
+  else h+=Object.entries(porBanco).map(([b,L])=>`<div class="mday"><span><span class="dot" style="background:${corBanco(b)}"></span> ${esc(b)}</span><span>${brl(sum(L,x=>x.s.v))}</span></div>${L.map(({c,s})=>`<div class="mrow" data-act="editConta" data-id="${c.id}"><div class="ic" style="background:${c.cor||corBanco(b)}26;color:${c.cor||corBanco(b)}">${c.tipo==='poupanca'?'🐷':c.tipo==='carteira'?'💵':'🏦'}</div><div class="tx"><b>${esc(c.nome)}${c.principal?' ⭐':''}</b><small>${tipoContaLbl(c.tipo)} · ${c.auto?'estimado · ':''}conferido ${fmtDate((c.data||'').slice(0,10))}</small></div><div class="vl ${s.v<0?'neg':''}">${brl(s.v)}</div></div>`).join('')}`).join('');
+  const TR=[...(state.transfers||[])].sort((a,b)=>b.date.localeCompare(a.date)||(b.criado||0)-(a.criado||0)).slice(0,8),nm=id=>(find(state.contas,id)||{nome:'(conta removida)'}).nome;
+  h+='</div>';
+  {const inv=carteiraTotal(),bens=sum(state.debts,d=>+d.valorBem||0),div=totalDebt(todayYM()),pl=tot+inv+bens-div;
+   h+=`<div class="card"><h3>🏛 Patrimônio líquido</h3><div class="sub">Tudo o que você tem menos tudo o que deve</div><div class="stat-line"><span>Contas</span><b>${brl(tot)}</b></div><div class="stat-line"><span>Investimentos</span><b>${brl(inv)}</b></div>${bens?`<div class="stat-line"><span>Bens financiados (valor do bem)</span><b>${brl(bens)}</b></div>`:''}<div class="stat-line"><span>Dívidas e cartões</span><b class="neg">− ${brl(div)}</b></div><div class="stat-line" style="border-top:1px solid var(--border);margin-top:6px;padding-top:8px"><span><b>Patrimônio líquido</b></span><b class="${pl<0?'neg':'pos'}" style="font-size:18px">${brl(pl)}</b></div></div>`}
+  if(TR.length)h+=`<div class="card"><h3>⇄ Últimas transferências</h3><div class="mlist">${TR.map(t=>`<div class="mrow" style="cursor:default"><div class="tx"><b>${esc(nm(t.de))} → ${esc(nm(t.para))}</b><small>${fmtDate(t.date)}${t.desc?' · '+esc(t.desc):''}</small></div><div class="vl">${brl(t.valor)}</div><button class="icon-btn" data-act="delTransfer" data-id="${t.id}" title="Apagar">🗑</button></div>`).join('')}</div></div>`;
+  h+=`<div class="card"><div class="card-head"><div><h3>💳 Cartões de crédito</h3><div class="sub">Cadastre quantos quiser — cada um com limite, fechamento, vencimento e a conta que paga a fatura</div></div><button class="btn sm primary" data-act="addCard">+ Cartão</button></div>
+   ${cards.length?cards.map(x=>`<div class="mrow" data-act="editCard" data-id="${x.c.id}"><div class="ic" style="background:${x.c.cor||'#888'}26">💳</div><div class="tx"><b>${esc(x.c.nome)}</b><small>Fatura vence ${fmtDate(x.venc)} · em aberto ${brl(x.aberto)}${x.c.limite?' · livre '+brl(Math.max(0,x.c.limite-x.aberto)):''}${x.c.contaId&&find(state.contas,x.c.contaId)?' · paga pela '+esc(find(state.contas,x.c.contaId).nome):''}</small></div><div class="vl neg">${brl(x.v)}</div></div>`).join(''):'<div class="empty">Nenhum cartão cadastrado.</div>'}
+   <div class="row" style="margin-top:8px"><button class="btn sm" data-act="nav" data-id="cards">Abrir Cartões (compras e faturas)</button></div></div>
+  <div class="muted" style="font-size:12px;padding:0 4px">💡 Contas com "atualizar sozinho" mudam com o que você lança. Poupança e investimentos normalmente ficam no modo manual: atualize quando conferir no banco.</div>`;
+  return h;
+}
+
+/* ============================================================
+   VIEW: CONFIGURAÇÕES
+   ============================================================ */
+function vSaveCard(){
+  if(!FS_OK)return vSaveCardMobile();
+  const L=(ok,t,d)=>`<div class="item-card"><div class="row"><span class="badge ${ok?'ok':'warn'}">${ok?'Ativa':'Inativa'}</span><b>${t}</b></div><div class="muted" style="font-size:12px;margin-top:6px">${d}</div></div>`;
+  const c2=handle?`Gravando em <b>${esc(handle.name)}</b> 1,5 s após cada alteração${lastFileTime?' · última gravação às '+hora(lastFileTime):''} · revisão ${rev}${integridadeOk?' · SHA-256 ✔':' · <span class="neg">SHA-256 não conferiu na abertura</span>'}. Confere a cada 20 s se outro computador alterou o arquivo e junta as alterações.`
+    :pendingHandle?`O arquivo <b>${esc(pendingHandle.name)}</b> está vinculado, mas o navegador pediu permissão de novo. Clique em <b>Reconectar arquivo</b>.`
+    :FS_OK?'Nenhum arquivo conectado. Crie um novo ou abra o arquivo que você já usa em outro computador.':'Este navegador não suporta gravação automática em arquivo (use Chrome ou Edge).';
+  return`<div class="card"><div class="card-head"><div><h3>💾 Salvamento automático</h3><div class="sub">Três camadas de proteção dos seus dados</div></div>
+   <div class="row">${handle?`<button class="btn sm primary" data-act="saveNow">Salvar agora (Ctrl+S)</button><button class="btn sm" data-act="unlinkFile">Desconectar</button>`
+     :pendingHandle?`<button class="btn sm primary" data-act="reconnectFile">🔌 Reconectar arquivo</button><button class="btn sm" data-act="openFile">Abrir outro</button><button class="btn sm" data-act="unlinkFile">Desvincular</button>`
+     :FS_OK?`<button class="btn sm primary" data-act="linkFile">Criar novo arquivo</button><button class="btn sm" data-act="openFile">Abrir arquivo existente</button>`:''}</div></div>
+   <div class="grid g3">
+    ${L(true,'Camada 1 — Navegador',`A cada alteração grava no IndexedDB (principal) e no localStorage (enquanto o banco tiver menos de 4,5 MB). Ao abrir, usa a cópia mais recente.${lastBrowserSave?' Último salvamento: '+hora(lastBrowserSave)+'.':''}`)}
+    ${L(!!handle,'Camada 2 — Arquivo .json',c2)}
+    ${L(true,'Camada 3 — Redes de segurança',`Aviso ao fechar a página se houver alterações fora de um arquivo · Ctrl+S grava na hora${FS_OK?'':' · cópia automática na pasta Downloads a cada 10 min com alterações'} · assistente no primeiro acesso.`)}
+   </div>
+   <div class="muted" style="font-size:12px;margin-top:10px">Dica: salve o arquivo em <b>Downloads › Controle_Finanças</b> ou numa pasta sincronizada com Google Drive/OneDrive para ter cópia na nuvem.</div></div>`;
+}
+function vSaveCardMobile(){
+  const L=(ok,t,d)=>`<div class="item-card"><div class="row"><span class="badge ${ok?'ok':'warn'}">${ok?'OK':'Atenção'}</span><b>${t}</b></div><div class="muted" style="font-size:12px;margin-top:6px">${d}</div></div>`;
+  const ult=meta.exportAt?new Date(meta.exportAt).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):null;
+  return`<div class="card"><div class="card-head"><div><h3>💾 Salvamento no celular</h3><div class="sub">Onde seus dados ficam guardados</div></div></div>
+   <div class="grid g3">
+    ${L(true,'1 — Neste aparelho',`Cada alteração é gravada na hora no armazenamento do navegador (IndexedDB + localStorage) e de novo ao sair do app.${lastBrowserSave?' Último salvamento: '+hora(lastBrowserSave)+'.':''}`)}
+    ${L(persistido===true||standalone(),'2 — Proteção contra limpeza',persistido===true?'O navegador marcou os dados como <b>persistentes</b>: não serão apagados automaticamente para liberar espaço.':standalone()?'Aberto como app instalado — o sistema protege melhor os dados.':'Instale o app na tela inicial (menu do navegador › <b>Adicionar à tela inicial</b> / <b>Instalar app</b>). No iPhone isso evita que o Safari apague os dados após ~7 dias sem uso.')}
+    ${L(!backupDue(),'3 — Backup (.json)',(ult?'Último backup: <b>'+ult+'</b>.':'Nenhum backup feito neste celular ainda.')+' Toque em <b>Compartilhar backup</b> e escolha <b>Google Drive</b> (ou WhatsApp/e-mail para você mesmo). O app lembra você na tela Início quando passar 7 dias com alterações sem backup.')}
+   </div>
+   <div class="row" style="margin-top:12px"><button class="btn primary" data-act="shareBackup">📤 Compartilhar backup</button><button class="btn" data-act="export">⬇ Baixar .json</button>${installEvt?'<button class="btn" data-act="installApp">📲 Instalar app</button>':''}</div>
+   <div class="row" style="margin-top:10px"><button class="btn" data-act="forceUpdate">🔄 Atualizar o app</button><span class="muted" style="font-size:12px">Versão instalada: <b>${APP_VERSAO}</b>. Seus dados não são apagados.</span></div>
+   <div class="muted" style="font-size:12px;margin-top:10px">O arquivo tem o mesmo formato da versão do computador: dá para importar o backup do celular lá e vice-versa (Configurações › Importar backup).</div></div>`;
+}
+function vSettings(){
+  const p=state.settings.pct;
+  return`<div class="grid g2"><div class="card"><h3>Porcentagens padrão</h3><div class="sub">Usadas quando um mês novo é criado</div>
+   ${Object.entries(BUCKETS).map(([k,b])=>`<div class="pct-row" style="grid-template-columns:140px 1fr"><b><span class="dot" style="background:${b.color}"></span> ${b.label}</b><input type="number" min="0" max="100" step="0.5" value="${p[k]}" data-defpct="${k}"></div>`).join('')}
+   <div class="muted">Soma atual: ${num(sum(Object.values(p)),1)}%</div></div>
+  <div class="card"><h3>Backup e dados</h3><div class="sub">Cópias manuais e manutenção dos dados.</div>
+   <div class="row"><button class="btn primary" data-act="${FS_OK?'export':'shareBackup'}">${FS_OK?'⬇ Exportar backup (.json)':'📤 Compartilhar backup'}</button><button class="btn" data-act="import">⬆ Importar backup</button></div>
+   <div class="row" style="margin-top:12px"><button class="btn" data-act="sample">Carregar dados de exemplo</button><button class="btn danger" data-act="reset">Apagar tudo</button></div>
+   </div></div>
+  ${vSaveCard()}
+  <div class="card"><h3>Como usar</h3><div class="sub">Rotina sugerida</div><div class="grid g4">
+   <div class="alert"><div><b>1. Início do mês</b><br>Cadastre as rendas (salário + freelas), ajuste as % e distribua o valor em categorias. Use "Copiar do mês anterior".</div></div>
+   <div class="alert"><div><b>2. Diário</b><br>Lance cada gasto no botão <b>+</b> da barra de baixo: valor → categoria → pagamento → Salvar. Escolhendo um cartão 💳, a compra vai para a fatura certa (com parcelas).</div></div>
+   <div class="alert"><div><b>3. Semanal / quinzenal</b><br>Abra "Revisão do período" e veja ritmo de gasto, projeção e quanto pode gastar por dia.</div></div>
+   <div class="alert"><div><b>4. Fim do mês</b><br>Abra "Relatório do mês": nota, indicadores, desvios e dicas. Imprima ou salve em PDF.</div></div></div></div>`;
+}
+
+/* ============================================================
+   FORMULÁRIOS DE CADASTRO
+   ============================================================ */
+function expenseForm(e,preset){
+  const isNew=!e;e=e||Object.assign({date:curMonth===todayYM()?todayISO():isoOf(curMonth,1),tipo:'needs',pay:'Pix'},preset);
+  const livre=c=>Math.max(0,(+c.limite||0)-cardUsed(c.id,todayYM()));
+  const payOpts=PAY.map(x=>[x,x]).concat(state.cards.length?state.cards.map(c=>['card:'+c.id,'💳 Crédito — '+c.nome]):[['card:new','💳 Cartão de crédito (cadastrar…)']],state.benefits.map(b=>['ben:'+b.id,'🧺 '+b.nome]));const payVal=e.benefitId?'ben:'+e.benefitId:e.pay;
+  openForm({title:isNew?'Lançar gasto':'Editar gasto',fields:[
+    {name:'desc',label:'Descrição',value:e.desc,required:true,full:true,placeholder:'Ex.: Conta do celular'},
+    {name:'valor',label:'Valor (R$)',type:'number',step:'0.01',min:0,value:e.valor,required:true},
+    {name:'date',label:'Data',type:'date',value:e.date,required:true},
+    {name:'cat',label:'Categoria',value:e.cat,list:categoriesList(),required:true,placeholder:'Escolha ou digite'},
+    {name:'tipo',label:'Grupo',type:'select',options:tipoOpts,value:e.tipo},
+    {name:'pay',label:'Forma de pagamento',type:'select',options:payOpts,value:payVal},
+    ...((state.contas||[]).length>1?[{name:'contaId',label:'Saiu de qual conta?',type:'select',options:[['','⭐ Conta principal']].concat(state.contas.map(x=>[x.id,x.nome])),value:e.contaId||''}]:[]),
+    {name:'parcelas',label:'Nº de parcelas (cartão de crédito)',type:'number',step:'1',min:1,value:1},
+    {name:'tags',label:'Etiquetas (opcional)',value:tagsTxt(e),full:true,placeholder:'Ex.: #viagem #casa'},
+    ...(isNew?[]:[{type:'html',html:'<div id="fotoBox"></div>'}]),
+    {type:'html',html:`<div id="payInfo" class="alert info" hidden style="margin:0"></div><div class="muted" style="font-size:12px">💳 Escolhendo um cartão de crédito, a compra desconta do <b>limite</b> e entra na fatura certa (com parcelas).${state.benefits.length?' 🧺 Vale: desconta do saldo do vale.':''}</div>`}
+  ],onRender:f=>{if(!isNew)fotoPinta(e.id);const pay=f.elements.pay,par=f.elements.parcelas,info=f.querySelector('#payInfo'),ct=f.elements.contaId;
+    const upd=()=>{const isC=pay.value.startsWith('card:'),c=isC?find(state.cards,pay.value.slice(5)):null;par.closest('label').hidden=!isC;if(ct)ct.closest('label').hidden=isC||pay.value.startsWith('ben:');
+      info.hidden=!c;if(c){const v=parseNum(f.elements.valor.value),l=livre(c),n=Math.max(1,Math.round(parseNum(par.value)||1)),ft=faturaDe(c.id,f.elements.date.value||todayISO());
+        info.className='alert '+(v>l?'bad':'info');info.innerHTML=`<div><b>${esc(c.nome)}</b> · limite livre <b>${brl(l)}</b> de ${brl(c.limite)}${v>0?`<br>Depois desta compra: <b>${brl(l-v)}</b>${v>l?' — passa do limite!':''}`:''}<br>1ª fatura: ${mLabel(ft,true)}${n>1&&v>0?' · '+n+'× de '+brl(v/n):''}</div>`}};
+    [pay,par,f.elements.valor,f.elements.date].forEach(x=>{x.addEventListener('input',upd);x.addEventListener('change',upd)});upd()},
+  onSave:d=>{const parc=Math.max(1,Math.round(d.parcelas||1));delete d.parcelas;d.tags=parseTags(d.tags);if(!d.tags.length)d.tags=undefined;
+    if(String(d.pay)==='card:new'){toast('Cadastre o cartão primeiro','err');setTimeout(()=>cardForm(),80);return false}
+    if(String(d.pay).startsWith('card:')&&!(e.fundId&&!isNew)){const cid=d.pay.slice(5),ft=faturaDe(cid,d.date),p={id:uid(),cardId:cid,desc:d.desc,valorTotal:d.valor,parcelas:parc,dataCompra:d.date,primeiraFatura:ft,cat:d.cat,tipo:d.tipo};if(d.tags)p.tags=d.tags;stampPor(p);
+      state.cardPurchases.push(p);if(!isNew){tomb(e.id);state.expenses=state.expenses.filter(y=>y!==e)}
+      const c=find(state.cards,cid);setTimeout(()=>{coachShow({cat:d.cat,tipo:d.tipo,valor:d.valor,date:d.date,ym:ft,valorMes:d.valor/parc,parcelas:parc},isNew?()=>{tomb(p.id);state.cardPurchases=state.cardPurchases.filter(y=>y!==p);save();render();toast('Lançamento desfeito')}:null,brl(d.valor)+' no '+(c?c.nome:'cartão'));if(c)toast('Limite livre do '+c.nome+': '+brl(livre(c)))},60);return}
+    if(e.fundId&&!isNew){const g=find(state.goals,e.fundId);if(g)g.guardado=Math.round(((+g.guardado)+(+e.valor)-(+d.valor))*100)/100;d.pay=e.pay}
+    else if(String(d.pay).startsWith('ben:')){const b=find(state.benefits,d.pay.slice(4));d.benefitId=b?b.id:undefined;d.pay=b?b.nome:'Vale'}else d.benefitId=undefined;
+    if(isNew){const x=stampPor({id:uid(),criado:Date.now(),...d});state.expenses.push(x);setTimeout(()=>coachShow(x,()=>{tomb(x.id);state.expenses=state.expenses.filter(y=>y!==x);save();render();toast('Lançamento desfeito')},brl(x.valor)+' lançado'),60)}else{Object.assign(e,d);toast('Gasto salvo')}},
+    extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelExpense" data-id="${e.id}" title="Excluir">🗑</button><button type="button" class="btn" data-act="dupExpense" data-id="${e.id}" title="Duplicar">⧉</button>${+e.valor>0?`<button type="button" class="btn" data-act="estorno" data-id="e:${e.id}" title="Registrar estorno">↩</button>`:''}`});
+}
+function incomeForm(i){
+  const isNew=!i;i=i||{date:isoOf(curMonth,5),natureza:'fixa',fonte:INCOME_SOURCES[0]};
+  openForm({title:isNew?'Adicionar renda':'Editar renda',fields:[
+    {name:'fonte',label:'Fonte',value:i.fonte,list:INCOME_SOURCES,required:true},
+    {name:'natureza',label:'Tipo',type:'select',options:[['fixa','Fixa (todo mês)'],['variavel','Variável (freela, extra)']],value:i.natureza},
+    {name:'desc',label:'Descrição / cliente',value:i.desc,placeholder:'Ex.: Tradução contrato — cliente X'},
+    {name:'valor',label:'Valor líquido (R$)',type:'number',step:'0.01',min:0,value:i.valor,required:true},
+    {name:'date',label:'Data de recebimento',type:'date',value:i.date},
+    ...((state.contas||[]).length>1?[{name:'contaId',label:'Caiu em qual conta?',type:'select',options:[['','⭐ Conta principal']].concat(state.contas.map(x=>[x.id,x.nome])),value:i.contaId||''}]:[]),
+    {name:'recorrente',label:'🔁 Repetir automaticamente todo mês (lança sozinho nos próximos meses)',type:'checkbox',value:!!i.recorrente}
+  ],onSave:d=>{const m=month(curMonth,true);if(d.recorrente&&!i.recId)d.recId=uid();if(isNew)m.income.push(stampPor({id:uid(),criado:Date.now(),...d}));else Object.assign(i,d);toast(d.recorrente?'Renda salva — vai se repetir todo mês':'Renda salva');setTimeout(autoRecorrentes,50)}});
+}
+function budgetForm(b,preset){
+  const isNew=!b;b=b||Object.assign({tipo:'needs'},preset);const old={cat:b.cat,tipo:b.tipo};
+  openForm({title:isNew?'Nova categoria do orçamento':'Editar categoria',fields:[
+    {name:'cat',label:'Categoria',value:b.cat,list:categoriesList(),required:true,full:true,placeholder:'Ex.: Telefone celular'},
+    {name:'tipo',label:'Grupo',type:'select',options:tipoOpts,value:b.tipo},
+    {name:'valor',label:'Valor planejado (R$) — neste mês',type:'number',step:'0.01',min:0,value:b.valor,required:true},
+    {name:'acumula',type:'checkbox',value:!!b.acumula,label:'♻ Acumular: o que sobrar neste mês passa para o próximo (bom para presentes, roupas, manutenção)'},
+    ...(isNew?[]:[{name:'tudo',type:'checkbox',value:true,label:'Se mudar o nome ou o grupo, aplicar também nos gastos já lançados, nos outros meses, nas contas fixas, cartões e vale (recomendado)'}])
+  ],extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelBudget" data-id="${b.id}" title="Apagar">🗑 Apagar</button>`,
+  onSave:d=>{const m=month(curMonth,true);
+    if(isNew){if(m.budget.some(x=>x.tipo===d.tipo&&norm(x.cat)===norm(d.cat))){toast('Essa categoria já existe neste grupo','err');return false}m.budget.push({id:uid(),cat:d.cat,tipo:d.tipo,valor:d.valor,acumula:!!d.acumula});toast('Categoria salva');return}
+    const mudou=norm(d.cat)!==norm(old.cat)||d.tipo!==old.tipo;b.valor=d.valor;b.acumula=!!d.acumula;
+    if(!mudou){b.cat=d.cat;toast('Categoria salva');return}
+    if(!d.tudo){const dup=m.budget.find(x=>x!==b&&x.tipo===d.tipo&&norm(x.cat)===norm(d.cat));if(dup){toast('Já existe "'+d.cat+'" nesse grupo neste mês','err');return false}b.cat=d.cat;b.tipo=d.tipo;toast('Categoria renomeada só neste mês');return}
+    const n=renomearCategoria(old,{cat:d.cat,tipo:d.tipo});toast(`"${old.cat}" agora é "${d.cat}" — ${n} item(ns) atualizado(s)`)}});
+}
+/* troca nome/grupo de uma categoria em todo o banco; se o nome novo já existir num mês, junta os valores */
+function renomearCategoria(o,n){
+  const is=(c,t)=>norm(c)===norm(o.cat)&&(t===undefined||t===o.tipo);let cnt=0;
+  Object.values(state.months).forEach(m=>{m.budget.filter(x=>is(x.cat,x.tipo)).forEach(it=>{
+    const tgt=m.budget.find(x=>x!==it&&x.tipo===n.tipo&&norm(x.cat)===norm(n.cat));
+    if(tgt){tgt.valor=Math.round(((+tgt.valor)+(+it.valor))*100)/100;tomb(it.id);m.budget=m.budget.filter(x=>x!==it)}else{it.cat=n.cat;it.tipo=n.tipo}cnt++})});
+  [...state.expenses,...state.cardPurchases,...state.bills].forEach(x=>{if(is(x.cat,x.tipo)){x.cat=n.cat;x.tipo=n.tipo;cnt++}});
+  state.benefits.forEach(x=>{if(is(x.cat,x.grupo)){x.cat=n.cat;x.grupo=n.tipo;cnt++}});
+  state.debts.forEach(x=>{if(is(x.cat)){x.cat=n.cat;cnt++}});
+  return cnt;
+}
+function debtForm(d){
+  const isNew=!d;d=d||{tipo:DEBT_TYPES[0],parcelasPagas:0,cat:'Dívidas e financiamentos',inicio:curMonth};
+  openForm({title:isNew?'Nova dívida / financiamento':'Editar contrato',fields:[
+    {name:'nome',label:'Nome',value:d.nome,required:true,placeholder:'Ex.: Financiamento do carro'},
+    {name:'tipo',label:'Tipo',type:'select',options:DEBT_TYPES,value:d.tipo},
+    {name:'credor',label:'Credor / banco',value:d.credor},
+    {name:'bem',label:'Bem (carro, imóvel…) — opcional',value:d.bem,placeholder:'Ex.: Onix 1.0 2022'},
+    {name:'valorBem',label:'Valor atual do bem (R$) — opcional',type:'number',step:'0.01',min:0,value:d.valorBem,placeholder:'Ex.: tabela FIPE'},
+    {name:'valorOriginal',label:'Valor contratado (R$)',type:'number',step:'0.01',min:0,value:d.valorOriginal},
+    {name:'parcela',label:'Valor da parcela (R$)',type:'number',step:'0.01',min:0,value:d.parcela,required:true},
+    {name:'totalParcelas',label:'Total de parcelas',type:'number',min:1,step:'1',value:d.totalParcelas,required:true},
+    {name:'parcelasPagas',label:'Parcelas já pagas',type:'number',min:0,step:'1',value:d.parcelasPagas},
+    {name:'juros',label:'Juros (% ao mês)',type:'number',step:'0.01',min:0,value:d.juros},
+    {name:'inicio',label:'Mês da 1ª parcela',type:'month',value:d.inicio},
+    {name:'cat',label:'Categoria no orçamento',value:d.cat,list:categoriesList(),full:true}
+  ],onSave:x=>{x.parcelasPagas=Math.min(x.parcelasPagas,x.totalParcelas);if(isNew)state.debts.push({id:uid(),...x});else Object.assign(d,x);toast('Contrato salvo')}});
+}
+function cardForm(c){
+  const isNew=!c;c=c||{fechamento:3,vencimento:10,cor:PALETTE[state.cards.length%PALETTE.length]};
+  openForm({title:isNew?'Novo cartão':'Editar cartão',fields:[
+    {name:'nome',label:'Nome do cartão',value:c.nome,required:true,list:BANCOS.filter(b=>b[0]!=='Outro').map(b=>b[0]),placeholder:'Ex.: Nubank, Itaú Visa, Inter'},
+    {name:'limite',label:'Limite (R$)',type:'number',step:'0.01',min:0,value:c.limite,required:true},
+    ...((state.contas||[]).length?[{name:'contaId',label:'Conta que paga a fatura',type:'select',options:[['','⭐ Conta principal']].concat(state.contas.map(x=>[x.id,x.nome])),value:c.contaId||''}]:[]),
+    {name:'fechamento',label:'Dia de fechamento',type:'number',min:1,step:'1',value:c.fechamento},
+    {name:'vencimento',label:'Dia de vencimento',type:'number',min:1,step:'1',value:c.vencimento},
+    {name:'cor',label:'Cor',type:'color',value:c.cor}
+  ],onRender:f=>{const n=f.elements.nome,cr=f.elements.cor;n.addEventListener('change',()=>{const b=BANCOS.find(x=>norm(n.value).startsWith(norm(x[0])));if(b&&isNew)cr.value=b[1]})},
+  extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelCard" data-id="${c.id}" title="Apagar cartão">🗑</button><button type="button" class="btn" data-act="pagarFatura" data-id="${c.id}" title="Pagar fatura">💸</button><button type="button" class="btn" data-act="nav" data-id="cards" title="Compras e faturas">Compras</button>`,
+  onSave:d=>{if(isNew)state.cards.push({id:uid(),...d});else Object.assign(c,d);toast('Cartão salvo')}});
+}
+function purchaseForm(p,preset){
+  const isNew=!p;const d0=curMonth===todayYM()?todayISO():isoOf(curMonth,1);p=p||Object.assign({cardId:state.cards[0]?.id,parcelas:1,dataCompra:d0,primeiraFatura:faturaDe(state.cards[0]?.id,d0),tipo:'wants'},preset);
+  openForm({title:isNew?'Compra no cartão':'Editar compra',onRender:f=>{const upd=()=>{if(f.elements.dataCompra.value)f.elements.primeiraFatura.value=faturaDe(f.elements.cardId.value,f.elements.dataCompra.value)};f.elements.dataCompra.addEventListener('change',upd);f.elements.cardId.addEventListener('change',upd)},fields:[
+    {name:'desc',label:'Descrição',value:p.desc,required:true,full:true},
+    {name:'tags',label:'Etiquetas (opcional)',value:tagsTxt(p),full:true,placeholder:'Ex.: #viagem #casa'},
+    {name:'dataCompra',label:'Data da compra',type:'date',value:p.dataCompra||''},
+    {name:'cardId',label:'Cartão',type:'select',options:state.cards.map(c=>[c.id,c.nome]),value:p.cardId},
+    {name:'valorTotal',label:'Valor total (R$)',type:'number',step:'0.01',min:0,value:p.valorTotal,required:true},
+    {name:'parcelas',label:'Nº de parcelas',type:'number',min:1,step:'1',value:p.parcelas,required:true},
+    {name:'primeiraFatura',label:'Fatura da 1ª parcela (calculada pelo fechamento)',type:'month',value:p.primeiraFatura,required:true},
+    {name:'cat',label:'Categoria',value:p.cat,list:categoriesList(),required:true},
+    {name:'tipo',label:'Grupo',type:'select',options:tipoOpts,value:p.tipo}
+  ],onSave:d=>{d.parcelas=Math.max(1,Math.round(d.parcelas));d.tags=parseTags(d.tags);if(!d.tags.length)d.tags=undefined;if(isNew)state.cardPurchases.push(stampPor({id:uid(),criado:Date.now(),...d}));else Object.assign(p,d);toast('Compra salva')},
+    extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelPurchase" data-id="${p.id}" title="Excluir">🗑</button>${+p.valorTotal>0?`<button type="button" class="btn" data-act="estorno" data-id="p:${p.id}" title="Registrar estorno">↩ Estorno</button>`:''}`});
+}
+function goalForm(g){
+  const isNew=!g;g=g||{guardado:0,cor:PALETTE[(state.goals.length+2)%PALETTE.length]};
+  openForm({title:isNew?'Nova meta':'Editar meta',fields:[
+    {name:'nome',label:'Nome da meta',value:g.nome,required:true,full:true,placeholder:'Ex.: Reserva de emergência'},
+    {name:'alvo',label:'Valor alvo (R$)',type:'number',step:'0.01',min:0,value:g.alvo,required:true},
+    {name:'guardado',label:'Já guardado (R$)',type:'number',step:'0.01',min:0,value:g.guardado},
+    {name:'prazo',label:'Prazo (mês)',type:'month',value:g.prazo},
+    {name:'cor',label:'Cor',type:'color',value:g.cor}
+  ],onSave:d=>{if(isNew)state.goals.push({id:uid(),...d});else Object.assign(g,d);toast('Meta salva')}});
+}
+
+/* ============================================================
+   AÇÕES
+   ============================================================ */
+const find=(arr,id)=>arr.find(x=>x.id===id);
+const ACT={
+  nav:id=>{closeModal();view=id;render();window.scrollTo(0,0)},
+  prevM:()=>{curMonth=addM(curMonth,-1);render()},nextM:()=>{curMonth=addM(curMonth,1);render()},todayM:()=>{closeModal();curMonth=todayYM();ui.refDate=todayISO();render()},
+  theme:()=>{closeModal();state.settings.theme=state.settings.theme==='dark'?'light':'dark';save();render()},
+  closeModal,
+  addExpense:()=>isMobile()?quickAdd():expenseForm(),
+  quickAdd:()=>quickAdd(),
+  openLesson:id=>openLesson(id),lessonNext:id=>{const i=LESSONS.findIndex(x=>x.id===id);const L=learnState();const nx=LESSONS.slice(i+1).find(x=>!L.done[x.id])||LESSONS[(i+1)%LESSONS.length];if(view==='learn')render();openLesson(nx.id)},
+  toggleCoach:()=>{closeModal();state.settings.coach=state.settings.coach===false;save();render();toast('Coach nos gastos '+(state.settings.coach?'ligado':'desligado'))},
+  editProfile:()=>profileForm(),forceUpdate:()=>{closeModal();atualizarApp()},
+  invTab:id=>{closeModal();view='invest';ui.invTab=id;render();window.scrollTo(0,0)},
+  invStep:id=>{ui.invStep=id;render();setTimeout(()=>{const b=$('#stepBox');b&&b.scrollIntoView({behavior:'smooth',block:'start'})},50)},
+  progDone:id=>{const I=inv();I.prog.done[id]=new Date().toISOString();save();const E=progEtapas(),nx=E.find(e=>!e.ok);ui.invStep=nx?nx.id:id;render();toast('Etapa registrada ✓')},
+  corteAdd:id=>{const[t,...c]=id.split('::'),cat=c.join('::'),d=diagnostico().L.find(x=>x.tipo===t&&x.cat===cat);
+    openForm({title:'Reduzir "'+cat+'"',fields:[{type:'html',html:`<p class="muted" style="margin:0">Média dos últimos meses: <b>${brl(d?d.mes:0)}/mês</b>. Escolha uma meta que você consiga manter — corte radical costuma durar pouco.</p>`},{name:'meta',label:'Reduzir em',type:'select',options:[['10','10% (leve)'],['20','20% (recomendado)'],['30','30% (firme)'],['50','50% (radical)']],value:'20'}],saveLabel:'Definir meta',
+      onSave:x=>{inv().prog.cortes.push({cat,tipo:t,base:Math.round((d?d.mes:0)*100)/100,meta:+x.meta,desde:curMonth});toast('Meta de corte definida')}})},
+  corteDel:id=>{inv().prog.cortes.splice(+id,1);save();render()},
+  corteBudget:id=>{const c=inv().prog.cortes[+id],m=month(curMonth,true),v=Math.round(c.base*(1-c.meta/100)*100)/100;let it=m.budget.find(b=>b.tipo===c.tipo&&norm(b.cat)===norm(c.cat));if(!it){it={id:uid(),cat:c.cat,tipo:c.tipo,valor:0};m.budget.push(it)}it.valor=v;save();render();toast('Budget de '+c.cat+' = '+brl(v))},
+  criarReserva:()=>{const r=reservaInfo();state.goals.push({id:uid(),nome:'Reserva de emergência',alvo:Math.round(r.needs*6),guardado:0,cor:'#22c58b'});save();render();toast('Meta criada — registre os aportes em Metas')},
+  invFiltro:id=>{ui.invFiltro=id;render()},invOpen:id=>{ui.invOpen=ui.invOpen===id?null:id;render()},
+  quizResp:id=>{const[i,j]=id.split(':').map(Number);ui.quizResp=ui.quizResp||{};ui.quizResp[i]=j;const y=window.scrollY;render();window.scrollTo(0,y)},
+  quizFim:()=>{const r=ui.quizResp||{};if(Object.keys(r).length<QUIZ.length)return;const pts=sum(Object.values(r));const tipo=pts<=8?'conservador':pts<=15?'moderado':'arrojado';
+    inv().perfil={tipo,pts,resp:r,data:new Date().toISOString()};ui.invQuiz=false;ui.quizResp=null;save();render();window.scrollTo(0,0);toast('Perfil: '+PERFIS[tipo].n)},
+  quizRefazer:()=>{ui.invQuiz=true;ui.quizResp=Object.assign({},(inv().perfil||{}).resp);render();window.scrollTo(0,0)},
+  invAdd:()=>invForm(),invEdit:id=>invForm(find(state.investimentos,id)),
+  invDel:id=>{closeModal();delUndo('Investimento removido',()=>{tomb(id);state.investimentos=state.investimentos.filter(x=>x.id!==id)})},
+  aposSalvar:()=>{const A=ui.apos,anos=Math.max(1,A.idadeA-A.idade),alvo=A.renda*12/0.04;inv().apos=Object.assign({},A,{alvo,aporte:Math.round(pmt(alvo,+A.atual,+A.real,anos*12)),salvo:new Date().toISOString()});save();render();toast('Plano de aposentadoria salvo')},
+  segCheck:id=>{const I=inv();I.check=I.check||{};I.check[id]=!I.check[id];save();const y=window.scrollY;render();window.scrollTo(0,y)},quickMore:()=>quickMore(),more:()=>openMore(),
+  mDelExpense:id=>{closeModal();ACT.delExpense(id)},mDelBudget:id=>{closeModal();ACT.delBudget(id)},mDelPurchase:id=>{closeModal();ACT.delPurchase(id)},
+  shareBackup:()=>{closeModal();compartilharBackup()},installApp:()=>{closeModal();instalarApp()},
+  addBenefit:()=>benefitForm(),editBenefit:id=>benefitForm(find(state.benefits,id)),
+  delBenefit:id=>confirmBox('Excluir este benefício? Os gastos já lançados continuam (como gastos normais).',()=>{tomb(id);state.benefits=state.benefits.filter(x=>x.id!==id);state.expenses.forEach(e=>{if(e.benefitId===id)e.benefitId=undefined})}),
+  addBenExpense:id=>{const b=find(state.benefits,id);if(isMobile()){quickAdd({pay:'ben:'+id,cat:b.cat,tipo:b.grupo||'needs'});return}expenseForm(null,{pay:'ben:'+id,benefitId:id,cat:b.cat,tipo:b.grupo||'needs'})},
+  adjustBenefit:id=>{const b=find(state.benefits,id),ref=benRef(),atual=benBalance(b,ref);openForm({title:'Conferir saldo — '+b.nome,saveLabel:'Ajustar',fields:[{type:'html',html:`<p class="muted" style="margin:0">Saldo calculado pelo app em ${fmtDate(ref)}: <b>${brl(atual)}</b>. Abra o app do cartão e digite o saldo real — a diferença vira um lançamento de ajuste (não entra no budget).</p>`},{name:'real',label:'Saldo real no cartão (R$)',type:'number',step:'0.01',value:Math.round(atual*100)/100,required:true}],
+    onSave:x=>{const d=Math.round((x.real-atual)*100)/100;if(!d){toast('Saldo já confere ✓');return}b.ajustes=b.ajustes||[];b.ajustes.push({id:uid(),date:ref,valor:d});toast('Ajuste de '+signBrl(d)+' registrado')}})},
+  delAjuste:id=>{const[bid,aid]=id.split('|');const b=find(state.benefits,bid);delUndo('Ajuste removido',()=>{b.ajustes=(b.ajustes||[]).filter(a=>a.id!==aid)})},
+  creditMonth:id=>{const b=find(state.benefits,id);openForm({title:'Crédito de '+mLabel(curMonth,true)+' — '+b.nome,fields:[{type:'html',html:'<p class="muted" style="margin:0">Use quando o valor do mês for diferente do normal (férias, faltas, reajuste só neste mês). Para mudar o valor de todos os meses, edite o benefício.</p>'},{name:'valor',label:'Valor creditado neste mês (R$)',type:'number',step:'0.01',min:0,value:benCredit(b,curMonth),required:true}],
+    onSave:x=>{b.creditos=b.creditos||{};b.creditos[curMonth]=x.valor;toast('Crédito do mês ajustado')}})},
+  dupExpense:id=>{const e=find(state.expenses,id);expenseForm(null,{desc:e.desc,valor:e.valor,cat:e.cat,tipo:e.tipo,pay:e.pay})},
+  addBill:()=>billForm(),editBill:id=>billForm(find(state.bills,id)),
+  delBill:id=>delUndo('Conta fixa excluída (pagamentos já lançados continuam)',()=>{tomb(id);state.bills=state.bills.filter(x=>x.id!==id)}),
+  payBill:id=>{const b=find(state.bills,id);const def=curMonth===todayYM()?todayISO():isoOf(curMonth,+b.dia||1);
+    openForm({title:'Pagar — '+b.nome,saveLabel:'Confirmar pagamento',fields:[{name:'valor',label:'Valor pago (R$)',type:'number',step:'0.01',min:0,value:b.valor,required:true},{name:'date',label:'Data do pagamento',type:'date',value:def,required:true},{name:'pay',label:'Forma de pagamento',type:'select',options:PAY,value:b.pay},{type:'html',html:'<div class="muted" style="font-size:12px">O pagamento será lançado como gasto na categoria <b>'+esc(b.cat)+'</b> e comparado com o budget.</div>'}],
+      onSave:x=>{const e={por:quem()||undefined,id:uid(),criado:Date.now(),desc:b.nome,valor:x.valor,date:x.date,cat:b.cat,tipo:b.tipo,pay:x.pay,billId:b.id,billMonth:curMonth};state.expenses.push(e);setTimeout(()=>coachShow({...e,ym:curMonth},null,b.nome+' paga'),60)}})},
+  unpayBill:id=>{const e=state.expenses.find(x=>x.billId===id&&x.billMonth===curMonth);if(e)delUndo('Pagamento desfeito',()=>{tomb(e.id);state.expenses=state.expenses.filter(x=>x!==e)})},
+  billsToBudget:()=>{const m=month(curMonth,true),g={};state.bills.filter(b=>billActive(b,curMonth)).forEach(b=>{const k=b.tipo+'|'+norm(b.cat);g[k]=g[k]||{cat:b.cat,tipo:b.tipo,v:0};g[k].v+=+b.valor});
+    let c=0,u=0;Object.values(g).forEach(x=>{const it=m.budget.find(b=>b.tipo===x.tipo&&norm(b.cat)===norm(x.cat));if(!it){m.budget.push({id:uid(),cat:x.cat,tipo:x.tipo,valor:x.v});c++}else if(+it.valor<x.v){it.valor=x.v;u++}});
+    save();render();toast(`Budget: ${c} categoria(s) criada(s), ${u} ajustada(s) pelas contas fixas`)},
+  suggestBudget:()=>{const S=budgetSuggestions(curMonth);if(!S.length){toast('Nenhuma sugestão: seu budget já cobre as contas, parcelas e a média dos últimos meses');return}
+    openForm({title:'Sugestões de budget para '+mLabel(curMonth,true),saveLabel:'Aplicar selecionadas',fields:[{type:'html',html:'<p class="muted" style="margin:0">Baseado nos seus compromissos já conhecidos (contas fixas, parcelas de dívidas e de cartão) e na média real dos últimos 3 meses. Marque o que quer aplicar.</p>'},
+      ...S.map((o,i)=>({name:'s'+i,type:'checkbox',value:true,label:`${o.cat} (${BUCKETS[o.tipo].short}) — atual ${brl(o.atual)} → sugerido ${brl(o.sug)} · ${o.fonte}`}))],
+      onSave:d=>{const m=month(curMonth,true);let n=0;S.forEach((o,i)=>{if(!d['s'+i])return;const it=m.budget.find(b=>b.tipo===o.tipo&&norm(b.cat)===norm(o.cat));if(it)it.valor=o.sug;else m.budget.push({id:uid(),cat:o.cat,tipo:o.tipo,valor:o.sug});n++});toast(n+' valor(es) aplicado(s) ao budget')}})},
+  sobraPoupanca:()=>{const m=month(curMonth,true),sobra=incomeTotal(curMonth)-sum(m.budget,b=>b.valor);if(sobra<=0)return;let it=m.budget.find(b=>b.tipo==='savings'&&/reserva|emerg/i.test(b.cat))||m.budget.find(b=>b.tipo==='savings');
+    if(!it){it={id:uid(),cat:'Reserva de emergência',tipo:'savings',valor:0};m.budget.push(it)}it.valor=Math.round((+it.valor+sobra)*100)/100;save();render();toast(brl(sobra)+' enviados para '+it.cat)},editExpense:id=>expenseForm(find(state.expenses,id)),
+  delExpense:id=>delUndo('Gasto excluído',()=>{const x=find(state.expenses,id);if(x&&x.fundId){const g=find(state.goals,x.fundId);if(g)g.guardado=Math.round(((+g.guardado)+(+x.valor))*100)/100}tomb(id);state.expenses=state.expenses.filter(x=>x.id!==id)}),
+  addIncome:()=>incomeForm(),editIncome:id=>incomeForm(find(month().income,id)),
+  delIncome:id=>delUndo('Renda excluída',()=>{tomb(id);const m=month(curMonth,true);m.income=m.income.filter(x=>x.id!==id)}),
+  addBudget:()=>budgetForm(),addBudgetTipo:t=>budgetForm(null,{tipo:t}),
+  budTab:id=>{ui.budTab=id;view='budget';render();window.scrollTo(0,0)},
+  transferir:()=>transferForm(),delTransfer:id=>delUndo('Transferência apagada',()=>{tomb(id);state.transfers=(state.transfers||[]).filter(t=>t.id!==id)}),
+  calTudo:()=>{ui.calTudo=!ui.calTudo;render()},irFechar:()=>{curMonth=addM(todayYM(),-1);view='fechar';render();window.scrollTo(0,0)},
+  colarNotif:async()=>{let t='';try{t=await navigator.clipboard.readText()}catch(e){}
+    if(t&&/R\$/i.test(t)){closeModal();abrirNotif(t);return}
+    openForm({title:'Colar notificação do banco',saveLabel:'Ler',fields:[{type:'html',html:'<p class="muted" style="margin:0 0 8px">Copie o texto da notificação ou do SMS do banco e cole aqui:</p><textarea id="ntTxt" rows="4" style="width:100%;font-size:16px;padding:10px;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" placeholder="Ex.: Compra aprovada de R$ 23,90 em PADARIA X no cartão final 1234"></textarea>'}],
+      onSave:()=>{const v=$('#ntTxt').value;setTimeout(()=>abrirNotif(v),80)}})},
+  editConta:id=>contaForm(id?find(state.contas,id):null),contaBanco:b=>contaForm(null,{banco:b}),delConta:id=>{closeModal();delUndo('Conta removida',()=>{tomb(id);state.contas=state.contas.filter(x=>x.id!==id)})},
+  presetCats:()=>{const P=[['Moradia (aluguel/condomínio)','needs'],['Alimentação (mercado)','needs'],['Água','needs'],['Luz','needs'],['Internet','needs'],['Celular','needs'],['Transporte / combustível','needs'],['Saúde / farmácia','needs'],['Educação','needs'],['Dívidas e financiamentos','needs'],['Restaurantes / delivery','wants'],['Lazer','wants'],['Streaming e assinaturas','wants'],['Compras / roupas','wants'],['Cuidados pessoais','wants'],['Reserva de emergência','savings'],['Investimentos','savings']];
+    openForm({title:'Categorias sugeridas',fields:[{type:'html',html:'<p class="muted" style="margin:0">Marque as que você usa. Elas serão criadas com valor 0 — depois é só digitar o budget de cada uma direto na tabela.</p>'},...P.map(([c,t],i)=>({name:'c'+i,label:c+' — '+BUCKETS[t].label,type:'checkbox',value:true}))],saveLabel:'Criar categorias',
+      onSave:d=>{const m=month(curMonth,true);let n=0;P.forEach(([c,t],i)=>{if(d['c'+i]&&!m.budget.some(x=>x.tipo===t&&norm(x.cat)===norm(c))){m.budget.push({id:uid(),cat:c,tipo:t,valor:0});n++}});toast(n+' categoria(s) criada(s) — agora digite os valores')}})},
+  editUnplanned:id=>{const[t,...c]=id.split('::');const cat=c.join('::'),old={cat,tipo:t};
+    const exp=state.expenses.filter(e=>e.tipo===t&&norm(e.cat)===norm(cat)).length,card=state.cardPurchases.filter(e=>e.tipo===t&&norm(e.cat)===norm(cat)).length;
+    const opts=month().budget.map(b=>b.cat);
+    openForm({title:'Editar "'+cat+'"',saveLabel:'Salvar',fields:[
+      {type:'html',html:`<p class="muted" style="margin:0">Esta categoria veio dos seus lançamentos (${exp} gasto(s)${card?' e '+card+' compra(s) no cartão':''}) e não existe no orçamento do mês. <b>Para juntar com uma categoria que já existe</b>, escolha o nome dela abaixo e o mesmo grupo — os gastos passam para lá.</p>`},
+      {name:'cat',label:'Nome da categoria',value:cat,list:[...new Set(opts.concat(categoriesList()))],required:true,full:true},
+      {name:'tipo',label:'Grupo',type:'select',options:tipoOpts,value:t}],
+      extra:`<button type="button" class="btn danger" data-act="delUnplanned" data-id="${esc(id)}">🗑 Apagar</button>`,
+      onSave:d=>{if(norm(d.cat)===norm(cat)&&d.tipo===t){toast('Nada mudou');return}
+        const alvo=month().budget.find(b=>b.tipo===d.tipo&&norm(b.cat)===norm(d.cat));
+        const n=renomearCategoria(old,{cat:alvo?alvo.cat:d.cat,tipo:d.tipo});
+        toast(alvo?`Juntado com "${alvo.cat}" — ${n} item(ns) movido(s)`:`Renomeado para "${d.cat}" — ${n} item(ns) atualizado(s)`)}})},
+  delUnplanned:id=>{closeModal();const[t,...c]=id.split('::');const cat=c.join('::');
+    const L=state.expenses.filter(e=>e.tipo===t&&norm(e.cat)===norm(cat)&&(e.date||'').slice(0,7)===curMonth&&!e.billId);
+    if(!L.length){toast('Não há lançamentos avulsos de "'+cat+'" em '+mLabel(curMonth,true)+'. Compras no cartão se apagam em Cartões.','err');return}
+    openForm({title:'Apagar gastos de "'+cat+'"',saveLabel:'Apagar '+L.length+' gasto(s)',danger:true,fields:[{type:'html',html:`<p style="margin:0">Isto apaga <b>${L.length} lançamento(s)</b> de ${mLabel(curMonth,true)} nesta categoria (total ${brl(sum(L,e=>e.valor))}):</p><ul class="muted" style="margin:8px 0 0;padding-left:18px">${L.slice(0,8).map(e=>`<li>${fmtDate(e.date)} — ${esc(e.desc)} — ${brl(e.valor)}</li>`).join('')}${L.length>8?'<li>…</li>':''}</ul><p class="muted" style="font-size:12px">Se a ideia é só corrigir o nome, use <b>Editar</b> em vez de apagar.</p>`}],
+      onSave:()=>{const snap=JSON.stringify(state);const ids=new Set(L.map(e=>e.id));L.forEach(e=>{if(e.fundId){const g=find(state.goals,e.fundId);if(g)g.guardado=Math.round(((+g.guardado)+(+e.valor))*100)/100}tomb(e.id)});state.expenses=state.expenses.filter(e=>!ids.has(e.id));
+        setTimeout(()=>toast(L.length+' gasto(s) apagado(s)','',{label:'Desfazer',fn:()=>{state=JSON.parse(snap);overwriteNext=true;save();render();toast('Restaurado')}}),50)}})},
+  orcar:id=>{const[t,...c]=id.split('::');budgetForm(null,{cat:c.join('::'),tipo:t})},
+  addExpenseCat:id=>{const b=find(month().budget,id);isMobile()?quickAdd({cat:b.cat,tipo:b.tipo}):expenseForm(null,{cat:b.cat,tipo:b.tipo})},editBudget:id=>budgetForm(find(month().budget,id)),
+  delBudget:id=>{const b=find(month(curMonth,true).budget,id);if(!b)return;
+    openForm({title:'Apagar "'+b.cat+'"',saveLabel:'Apagar',danger:true,fields:[
+      {type:'html',html:'<p class="muted" style="margin:0">Os gastos já lançados <b>não</b> são apagados — eles continuam no histórico e passam a aparecer como "não orçado" (dá para reorçar ou renomear depois).</p>'},
+      {name:'onde',label:'Apagar a categoria do orçamento de…',type:'select',options:[['mes','Só '+mLabel(curMonth,true)],['futuro',mLabel(curMonth,true)+' e meses seguintes'],['todos','Todos os meses']],value:'futuro'}],
+      onSave:x=>{let n=0;Object.entries(state.months).forEach(([ym,m])=>{if(x.onde==='mes'&&ym!==curMonth)return;if(x.onde==='futuro'&&ym<curMonth)return;
+        m.budget.filter(it=>it.tipo===b.tipo&&norm(it.cat)===norm(b.cat)).forEach(it=>{tomb(it.id);n++});m.budget=m.budget.filter(it=>!(it.tipo===b.tipo&&norm(it.cat)===norm(b.cat)))});
+        toast('"'+b.cat+'" apagada de '+n+' mês(es)')}})},
+  copyPrev:()=>{const p=state.months[addM(curMonth,-1)];if(!p)return;const m=month(curMonth,true);
+    const nb=p.budget.filter(b=>!m.budget.some(x=>x.tipo===b.tipo&&norm(x.cat)===norm(b.cat))).map(b=>({...b,id:uid()}));m.budget.push(...nb);
+    const ni=p.income.filter(i=>i.natureza!=='variavel').map(i=>({...i,id:uid(),date:i.date?isoOf(curMonth,+i.date.slice(8)):''}));if(!m.income.length)m.income.push(...ni);
+    m.pct={...p.pct};save();render();toast(`Copiado: ${nb.length} categoria(s)${ni.length&&m.income.length===ni.length?' e rendas fixas':''}`)},
+  apply503020:()=>{const m=month(curMonth,true);m.pct={needs:50,wants:30,savings:20};save();render()},
+  addDebt:()=>debtForm(),editDebt:id=>debtForm(find(state.debts,id)),
+  delDebt:id=>confirmBox('Excluir este contrato?',()=>{tomb(id);state.debts=state.debts.filter(x=>x.id!==id)}),
+  payDebt:id=>{const d=find(state.debts,id);openForm({title:'Registrar parcela — '+d.nome,fields:[
+    {name:'valor',label:'Valor pago (R$)',type:'number',step:'0.01',value:d.parcela},{name:'date',label:'Data',type:'date',value:curMonth===todayYM()?todayISO():isoOf(curMonth,10)},
+    {name:'qtd',label:'Quantidade de parcelas',type:'number',min:1,step:'1',value:1},{name:'lancar',label:'Lançar também como gasto do mês (categoria: '+(d.cat||'Dívidas')+')',type:'checkbox',value:true}],
+    onSave:x=>{d.parcelasPagas=Math.min(+d.totalParcelas,(+d.parcelasPagas)+Math.max(1,x.qtd));if(x.lancar)state.expenses.push({id:uid(),desc:'Parcela — '+d.nome,valor:x.valor*Math.max(1,x.qtd),date:x.date,cat:d.cat||'Dívidas e financiamentos',tipo:tipoOfCat(d.cat)||'needs',pay:'Boleto'});toast('Parcela registrada')}})},
+  mDelCard:id=>{closeModal();setTimeout(()=>ACT.delCard(id),60)},
+  addCard:()=>cardForm(),editCard:id=>cardForm(find(state.cards,id)),
+  delCard:id=>confirmBox('Excluir este cartão e todas as compras dele?',()=>{tomb(id,...state.cardPurchases.filter(p=>p.cardId===id).map(p=>p.id));state.cards=state.cards.filter(x=>x.id!==id);state.cardPurchases=state.cardPurchases.filter(p=>p.cardId!==id)}),
+  addPurchase:()=>purchaseForm(),editPurchase:id=>purchaseForm(find(state.cardPurchases,id)),
+  delPurchase:id=>delUndo('Compra excluída',()=>{tomb(id);state.cardPurchases=state.cardPurchases.filter(x=>x.id!==id)}),
+  addGoal:()=>goalForm(),
+  addFund:()=>fundForm(),editFund:id=>fundForm(find(state.goals,id)),
+  delFund:id=>confirmBox('Excluir esta reserva? Os gastos já pagos por ela continuam no histórico.',()=>{tomb(id);state.goals=state.goals.filter(x=>x.id!==id)}),
+  useFund:id=>useFundForm(find(state.goals,id)),
+  doneFundItem:id=>{const[g,i]=id.split('|');useFundForm(find(state.goals,g),i)},
+  addFundItem:id=>fundItemForm(find(state.goals,id)),
+  editFundItem:id=>{const[g,i]=id.split('|');const G=find(state.goals,g);fundItemForm(G,(G.plano||[]).find(x=>x.id===i))},
+  delFundItem:id=>{const[g,i]=id.split('|');const G=find(state.goals,g);delUndo('Item removido do plano',()=>{G.plano=(G.plano||[]).filter(x=>x.id!==i)})},
+  fundToBudget:id=>{const g=find(state.goals,id),c=fundCalc(g),v=Math.max(+g.aporteMensal||0,c.recomendado),m=month(curMonth,true);let it=m.budget.find(b=>b.tipo==='savings'&&norm(b.cat)===norm(g.nome));
+    if(!it){it={id:uid(),cat:g.nome,tipo:'savings',valor:0};m.budget.push(it)}it.valor=v;g.aporteMensal=v;save();render();toast(`Budget de Poupança: "${g.nome}" = ${brl(v)}/mês`)},editGoal:id=>goalForm(find(state.goals,id)),
+  delGoal:id=>confirmBox('Excluir esta meta?',()=>{tomb(id);state.goals=state.goals.filter(x=>x.id!==id)}),
+  contribGoal:id=>{const g=find(state.goals,id);openForm({title:'Aporte — '+g.nome,fields:[{name:'valor',label:'Valor (R$)',type:'number',step:'0.01',min:0,required:true},{name:'date',label:'Data',type:'date',value:curMonth===todayYM()?todayISO():isoOf(curMonth,5)},{name:'lancar',label:'Registrar como lançamento de Poupança (Savings) no mês',type:'checkbox',value:true}],
+    onSave:x=>{g.guardado=(+g.guardado)+x.valor;if(x.lancar)state.expenses.push({id:uid(),desc:'Aporte — '+g.nome,valor:x.valor,date:x.date,cat:g.nome,tipo:'savings',pay:'Transferência'});toast('Aporte registrado')}})},
+  withdrawGoal:id=>{const g=find(state.goals,id);openForm({title:'Resgate — '+g.nome,fields:[{name:'valor',label:'Valor (R$)',type:'number',step:'0.01',min:0,required:true}],onSave:x=>{g.guardado=Math.max(0,g.guardado-x.valor);toast('Resgate registrado')}})},
+  period:id=>{ui.period=id;render()},
+  linkFile:()=>ativarArquivo(),openFile:()=>abrirArquivo(),reconnectFile:()=>reconectarArquivo(),unlinkFile:()=>desconectarArquivo(),saveNow:()=>{if(handle)gravarArquivo().then(()=>toast('Salvo no arquivo'))},
+  wizOpen:()=>{fecharAssistente();abrirArquivo()},wizNew:()=>{fecharAssistente();ativarArquivo()},wizSample:()=>{fecharAssistente();loadSample();overwriteNext=true;save();render()},wizBrowser:()=>{fecharAssistente()},
+  refPrev:()=>{shiftRef(-1)},refNext:()=>{shiftRef(1)},
+  print:()=>window.print(),
+  exportCsv:()=>{const rows=[['Data','Descrição','Categoria','Grupo','Pagamento','Valor']].concat(actualEntries(curMonth).map(e=>[e.date,e.desc,e.cat,BUCKETS[e.tipo].label,e.pay||'',num(e.valor,2)]));
+    const comp=[[],['Categoria','Grupo','Planejado','Real','Diferença R$','Diferença %']].concat(comparison(curMonth).map(r=>[r.cat,BUCKETS[r.tipo].label,num(r.plan,2),num(r.real,2),num(r.diff,2),isFinite(r.diffPct)?num(r.diffPct,1):'']));
+    download(`financas-${curMonth}.csv`,'﻿'+rows.concat(comp).map(r=>r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(';')).join('\n'),'text/csv')},
+  export:()=>exportar(),
+  import:()=>$('#importFile').click(),
+  sample:()=>{const go=()=>{loadSample();overwriteNext=true;save();curMonth=todayYM();view='dashboard';render();toast('Dados de exemplo carregados')};if(Object.keys(state.months).length)confirmBox('Substituir os dados atuais pelos dados de exemplo?',go);else go()},
+  reset:()=>confirmBox('Apagar <b>todos</b> os dados? Esta ação não pode ser desfeita (exporte um backup antes).',()=>{const t=state.settings.theme;state=defaultState();state.settings.theme=t;overwriteNext=true;save();toast('Dados apagados')})
+};
+function shiftRef(n){const step=ui.period==='dia'?1:ui.period==='semana'?7:15;const d=parseISO(ui.refDate);d.setDate(d.getDate()+n*step);let iso=toISO(d);
+  if(iso.slice(0,7)!==curMonth){curMonth=iso.slice(0,7)}ui.refDate=iso;render()}
+function download(name,content,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([content],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+
+document.addEventListener('click',e=>{const a=e.target.closest('[data-act]');if(!a||a.disabled)return;e.preventDefault();ACT[a.dataset.act]&&ACT[a.dataset.act](a.dataset.id,a)});
+$('#modal').addEventListener('mousedown',e=>{if(e.target.id==='modal')closeModal()});
+/* CELULAR: arrastar a folha para baixo fecha (Mais, formulários, aulas…) e o botão "voltar" do Android também */
+(()=>{const M=$('#modal'),C=$('#modalForm');let y0=0,t0=0,dy=0,drag=false,ok=false;
+  const reset=()=>{C.style.transition='';C.style.transform='';M.style.background=''};
+  C.addEventListener('touchstart',e=>{if(!isMobile())return;const t=e.target,body=C.querySelector('.body');
+    ok=!!t.closest('header')||(!(t.closest('input,select,textarea,[type=range]'))&&(!body||body.scrollTop<=0||!body.contains(t)));
+    y0=e.touches[0].clientY;t0=Date.now();dy=0;drag=false},{passive:true});
+  C.addEventListener('touchmove',e=>{if(!ok)return;dy=e.touches[0].clientY-y0;
+    if(!drag){const body=C.querySelector('.body');if(dy>8&&(!body||body.scrollTop<=0||e.target.closest('header')))drag=true;else if(dy<0){ok=false;return}}
+    if(drag){e.preventDefault();C.style.transition='none';C.style.transform=`translateY(${Math.max(0,dy)}px)`;M.style.background=`rgba(0,0,0,${Math.max(.1,.55-dy/600)})`}},{passive:false});
+  C.addEventListener('touchend',()=>{if(!drag){ok=false;return}const v=dy/Math.max(1,Date.now()-t0);drag=ok=false;
+    if(dy>110||(dy>40&&v>.6)){C.style.transition='transform .18s ease-in';C.style.transform='translateY(110%)';setTimeout(()=>{closeModal();reset()},170)}
+    else{C.style.transition='transform .18s ease-out';C.style.transform='';setTimeout(reset,200)}});
+  let proprio=false;
+  new MutationObserver(()=>{const aberto=!M.classList.contains('hidden');
+    if(aberto&&!(history.state&&history.state.sheet))history.pushState({sheet:1},'');
+    else if(!aberto&&history.state&&history.state.sheet){proprio=true;history.back()}}).observe(M,{attributes:true,attributeFilter:['class']});
+  addEventListener('popstate',()=>{if(proprio){proprio=false;return}if(!M.classList.contains('hidden'))closeModal()});
+})();
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();
+  if((e.key==='n'||e.key==='N')&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&$('#modal').classList.contains('hidden')&&!['INPUT','SELECT','TEXTAREA'].includes((document.activeElement||{}).tagName)){e.preventDefault();expenseForm()}
+  if(e.key==='Enter'&&e.target.dataset&&e.target.dataset.bval){e.preventDefault();const all=[...document.querySelectorAll('[data-bval]')];const nx=all[all.indexOf(e.target)+1];if(nx){nx.focus();nx.select()}else e.target.blur()}});
+document.addEventListener('focusout',e=>{if(e.target.dataset&&e.target.dataset.bval){setTimeout(()=>{const a=document.activeElement;if(ui.budgetDirty&&!(a&&a.dataset&&a.dataset.bval)){ui.budgetDirty=false;render()}},0)}});
+document.addEventListener('input',e=>{
+  const t=e.target;
+  if(t.dataset.pct||t.dataset.pctn){const k=t.dataset.pct||t.dataset.pctn;const m=month(curMonth,true);m.pct[k]=Math.max(0,Math.min(100,parseFloat(t.value)||0));
+    document.querySelectorAll(`[data-pct="${k}"],[data-pctn="${k}"]`).forEach(el=>{if(el!==t)el.value=m.pct[k]});
+    const inc=incomeTotal(curMonth);$('#pv_'+k).textContent=brl(inc*m.pct[k]/100);const s=sum(Object.values(m.pct));const el=$('#pctSum');el.textContent=num(s,1)+'%';el.className=Math.abs(s-100)>0.01?'neg':'pos';save()}
+  if(t.dataset.filter){ui.expFilter[t.dataset.filter]=t.value;if(t.tagName==='INPUT'){clearTimeout(window._ft);window._ft=setTimeout(()=>{render();const el=document.querySelector('[data-filter=q]');if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length)}},250)}}
+  if(t.dataset.defpct){state.settings.pct[t.dataset.defpct]=parseFloat(t.value)||0;save()}
+});
+document.addEventListener('change',e=>{const t=e.target;
+  if(t.dataset.bval){const b=find(month(curMonth,true).budget,t.dataset.bval);if(b){b.valor=Math.max(0,parseFloat(t.value)||0);save();ui.budgetDirty=true;if(!document.activeElement||!document.activeElement.dataset||!document.activeElement.dataset.bval){ui.budgetDirty=false;render()}}}
+  if(t.dataset.pct||t.dataset.pctn)render();
+  if(t.dataset.filter&&t.tagName==='SELECT')render();
+  if(t.dataset.ref!==undefined&&t.value){ui.refDate=t.value;curMonth=t.value.slice(0,7);render()}
+  if(t.dataset.defpct)render();
+  if(t.dataset.sim){const[g,k]=t.dataset.sim.split('.'),v=parseNum(t.value);if(g==='tx'){inv().taxas[k]=v;inv().taxas.ref=new Date().toLocaleDateString('pt-BR',{month:'short',year:'numeric'});save()}else if(g==='s'){ui.sim[k]=v}else{ui.apos[k]=v}const y=window.scrollY;render();window.scrollTo(0,y)}
+  if(t.dataset.progextra!==undefined){inv().prog.extra=parseNum(t.value);save();const y=window.scrollY;render();window.scrollTo(0,y)}
+  if(t.id==='importFile'&&t.files[0]){const r=new FileReader();r.onload=()=>{try{const o=JSON.parse(r.result);const d=o&&o.dados?o.dados:o;if(!d||!d.months)throw 0;state=Object.assign(defaultState(),d);overwriteNext=true;save();render();toast('Backup importado'+(handle?' — e gravado no arquivo conectado':''))}catch(x){toast('Arquivo inválido','err')}};r.readAsText(t.files[0]);t.value=''}
+});
+
+/* ============================================================
+   DADOS DE EXEMPLO
+   ============================================================ */
+function loadSample(){
+  const theme=state.settings.theme;const s=defaultState();s.settings.theme=theme;
+  let seed=42;const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647;
+  const cur=todayYM();
+  const T=[['Aluguel','needs',1400,1],['Mercado','needs',900,4],['Telefone celular','needs',100,1],['Energia','needs',180,1],['Internet','needs',120,1],['Transporte / combustível','needs',450,3],['Dívidas e financiamentos','needs',1570,0],
+           ['Restaurantes','wants',350,3],['Streaming','wants',80,1],['Lazer','wants',300,2],['Compras','wants',250,1],['Reserva de emergência','savings',600,1],['Manutenção do carro','savings',250,1],['Investimentos','savings',500,1]];
+  for(let i=5;i>=0;i--){
+    const ym=addM(cur,-i),dim=daysIn(ym),lastDay=ym===cur?Math.max(1,new Date().getDate()):dim;
+    s.months[ym]={pct:{needs:50,wants:30,savings:20},
+      income:[{id:uid(),fonte:'Salário (trabalho atual)',natureza:'fixa',desc:'Salário líquido',valor:6500,date:isoOf(ym,5)},
+              {id:uid(),fonte:'Freelance — Traduções',natureza:'variavel',desc:'Traduções do mês',valor:Math.round(700+rnd()*900),date:isoOf(ym,20)}],
+      budget:T.map(([c,t,v])=>({id:uid(),cat:c,tipo:t,valor:v}))};
+    T.forEach(([c,t,v,n])=>{
+      if(!n)return;
+      let real=t==='savings'?v*(rnd()<.7?1:.6):v*(0.72+rnd()*0.5);
+      if(c==='Telefone celular')real=i===0?130:100;
+      if(c==='Aluguel'||c==='Internet'||c==='Streaming')real=v;
+      for(let k=0;k<n;k++){const day=n===1?Math.min(lastDay,3):Math.max(1,Math.min(dim,Math.round((k+0.5)*dim/n+(rnd()-.5)*4)));if(day>lastDay)continue;
+        s.expenses.push({id:uid(),desc:c+(n>1?' #'+(k+1):''),valor:Math.round(real/n*100)/100,date:isoOf(ym,day),cat:c,tipo:t,pay:t==='savings'?'Transferência':PAY[Math.floor(rnd()*3)]})}
+    });
+    s.expenses.push({id:uid(),desc:'Parcela — Financiamento do carro',valor:1150,date:isoOf(ym,Math.min(15,lastDay)),cat:'Dívidas e financiamentos',tipo:'needs',pay:'Boleto'});
+    s.expenses.push({id:uid(),desc:'Parcela — Empréstimo pessoal',valor:420,date:isoOf(ym,Math.min(10,lastDay)),cat:'Dívidas e financiamentos',tipo:'needs',pay:'Débito automático'});
+  }
+  s.debts=[{id:uid(),nome:'Financiamento do carro',tipo:'Financiamento de veículo',credor:'Banco exemplo',bem:'Hatch 1.0 2022',valorBem:52000,valorOriginal:42000,parcela:1150,totalParcelas:48,parcelasPagas:14,juros:1.49,inicio:addM(cur,-13),cat:'Dívidas e financiamentos'},
+           {id:uid(),nome:'Empréstimo pessoal',tipo:'Empréstimo pessoal',credor:'Financeira exemplo',valorOriginal:8000,parcela:420,totalParcelas:24,parcelasPagas:9,juros:2.9,inicio:addM(cur,-8),cat:'Dívidas e financiamentos'}];
+  const c1=uid(),c2=uid();
+  s.cards=[{id:c1,nome:'Cartão Principal',limite:6000,fechamento:3,vencimento:10,cor:'#8a5cf6'},{id:c2,nome:'Cartão Reserva',limite:3500,fechamento:25,vencimento:5,cor:'#f59e0b'}];
+  s.cardPurchases=[{id:uid(),cardId:c1,desc:'Notebook',valorTotal:3600,parcelas:10,primeiraFatura:addM(cur,-3),cat:'Compras',tipo:'wants'},
+                   {id:uid(),cardId:c2,desc:'Pneus do carro',valorTotal:1200,parcelas:4,primeiraFatura:addM(cur,-1),cat:'Transporte / combustível',tipo:'needs'},
+                   {id:uid(),cardId:c1,desc:'Passagem de viagem',valorTotal:900,parcelas:3,primeiraFatura:cur,cat:'Lazer',tipo:'wants'}];
+  s.goals=[{id:uid(),nome:'Reserva de emergência',alvo:20000,guardado:7400,prazo:addM(cur,12),cor:'#22c58b'},{id:uid(),nome:'Viagem de férias',alvo:6000,guardado:1500,prazo:addM(cur,8),cor:'#2ec4d6'}];
+  s.bills=[['Aluguel','Aluguel',1400,5,'Boleto'],['Energia','Energia',180,12,'Pix'],['Internet','Internet',120,15,'Débito automático'],['Telefone celular','Telefone celular',100,20,'Débito automático'],['Streaming','Streaming',80,8,'Débito'],].map(([n,c,v,d,pg])=>({id:uid(),nome:n,cat:c,tipo:c==='Streaming'?'wants':'needs',valor:v,dia:d,pay:pg,inicio:addM(cur,-5),ativo:true}));
+  s.expenses.forEach(e=>{const b=s.bills.find(b=>b.cat===e.cat);if(b&&!e.desc.includes('#')){e.billId=b.id;e.billMonth=e.date.slice(0,7)}});
+  s.goals.push({id:uid(),kind:'fundo',nome:'Manutenção do carro',icone:'🚗',guardado:1350,aporteMensal:250,alvo:0,cor:'#f5a524',plano:FUND_CAR_DEFAULT.map(([n,c,per,off,obs])=>({id:uid(),item:n,custo:c,period:per,prox:addM(cur,off),obs}))});
+  s.benefits=[{id:uid(),nome:'Vale-alimentação',tipoBen:'VA',valorMensal:800,dia:1,saldoInicial:0,inicio:addM(cur,-5),cat:'Mercado',grupo:'needs',contarRenda:true,cor:'#22c58b',ajustes:[],creditos:{}}];
+  s.expenses.forEach(e=>{if(e.cat==='Mercado'&&/#[123]$/.test(e.desc)){e.benefitId=s.benefits[0].id;e.pay='Vale-alimentação'}});
+  state=s;
+}
+
+/* ============================================================
+   RENDER
+   ============================================================ */
+const VIEWS={contas:vContas,invest:vInvest,learn:vLearn,profile:vProfile,home:vHome,vale:vVale,bills:vBills,dashboard:vDashboard,review:vReview,report:vReport,budget:vBudget,compare:vCompare,expenses:vExpenses,debts:vDebts,cards:vCards,goals:vGoals,settings:vSettings};
+function render(){
+  document.documentElement.dataset.theme=state.settings.theme;
+  const tc=document.querySelector('meta[name=theme-color]');if(tc)tc.content=state.settings.theme==='dark'?'#0b0f17':'#f3f5fa';
+  destroyCharts();renderNav();
+  $('#pageTitle').textContent=TITLES[view];
+  $('#monthLabel').textContent=mLabel(curMonth,true);setSaveStatus();
+  try{const v=view==='expenses'&&isMobile()?vExpensesMobile:VIEWS[view];$('#view').innerHTML=v();cardifyTables($('#view'))}catch(err){console.error(err);$('#view').innerHTML=`<div class="card empty">Erro ao montar a tela: ${esc(err.message)}</div>`}
+}
+
+/* ---------- transferências entre contas ---------- */
+function transferForm(){
+  const C=state.contas||[];if(C.length<2){toast('Cadastre pelo menos duas contas para transferir','err');return}
+  const ops=C.map(c=>[c.id,c.nome]),pr=contaPrincipal()||C[0];
+  openForm({title:'Transferir entre contas',saveLabel:'Transferir',fields:[
+    {name:'de',label:'Saiu de',type:'select',options:ops,value:pr.id},
+    {name:'para',label:'Entrou em',type:'select',options:ops,value:(C.find(c=>c.id!==pr.id)||C[1]).id},
+    {name:'valor',label:'Valor (R$)',type:'number',step:'0.01',min:0,required:true},
+    {name:'date',label:'Data',type:'date',value:todayISO(),required:true},
+    {name:'desc',label:'Observação (opcional)',placeholder:'Ex.: guardar na poupança',full:true},
+    {type:'html',html:'<div class="muted" style="font-size:12px">Transferência não é gasto nem renda: só muda o saldo das duas contas. Para registrar como poupança no orçamento, lance também um aporte numa categoria de Savings.</div>'}
+  ],onSave:d=>{if(d.de===d.para){toast('Escolha contas diferentes','err');return false}if(!(d.valor>0)){toast('Digite o valor','err');return false}
+    state.transfers=state.transfers||[];state.transfers.push({id:uid(),criado:Date.now(),...d});toast('Transferência registrada')}});
+}
+/* ---------- colar notificação do banco ---------- */
+function lerNotif(txt){
+  txt=String(txt||'').replace(/\s+/g,' ').trim();const o={};if(!txt)return o;
+  const v=txt.match(/R\$\s?(\d{1,3}(?:\.\d{3})*(?:,\d{2})|\d+(?:,\d{2})?)/i);if(v)o.valor=parseNum(v[1]);
+  const m=txt.match(/(?:\bem|\bno|\bna|\bpara|estabelecimento:?|loja:?)\s+((?:[A-Z0-9*][\wÀ-ú*&'.-]*\s?){1,5})/);
+  if(m)o.desc=m[1].trim().replace(/\s+(?:em|no|na|com|às|as|dia|foi|aprovad[ao]).*$/i,'').slice(0,40);
+  const n=norm(txt),cartao=state.cards.find(c=>n.includes(norm(c.nome)))||state.cards.find(c=>norm(c.nome).split(' ').some(w=>w.length>3&&n.includes(w)));
+  if(/pix/i.test(txt))o.pay='Pix';else if(/d[eé]bito/i.test(txt))o.pay='Débito';
+  else if(/cr[eé]dito|compra|cart[aã]o/i.test(txt)&&state.cards.length)o.pay='card:'+(cartao||state.cards[0]).id;
+  if(o.desc){const d=norm(o.desc).split(' ')[0],ant=[...state.expenses].reverse().find(e=>d.length>2&&norm(e.desc).includes(d))||[...state.cardPurchases].reverse().find(e=>d.length>2&&norm(e.desc).includes(d));if(ant){o.cat=ant.cat;o.tipo=ant.tipo}}
+  return o;
+}
+function abrirNotif(txt){const o=lerNotif(txt);if(!(o.valor>0)){toast('Não achei um valor em R$ nesse texto','err');return}quickAdd(o);toast('Confira e escolha a categoria')}
+/* ---------- calendário: próximos 30 dias ---------- */
+function proximosEventos(){
+  const hoje=todayISO(),fim=toISO(new Date(Date.now()+30*864e5)),E=[];
+  [todayYM(),addM(todayYM(),1)].forEach(ym=>{
+    billsOf(ym).forEach(({b,pay})=>{if(!pay)E.push({d:isoOf(ym,+b.dia||1),ic:'🧾',t:b.nome,v:-b.valor,act:'nav',id:'bills'})});
+    state.cards.forEach(c=>{const v=cardFatura(c.id,ym)-pagoFatura(c.id,ym);if(v>0.004)E.push({d:isoOf(ym,+c.vencimento||10),ic:'💳',t:'Fatura '+c.nome,v:-v,act:'editCard',id:c.id})});
+    (month(ym).income||[]).forEach(i=>{if(i.date)E.push({d:i.date,ic:'💵',t:i.fonte+(i.desc?' — '+i.desc:''),v:+i.valor,act:'budTab',id:'renda'})})});
+  state.benefits.forEach(b=>E.push({d:benNext(b,hoje),ic:'🧺',t:'Recarga '+b.nome,v:+b.valorMensal||0,act:'nav',id:'vale',vale:true}));
+  (state.investimentos||[]).forEach(x=>{if(x.venc)E.push({d:x.venc,ic:'📈',t:'Vence: '+x.nome,v:0,act:'invTab',id:'carteira'})});
+  return E.filter(e=>e.d>=hoje&&e.d<=fim).sort((a,b)=>a.d.localeCompare(b.d));
+}
+function vCalendario(){
+  const E=proximosEventos();if(!E.length)return'';const sai=sum(E.filter(e=>e.v<0),e=>-e.v),ent=sum(E.filter(e=>e.v>0&&!e.vale),e=>e.v);
+  return`<div class="card"><div class="card-head"><div><h3>📅 Próximos 30 dias</h3><div class="sub" style="margin:0">A pagar <b class="neg">${brl(sai)}</b>${ent?' · a receber <b class="pos">'+brl(ent)+'</b>':''}</div></div></div>
+   ${E.slice(0,ui.calTudo?99:5).map(e=>{const dd=dDiff(todayISO(),e.d);return`<div class="mrow" data-act="${e.act}" data-id="${e.id}"><div class="ic" style="background:var(--panel2)">${e.ic}</div><div class="tx"><b>${esc(e.t)}</b><small>${fmtDate(e.d)} · ${dd===0?'hoje':dd===1?'amanhã':'em '+dd+' dias'}</small></div><div class="vl ${e.v<0?(dd<=3?'neg':''):e.v>0?'pos':''}">${e.v?brl(Math.abs(e.v)):''}</div></div>`}).join('')}
+   ${E.length>5?`<button class="btn sm" data-act="calTudo" style="margin-top:8px">${ui.calTudo?'Mostrar menos':'Ver os '+E.length+' eventos'}</button>`:''}</div>`;
+}
+/* ============================================================
+   SINCRONIZAÇÃO — GitHub Gist privado, com o token do próprio usuário (escopo "gist")
+   Junta as alterações dos dois lados (3 vias: local × nuvem × última sincronização).
+   O token fica só neste aparelho (localStorage) e só é enviado para api.github.com.
+   ============================================================ */
+const SY={FILE:'minhas-financas-dados.json',LS:'finm_gist',cfg:null,busy:false,st:'',err:'',quando:null,base:null,t:null};
+try{SY.cfg=JSON.parse(localStorage.getItem(SY.LS))||null}catch(e){}
+const syCfg=c=>{SY.cfg=c;try{c?localStorage.setItem(SY.LS,JSON.stringify(c)):localStorage.removeItem(SY.LS)}catch(e){}};
+const LISTAS=['expenses','debts','cards','cardPurchases','goals','bills','benefits','investimentos','contas','transfers','splits','cardPayments'];
+const jj=x=>JSON.stringify(x===undefined?null:x);
+const canon=x=>JSON.stringify(x,(k,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.keys(v).sort().reduce((o,q)=>(o[q]=v[q],o),{}):v);
+const porId=s=>{const c=JSON.parse(jj(s));LISTAS.forEach(k=>c[k]=(c[k]||[]).slice().sort((a,b)=>String(a.id).localeCompare(String(b.id))));Object.values(c.months||{}).forEach(m=>['income','budget'].forEach(k=>m[k]=(m[k]||[]).slice().sort((a,b)=>String(a.id).localeCompare(String(b.id)))));return canon(c)};
+async function gh(path,opt={}){
+  const r=await fetch('https://api.github.com'+path,{...opt,cache:'no-store',headers:{Accept:'application/vnd.github+json',Authorization:'Bearer '+SY.cfg.token,'Content-Type':'application/json'}});
+  if(!r.ok){const e=new Error('GitHub respondeu '+r.status);e.status=r.status;throw e}return r}
+/* junta listas por id: quem mudou desde a última sincronização vence; se os dois mudaram, vale o deste aparelho */
+function m3lista(L=[],R=[],B=[],dead){
+  const mb=new Map(B.map(x=>[x.id,jj(x)])),mr=new Map(R.map(x=>[x.id,x])),out=[],vistos=new Set();
+  L.forEach(l=>{vistos.add(l.id);if(isDead(dead[l.id]))return;const r=mr.get(l.id);
+    if(!r){out.push(l);return}                                   // só existe aqui (novo) → mantém
+    out.push(jj(l)===mb.get(l.id)?r:l)});                        // não mexi aqui → pega o da nuvem
+  R.forEach(r=>{if(!vistos.has(r.id)&&!isDead(dead[r.id]))out.push(r)}); // novo na nuvem
+  return out}
+const m3valor=(l,r,b)=>jj(l)===jj(b)?(r===undefined?l:r):l;
+function merge3(L,R,B){
+  L=Object.assign(defaultState(),L);R=Object.assign(defaultState(),R);B=Object.assign(defaultState(),B||{});
+  const dead=mergeDead(R.deleted,L.deleted),o=Object.assign({},R,L);o.deleted=dead;
+  LISTAS.forEach(k=>o[k]=m3lista(L[k],R[k],B[k],dead));
+  Object.keys(o).forEach(k=>{if(k==='months'||k==='deleted'||LISTAS.includes(k))return;o[k]=m3valor(L[k],R[k],B[k])});
+  o.months={};new Set([...Object.keys(L.months||{}),...Object.keys(R.months||{})]).forEach(ym=>{
+    const a=L.months[ym],r=R.months[ym],b=(B.months||{})[ym]||{};
+    if(!a||!r){const m=JSON.parse(jj(a||r));m.income=(m.income||[]).filter(x=>!isDead(dead[x.id]));m.budget=(m.budget||[]).filter(x=>!isDead(dead[x.id]));o.months[ym]=m;return}
+    o.months[ym]={pct:m3valor(a.pct,r.pct,b.pct),income:m3lista(a.income,r.income,b.income,dead),budget:m3lista(a.budget,r.budget,b.budget,dead)}});
+  return o}
+async function syLer(){
+  if(!SY.cfg.id){ // outro aparelho já criou? procura pelo nome do arquivo
+    const gs=await(await gh('/gists?per_page=100&_='+Date.now())).json(),g=gs.find(x=>x.files&&x.files[SY.FILE]);if(!g)return null;SY.cfg.id=g.id;syCfg(SY.cfg)}
+  try{const g=await(await gh('/gists/'+SY.cfg.id+'?_='+Date.now())).json(),f=g.files[SY.FILE];if(!f)return null;
+    const txt=f.truncated?await(await fetch(f.raw_url,{cache:'no-store'})).text():f.content,p=JSON.parse(txt);return p&&p.dados?p:null}
+  catch(e){if(e.status===404){SY.cfg.id=null;syCfg(SY.cfg);return null}throw e}}
+async function syGravar(hist){
+  const ver=uid();SY.novaVer=ver;
+  const files={[SY.FILE]:{content:JSON.stringify({app:'minhas-financas',formato:3,salvoEm:new Date().toISOString(),rev,ver,hist:(hist||[]).concat(ver).slice(-40),dados:state})}};
+  if(!SY.cfg.id){const g=await(await gh('/gists',{method:'POST',body:JSON.stringify({description:'Minhas Finanças — dados sincronizados (não apague)',public:false,files})})).json();SY.cfg.id=g.id;syCfg(SY.cfg)}
+  else await gh('/gists/'+SY.cfg.id,{method:'PATCH',body:JSON.stringify({files})})}
+async function syncNow(manual){
+  if(!SY.cfg||!SY.cfg.token||SY.busy)return;
+  if(!manual&&(!$('#modal').classList.contains('hidden')||!navigator.onLine))return;   // não mexe na tela enquanto você digita
+  SY.busy=true;SY.st='sincronizando';syPinta();
+  try{
+    if(SY.base===null){let k=null;try{k=await kvGet('syncBase')}catch(e){}k=k&&k.base?k:{base:{},prev:{},ver:null};SY.base=k.base;SY.prev=k.prev;SY.ver=k.ver}
+    const W=await syLer(),baseAntes=SY.base;SY.novaVer=null;
+    if(!W){await syGravar([])}
+    else{const R=W.dados,
+      /* se a minha última gravação não está no histórico da nuvem, outro aparelho gravou por cima ao mesmo tempo:
+         comparo com a base anterior para não perder o que eu tinha mudado */
+      atropelado=SY.ver&&Array.isArray(W.hist)&&!W.hist.includes(SY.ver),
+      antes=jj(state),M=merge3(state,R,atropelado?SY.prev:SY.base);
+      if(jj(M)!==antes){state=M;rev++;await persistir();render()}
+      if(porId(M)!==porId(Object.assign(defaultState(),R)))await syGravar(W.hist);else SY.novaVer=W.ver||null}
+    SY.prev=baseAntes;SY.ver=SY.novaVer;SY.base=JSON.parse(jj(state));try{await kvSet('syncBase',{base:SY.base,prev:SY.prev,ver:SY.ver})}catch(e){}
+    SY.st='ok';SY.err='';SY.quando=new Date();meta.exportRev=rev;meta.exportAt=SY.quando.toISOString();saveMeta();
+    if(manual)toast('Sincronizado ✓')}
+  catch(e){console.warn('sync',e);SY.st='erro';SY.err=e.status===401?'Token recusado ou vencido. Gere outro e conecte de novo.':e.status===403?'O GitHub recusou (limite de uso ou token sem a permissão "gist").':!navigator.onLine?'Sem internet — sincroniza quando voltar.':'Não consegui falar com o GitHub ('+(e.message||e)+').';
+    if(manual||e.status===401)toast(SY.err,'err')}
+  finally{SY.busy=false;syPinta()}}
+function syPinta(){const e=$('#syEstado');if(e)e.innerHTML=syTexto();const d=$('#syDot');if(d)d.textContent=!SY.cfg?'':SY.st==='erro'?'☁️⚠️':SY.st==='sincronizando'?'☁️…':'☁️✓'}
+const syTexto=()=>!SY.cfg?'':SY.st==='sincronizando'?'Sincronizando…':SY.st==='erro'?`<span class="neg">⚠️ ${esc(SY.err)}</span>`:SY.quando?`<span class="pos">✓ Sincronizado às ${hora(SY.quando)}</span>`:'Conectado';
+const syAgenda=()=>{if(!SY.cfg)return;clearTimeout(SY.t);SY.t=setTimeout(()=>syncNow(),3000)};
+{const _save=save;save=function(){_save();syAgenda()};}
+setInterval(()=>{if(document.visibilityState==='visible')syncNow()},60000);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')setTimeout(()=>syncNow(),800)});
+addEventListener('online',()=>syncNow());
+function syCard(){
+  const on=!!SY.cfg;
+  return`<div class="card"><div class="card-head"><div><h3>☁️ Sincronização entre aparelhos</h3><div class="sub">${on?'Conectado ao GitHub — os dados ficam num Gist <b>privado</b> da sua conta':'Celular e computador com os mesmos dados, automaticamente'}</div></div>${on?'<span class="badge ok">Ligada</span>':'<span class="badge warn">Desligada</span>'}</div>
+   ${on?`<div id="syEstado" style="margin-bottom:10px">${syTexto()}</div><div class="row"><button class="btn primary" data-act="syAgora">🔄 Sincronizar agora</button><button class="btn danger" data-act="syOff">Desconectar</button></div>
+    <div class="muted" style="font-size:12px;margin-top:10px">Sincroniza ao abrir, ao voltar para o app, a cada 1 minuto e 3 segundos depois de cada alteração. Nos outros aparelhos, abra o mesmo endereço do app e conecte com o <b>mesmo token</b>.</div>`
+   :`<ol style="margin:0 0 12px;padding-left:20px;line-height:1.6;font-size:14px"><li>Abra <a href="https://github.com/settings/tokens/new?scopes=gist&description=Minhas%20Financas" target="_blank" rel="noopener" style="color:var(--accent)">esta página do GitHub</a> (já vem com <b>gist</b> marcado).</li><li>Em <b>Expiration</b> escolha <b>No expiration</b>. Confira que <b>só</b> a caixa <b>gist</b> está marcada.</li><li>Toque em <b>Generate token</b> e copie o código que começa com <code>ghp_</code>.</li><li>Cole aqui embaixo e toque em Conectar.</li></ol>
+    <input type="password" id="syToken" placeholder="Cole o token ghp_…" autocomplete="off" autocapitalize="off" spellcheck="false" style="width:100%;font-size:16px;padding:11px 12px;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)">
+    <div class="row" style="margin-top:10px"><button class="btn primary" data-act="syOn">Conectar</button></div>
+    <div class="muted" style="font-size:12px;margin-top:10px">🔐 O token é como uma senha dos seus Gists: não mande por WhatsApp/e-mail. Ele fica guardado só neste aparelho. Se vazar, apague em github.com/settings/tokens e gere outro — os dados continuam salvos.</div>`}</div>`}
+Object.assign(ACT,{
+  syOn:async()=>{const t=($('#syToken')||{}).value||'';if(!/^(ghp_|github_pat_)\w{20,}/.test(t.trim())){toast('Cole o token completo (começa com ghp_)','err');return}
+    syCfg({token:t.trim()});SY.base=null;try{await kvSet('syncBase',undefined)}catch(e){}await syncNow(true);if(SY.st==='erro'&&/recusad/.test(SY.err))syCfg(null);render()},
+  syOff:()=>{syCfg(null);SY.st='';SY.base=null;kvSet('syncBase',undefined).catch(()=>{});render();toast('Sincronização desligada neste aparelho. Os dados continuam aqui e no GitHub.')},
+  syAgora:()=>syncNow(true).then(()=>{if(view==='settings')render()})
+});
+{const _vs=VIEWS.settings;VIEWS.settings=()=>syCard()+_vs();}
+
+/* ============================================================
+   EXTRAS — ano & assinaturas, fechamento do mês, dividir despesas,
+   comprovante em foto e lançamento por frase/voz
+   ============================================================ */
+/* ---------- patrimônio líquido: guarda um retrato por mês ---------- */
+function plAgora(){return sum((state.contas||[]).map(c=>contaSaldo(c).v))+carteiraTotal()+sum(state.debts,d=>+d.valorBem||0)-totalDebt(todayYM())}
+function plRetrato(){try{if(!hasData(state))return;state.plHist=state.plHist||{};const v=Math.round(plAgora()*100)/100,ym=todayYM();if(Math.abs((state.plHist[ym]??1e15)-v)>1){state.plHist=Object.assign({},state.plHist,{[ym]:v});persistir()}}catch(e){console.warn(e)}}
+/* ---------- gastos que se repetem (assinaturas) ---------- */
+function recorrentes(){
+  const ms=[...Array(6)].map((_,i)=>addM(todayYM(),-i)),G={},dcat=new Set(state.debts.map(d=>norm(d.cat)));
+  ms.forEach(ym=>actualEntries(ym,true).forEach(e=>{if(e.tipo==='savings'||dcat.has(norm(e.cat))||(e.ref&&e.ref.billId)||(e.src==='card'&&e.ref.p.parcelas>1))return;
+    const k=norm(e.desc.replace(/\(\d+\/\d+\)/,'')).trim();if(k.length<3)return;(G[k]=G[k]||{desc:e.desc.replace(/\s*\(\d+\/\d+\)/,''),cat:e.cat,tipo:e.tipo,m:{}}).m[ym]=(G[k].m[ym]||0)+e.valor}));
+  return Object.values(G).map(g=>{const v=Object.values(g.m).sort((a,b)=>a-b),med=v[Math.floor(v.length/2)];return{...g,n:v.length,med,ok:v.length>=3&&v.every(x=>Math.abs(x-med)<=med*.2)}}).filter(g=>g.ok).sort((a,b)=>b.med-a.med);
+}
+function vAnual(){
+  const ano=curMonth.slice(0,4),ms=[...Array(12)].map((_,i)=>ano+'-'+String(i+1).padStart(2,'0')).filter(ym=>state.months[ym]||actualEntries(ym).length);
+  const D=ms.map(ym=>{const b=bucketSummary(ym);return{ym,inc:incomeTotal(ym),needs:b.needs.real,wants:b.wants.real,sav:b.savings.real}});
+  const T=k=>sum(D,d=>d[k]),inc=T('inc'),gasto=T('needs')+T('wants'),cats={};
+  ms.forEach(ym=>actualEntries(ym).filter(e=>e.tipo!=='savings').forEach(e=>cats[e.cat]=(cats[e.cat]||0)+e.valor));
+  const top=Object.entries(cats).sort((a,b)=>b[1]-a[1]).slice(0,8),R=recorrentes(),fixas=state.bills.filter(b=>billActive(b,todayYM()));
+  const comG=D.filter(d=>d.needs+d.wants>0),melhor=[...comG].sort((a,b)=>(b.inc-b.needs-b.wants)-(a.inc-a.needs-a.wants))[0],pior=[...comG].sort((a,b)=>(a.inc-a.needs-a.wants)-(b.inc-b.needs-b.wants))[0];
+  const ph=Object.entries(state.plHist||{}).sort();
+  let h=`<div class="card hero"><div class="lbl">📆 Seu ano de ${ano}</div><div class="big">${brl(inc-gasto)}</div><div class="mini"><span>renda (${brl(inc)}) menos gastos, em ${D.length} mês(es) — inclui o que você poupou</span></div></div>
+  <div class="grid g4">${kpi('Renda no ano',brl(inc),D.length?brl(inc/D.length)+'/mês':'')}${kpi('Gasto no ano',brl(gasto),inc?pctf(gasto/inc*100,0)+' da renda':'',null,gasto>inc?'neg':'')}${kpi('Poupado no ano',brl(T('sav')),inc?pctf(T('sav')/inc*100)+' da renda':'',null,'pos')}${kpi('Melhor mês',melhor?mLabel(melhor.ym):'—',melhor?'sobrou '+brl(melhor.inc-melhor.needs-melhor.wants):'')}</div>`;
+  if(!D.length)return h+'<div class="card empty">Ainda não há meses com dados neste ano.</div>';
+  h+=`<div class="card"><h3>Mês a mês</h3><div class="sub">Renda × gastos × poupança${pior&&pior!==melhor?' · mês mais apertado: '+mLabel(pior.ym):''}</div><div class="chart-box"><canvas id="chAno"></canvas></div></div>
+  <div class="card"><h3>🏆 Para onde foi o dinheiro no ano</h3>${top.map(([c,v])=>`<div style="margin:9px 0"><div class="stat-line"><span>${esc(c)}</span><b>${brl(v)} <span class="muted">· ${pctf(gasto?v/gasto*100:0,0)}</span></b></div>${bar(v/top[0][1]*100)}</div>`).join('')}</div>
+  <div class="card"><h3>🔁 Assinaturas e gastos que se repetem</h3><div class="sub">Detectados nos últimos 6 meses (mesmo nome, valor parecido, 3 meses ou mais)</div>
+   ${R.length?R.map(g=>`<div class="mrow" style="cursor:default"><div class="tx"><b>${esc(g.desc)}</b><small>${esc(g.cat)} · apareceu em ${g.n} meses</small></div><div class="vl" style="text-align:right">${brl(g.med)}<div class="muted" style="font-size:11px;font-weight:600">${brl(g.med*12)}/ano</div></div></div>`).join('')+`<div class="alert warn" style="margin-top:10px">Somam <b>${brl(sum(R,g=>g.med))}/mês = ${brl(sum(R,g=>g.med)*12)}/ano</b>. Pergunta do coach: você ainda usa todos? Cancelar um que não usa é o corte mais fácil que existe.</div>`:'<div class="empty">Nenhum gasto repetido encontrado ainda. Lance os gastos sempre com o mesmo nome para o app reconhecer.</div>'}
+   ${fixas.length?`<div class="stat-line" style="margin-top:8px"><span>Contas fixas cadastradas (${fixas.length})</span><b>${brl(sum(fixas,b=>+b.valor))}/mês</b></div>`:''}</div>
+  <div class="card"><h3>🏛 Evolução do patrimônio líquido</h3><div class="sub">O app guarda um retrato por mês a partir de agora</div>${ph.length>1?'<div class="chart-box sm"><canvas id="chPL"></canvas></div>':`<div class="stat-line"><span>${ph.length?mLabel(ph[0][0],true):'Hoje'}</span><b>${brl(ph.length?ph[0][1]:plAgora())}</b></div><div class="muted" style="font-size:12px">O gráfico aparece a partir do segundo mês.</div>`}</div>`;
+  setTimeout(()=>{
+    mkChart('chAno',{type:'bar',data:{labels:D.map(d=>mLabel(d.ym)),datasets:[{label:'Renda',data:D.map(d=>d.inc),backgroundColor:cssVar('--accent'),borderRadius:4},{label:'Gastos',data:D.map(d=>d.needs+d.wants),backgroundColor:cssVar('--wants'),borderRadius:4},{label:'Poupado',data:D.map(d=>d.sav),backgroundColor:cssVar('--savings'),borderRadius:4}]},options:{scales:{y:moneyAxis,x:{grid:{display:false}}},plugins:{legend:{position:'bottom',labels:{boxWidth:8}}}}});
+    if(ph.length>1)mkChart('chPL',{type:'line',data:{labels:ph.map(x=>mLabel(x[0])),datasets:[{label:'Patrimônio',data:ph.map(x=>x[1]),borderColor:cssVar('--savings'),backgroundColor:cssVar('--savings')+'22',fill:true,tension:.3}]},options:{plugins:{legend:{display:false}},scales:{y:moneyAxis,x:{grid:{display:false}}}}})});
+  return h;
+}
+/* ---------- fechamento do mês guiado ---------- */
+function vFechar(){
+  const ym=curMonth,prox=addM(ym,1),inc=incomeTotal(ym),b=bucketSummary(ym),gasto=b.needs.real+b.wants.real,F=(state.fechamentos||{})[ym];
+  const est=comparison(ym).filter(r=>r.tipo!=='savings'&&r.plan>0&&r.diff>0.005).sort((a,c)=>c.diff-a.diff).slice(0,6),sem=comparison(ym).filter(r=>r.unplanned&&r.real>0),pend=billsOf(ym).filter(x=>!x.pay),nx=state.months[prox]?month(prox).budget:[],faltam=month(ym).budget.filter(b=>!nx.some(x=>x.tipo===b.tipo&&norm(x.cat)===norm(b.cat))),vazio=faltam.length>0;
+  const passo=(n,t,ok,corpo)=>`<div class="card"><div class="row" style="flex-wrap:nowrap;margin-bottom:8px"><div class="ic" style="width:34px;height:34px;border-radius:50%;display:grid;place-items:center;flex:none;font-weight:800;background:${ok?'color-mix(in srgb,var(--ok) 22%,transparent)':'var(--panel2)'}">${ok?'✓':n}</div><h3 style="margin:0">${t}</h3></div>${corpo}</div>`;
+  return`<div class="card hero"><div class="lbl">🗓 Fechamento de ${mLabel(ym,true)}</div><div class="big">${F?'Fechado ✓':'5 passos · 5 minutos'}</div><div class="mini"><span>${F?'Concluído em '+fmtDate(F.slice(0,10)):'Use as setas do topo para escolher o mês que quer fechar.'}</span></div></div>`+
+  passo(1,'Como foi o mês',true,`<div class="stat-line"><span>Renda</span><b>${brl(inc)}</b></div><div class="stat-line"><span>Gastos (Needs + Wants)</span><b>${brl(gasto)}</b></div><div class="stat-line"><span>Poupado</span><b class="pos">${brl(b.savings.real)}${inc?' · '+pctf(b.savings.real/inc*100):''}</b></div><div class="stat-line"><span>Sobrou sem destino</span><b class="${inc-gasto-b.savings.real<0?'neg':''}">${brl(inc-gasto-b.savings.real)}</b></div>${inc-gasto-b.savings.real>50?'<div class="alert ok" style="margin-top:8px">💡 Sobrou dinheiro sem destino: mande para a reserva ou para uma meta antes que ele suma.</div>':inc-gasto-b.savings.real<0?'<div class="alert bad" style="margin-top:8px">O mês fechou no vermelho. Veja no passo 2 onde estourou e ajuste o próximo.</div>':''}`)+
+  passo(2,'Onde passou do planejado',!est.length,est.length?est.map(r=>`<div class="mrow" style="cursor:default"><div class="tx"><b>${esc(r.cat)}</b><small>planejado ${brl(r.plan)} · gastou ${brl(r.real)} (+${brl(r.diff)})</small></div><button class="btn sm" data-act="fecAjusta" data-id="${esc(r.tipo+'::'+r.cat)}">Usar ${brl(Math.ceil(r.real/10)*10)} em ${mLabel(prox)}</button></div>`).join('')+'<div class="muted" style="font-size:12px;margin-top:6px">Se o estouro foi exceção, não mexa. Se acontece todo mês, o budget é que está irreal — ajuste.</div>':'<div class="alert ok">Nenhuma categoria passou do budget. 👏</div>')+
+  passo(3,'Pendências',!pend.length&&!sem.length,(pend.length?`<div class="alert warn">${pend.length} conta(s) fixa(s) sem pagamento lançado: ${pend.map(x=>esc(x.b.nome)).join(', ')}. <button class="btn sm" data-act="nav" data-id="bills">Abrir contas</button></div>`:'')+(sem.length?`<div class="alert warn">${sem.length} categoria(s) com gasto fora do orçamento: ${sem.map(r=>esc(r.cat)).join(', ')}. <button class="btn sm" data-act="budTab" data-id="needs">Organizar</button></div>`:'')+(!pend.length&&!sem.length?'<div class="alert ok">Tudo em ordem.</div>':''))+
+  passo(4,'Preparar '+mLabel(prox,true),!vazio,vazio?`<p class="muted" style="margin:0 0 10px">${nx.length?'Faltam '+faltam.length+' categoria(s) deste mês em '+mLabel(prox,true)+'.':mLabel(prox,true)+' ainda não tem orçamento.'}</p><button class="btn primary" data-act="fecCopiar">${nx.length?'Completar com as categorias deste mês':'Copiar orçamento e rendas fixas deste mês'}</button>`:`<div class="alert ok">${mLabel(prox,true)} já tem orçamento (${brl(sum(month(prox).budget,x=>x.valor))} planejados).</div>`)+
+  passo(5,'Guardar uma cópia',!!SY.cfg||!backupDue(),SY.cfg?`<div class="alert ok">☁️ Sincronização ligada — seus dados já estão na nuvem.</div>`:`<button class="btn" data-act="shareBackup">📤 Fazer backup agora</button>`)+
+  `<button class="btn primary" data-act="fecConcluir" style="justify-content:center;padding:14px">${F?'Fechar de novo':'✅ Concluir fechamento de '+mLabel(ym,true)}</button>`;
+}
+/* ---------- dividir despesas ---------- */
+function splitSaldos(){const S={};(state.splits||[]).forEach(s=>{const outro=s.valor*(1-(+s.minha)/100),eu=s.valor*(+s.minha)/100;S[s.pessoa]=(S[s.pessoa]||0)+(s.tipo==='acerto'?s.valor*(s.quem==='eu'?1:-1):s.quem==='eu'?outro:-eu)});return S}
+function vDividir(){
+  const L=[...(state.splits||[])].sort((a,b)=>b.date.localeCompare(a.date)||(b.criado||0)-(a.criado||0)),S=splitSaldos(),P=Object.entries(S);
+  let h=`<div class="card"><div class="card-head"><div><h3>🤝 Dividir despesas</h3><div class="sub">Anote o que foi dividido e o app calcula quem deve quanto</div></div><button class="btn sm primary" data-act="splitAdd">+ Despesa</button></div>
+   ${P.length?P.map(([p,v])=>`<div class="mrow" style="cursor:default"><div class="ic" style="background:var(--panel2)">👤</div><div class="tx"><b>${esc(p)}</b><small>${Math.abs(v)<0.01?'Tudo certo, ninguém deve nada':v>0?'deve para você':'você deve'}</small></div><div class="vl ${v>0.01?'pos':v<-0.01?'neg':''}">${brl(Math.abs(v))}</div>${Math.abs(v)>=0.01?`<button class="btn sm" data-act="splitAcerto" data-id="${esc(p)}">Acertar</button>`:''}</div>`).join(''):'<div class="empty">Nada dividido ainda. Ex.: você pagou R$ 120 de pizza dividida meio a meio — a outra pessoa deve R$ 60.</div>'}</div>`;
+  if(L.length)h+=`<div class="card"><h3>Histórico</h3><div class="mlist">${L.slice(0,40).map(s=>`<div class="mrow" style="cursor:default"><div class="tx"><b>${s.tipo==='acerto'?'💸 Acerto de contas':esc(s.desc)}</b><small>${fmtDate(s.date)} · ${esc(s.pessoa)} · ${s.tipo==='acerto'?(s.quem==='eu'?'você pagou':'pagou para você'):(s.quem==='eu'?'você pagou':esc(s.pessoa)+' pagou')+' · sua parte '+s.minha+'%'}</small></div><div class="vl">${brl(s.valor)}</div><button class="icon-btn" data-act="splitDel" data-id="${s.id}">🗑</button></div>`).join('')}</div></div>`;
+  return h+`<div class="muted" style="font-size:12px;padding:0 4px">Isto é só um caderno de "quem deve quem". Para o gasto entrar no seu orçamento, lance a sua parte normalmente no +.</div>`;
+}
+function splitForm(){
+  const nomes=[...new Set((state.splits||[]).map(s=>s.pessoa))];
+  openForm({title:'Despesa dividida',fields:[
+    {name:'pessoa',label:'Com quem',value:nomes[0]||'',list:nomes,required:true,placeholder:'Nome'},
+    {name:'desc',label:'O que foi',required:true,placeholder:'Ex.: Mercado do mês'},
+    {name:'valor',label:'Valor total (R$)',type:'number',step:'0.01',min:0,required:true},
+    {name:'quem',label:'Quem pagou',type:'select',options:[['eu','Eu paguei'],['outro','A outra pessoa pagou']],value:'eu'},
+    {name:'minha',label:'Minha parte (%)',type:'number',step:'1',min:0,value:50},
+    {name:'date',label:'Data',type:'date',value:todayISO()}
+  ],onSave:d=>{if(!(d.valor>0))return false;d.minha=Math.max(0,Math.min(100,d.minha));state.splits=state.splits||[];state.splits.push({id:uid(),criado:Date.now(),tipo:'despesa',...d});toast('Anotado')}});
+}
+/* ---------- comprovante em foto (fica só neste aparelho) ---------- */
+function fotoReduz(file){return new Promise((ok,err)=>{const im=new Image(),u=URL.createObjectURL(file);im.onload=()=>{const k=Math.min(1,1000/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);c.getContext('2d').drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(u);ok(c.toDataURL('image/jpeg',.6))};im.onerror=err;im.src=u})}
+async function fotoPinta(id){const box=$('#fotoBox');if(!box)return;let d=null;try{d=await kvGet('foto:'+id)}catch(e){}const e=find(state.expenses,id);
+  box.innerHTML=d?`<img src="${d}" alt="Comprovante" style="width:100%;border-radius:12px;border:1px solid var(--border)"><div class="row" style="margin-top:8px"><button type="button" class="btn sm" data-act="fotoTroca" data-id="${id}">📷 Trocar</button><button type="button" class="btn sm danger" data-act="fotoDel" data-id="${id}">Remover foto</button></div>`
+   :`<button type="button" class="btn" data-act="fotoTroca" data-id="${id}">📷 Anexar comprovante</button>${e&&e.foto?'<div class="muted" style="font-size:12px;margin-top:6px">Este gasto tem uma foto guardada em outro aparelho.</div>':''}`}
+/* ---------- lançar por frase ou voz: "mercado 85 no pix" ---------- */
+const sa=x=>norm(x).normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+function lerFrase(txt){
+  const o={},n=sa(txt);if(!n)return o;
+  const v=txt.match(/(\d{1,3}(?:\.\d{3})*,\d{1,2}|\d+(?:[.,]\d{1,2})?)/);if(v)o.valor=parseNum(v[1].includes(',')?v[1]:v[1].replace('.',','));
+  const ben=state.benefits.find(b=>/\bvale\b|\bva\b|\bvr\b/.test(n)||n.includes(sa(b.nome))),card=state.cards.find(c=>n.includes(sa(c.nome)));
+  if(/\bpix\b/.test(n))o.pay='Pix';else if(/\bdebito\b/.test(n))o.pay='Débito';else if(/\bdinheiro\b/.test(n))o.pay='Dinheiro';else if(/\bboleto\b/.test(n))o.pay='Boleto';
+  else if(ben)o.pay='ben:'+ben.id;else if((card||/credito|cartao/.test(n))&&state.cards.length)o.pay='card:'+(card||state.cards[0]).id;
+  const cats=[];month().budget.forEach(b=>cats.push({cat:b.cat,tipo:b.tipo}));state.expenses.slice(-300).forEach(e=>cats.push({cat:e.cat,tipo:e.tipo}));
+  const hit=cats.filter(c=>c.cat).sort((a,b)=>b.cat.length-a.cat.length).find(c=>n.includes(sa(c.cat))||sa(c.cat).split(/[\s/&-]+/).some(w=>w.length>3&&n.split(' ').includes(w)));
+  if(hit){o.cat=hit.cat;o.tipo=hit.tipo}
+  const resto=txt.replace(v?v[0]:'','').replace(/\b(reais|real|r\$|no|na|em|de|com|pix|d[eé]bito|cr[eé]dito|cart[aã]o|dinheiro|boleto|vale)\b/gi,' ').replace(/\s+/g,' ').trim();
+  if(resto)o.desc=resto.charAt(0).toUpperCase()+resto.slice(1);
+  if(!o.cat&&o.desc){const d=sa(o.desc).split(' ')[0],ant=[...state.expenses].reverse().find(e=>d.length>2&&sa(e.desc).includes(d));if(ant){o.cat=ant.cat;o.tipo=ant.tipo}}
+  return o;
+}
+const VOZ=window.SpeechRecognition||window.webkitSpeechRecognition;
+Object.assign(ACT,{
+  frase:()=>{const t=($('#qFrase')||{}).value||'';const o=lerFrase(t);if(!(o.valor>0)){toast('Diga o valor. Ex.: "mercado 85 no pix"','err');return}closeModal();quickAdd(o)},
+  voz:()=>{if(!VOZ)return;const r=new VOZ();r.lang='pt-BR';r.interimResults=false;const b=$('#qVoz');if(b)b.textContent='🎙 Ouvindo…';
+    r.onresult=e=>{const t=e.results[0][0].transcript;const i=$('#qFrase');if(i)i.value=t;ACT.frase()};r.onerror=()=>{toast('Não consegui ouvir. Digite a frase ou use o microfone do teclado.','err');if(b)b.textContent='🎤'};r.onend=()=>{if(b)b.textContent='🎤'};try{r.start()}catch(e){}},
+  fecAjusta:id=>{const[t,...c]=id.split('::'),cat=c.join('::'),r=comparison(curMonth).find(x=>x.tipo===t&&x.cat===cat),prox=addM(curMonth,1),m=month(prox,true),v=Math.ceil(r.real/10)*10;
+    let it=m.budget.find(b=>b.tipo===t&&norm(b.cat)===norm(cat));if(!it){it={id:uid(),cat,tipo:t,valor:0};m.budget.push(it)}it.valor=v;save();render();toast(cat+' em '+mLabel(prox)+': '+brl(v))},
+  fecCopiar:()=>{const a=month(curMonth),prox=addM(curMonth,1),m=month(prox,true);
+    a.budget.forEach(b=>{if(!m.budget.some(x=>x.tipo===b.tipo&&norm(x.cat)===norm(b.cat)))m.budget.push({...b,id:uid()})});
+    if(!(m.income||[]).length){m.income=(a.income||[]).filter(i=>i.natureza!=='variavel').map(i=>({...i,id:uid(),date:i.date?prox+i.date.slice(7):i.date}));if(a.pct)m.pct={...a.pct}}save();render();toast('Orçamento de '+mLabel(prox,true)+' criado')},
+  fecConcluir:()=>{state.fechamentos=Object.assign({},state.fechamentos,{[curMonth]:new Date().toISOString()});save();render();window.scrollTo(0,0);try{fxMoeda('savings')}catch(e){}toast('Mês fechado ✓ Bom trabalho!')},
+  splitAdd:()=>splitForm(),
+  splitDel:id=>delUndo('Anotação apagada',()=>{tomb(id);state.splits=(state.splits||[]).filter(s=>s.id!==id)}),
+  splitAcerto:p=>{const v=splitSaldos()[p]||0;if(Math.abs(v)<0.01)return;state.splits.push({id:uid(),criado:Date.now(),tipo:'acerto',pessoa:p,valor:Math.round(Math.abs(v)*100)/100,quem:v>0?'outro':'eu',minha:0,date:todayISO(),desc:'Acerto'});save();render();toast('Contas acertadas com '+p)},
+  fotoTroca:id=>{const i=document.createElement('input');i.type='file';i.accept='image/*';i.onchange=async()=>{const f=i.files[0];if(!f)return;try{await kvSet('foto:'+id,await fotoReduz(f));const e=find(state.expenses,id);if(e&&!e.foto){e.foto=true;save()}fotoPinta(id);toast('Comprovante guardado')}catch(e){toast('Não consegui ler a imagem','err')}};i.click()},
+  fotoDel:async id=>{try{await kvSet('foto:'+id,undefined)}catch(e){}const e=find(state.expenses,id);if(e&&e.foto){delete e.foto;save()}fotoPinta(id)}
+});
+Object.assign(VIEWS,{anual:vAnual,fechar:vFechar,dividir:vDividir});
+
+/* ============================================================
+   MANUAL INTERATIVO — busca, primeiros passos, tópicos, tour guiado e dúvidas
+   Funciona no celular (barra de baixo / Mais) e no computador (menu lateral).
+   ============================================================ */
+const MAN_AREAS=[['todas','Tudo'],['dia','📲 Dia a dia'],['contas','🏦 Contas e cartões'],['plan','📋 Planejamento'],['futuro','🌱 Dívidas, metas e investimentos'],['analise','📊 Análises'],['sistema','⚙️ Sistema e segurança']];
+const manLidos=()=>{try{return JSON.parse(localStorage.getItem('finm_manual'))||{}}catch(e){return{}}};
+const manMenu=()=>isMobile()?'Mais':'Menu lateral';
+const MAN=[
+ {id:'inicio',a:'dia',ic:'🏠',t:'Tela Início: o resumo de tudo',go:['nav','home','Abrir o Início'],onde:['Início'],
+  o:'É o painel do dia: mostra quanto você tem, quanto ainda pode gastar e o que vence em breve.',
+  p:['<b>Seu dinheiro hoje</b>: saldo das contas, do vale e o limite livre de cada cartão. Toque em qualquer linha para editar.','<b>Próximos 30 dias</b>: contas, faturas e rendas em ordem de data.','<b>Ainda pode gastar</b>: o que resta do orçamento de Necessidades + Desejos e quanto dá por dia.','Mais abaixo: contas a pagar, categorias perto do limite, últimos lançamentos, seu perfil e alertas.'],
+  d:['Para trocar de mês use as setas ‹ › no topo. Tocar no nome do mês volta para o mês atual.']},
+ {id:'lancar',a:'dia',ic:'➕',t:'Lançar um gasto em 3 toques',go:['quickAdd','','Lançar um gasto agora'],onde:['botão +'],
+  o:'O gesto mais importante do app. Quanto mais você lança no dia, mais certo fica todo o resto.',
+  p:['Toque no <b>+</b> (no computador: botão <b>+ Lançar gasto</b> no topo).','Digite o <b>valor</b>.','Toque na <b>categoria</b> — as que você mais usa aparecem primeiro.','Toque na <b>forma de pagamento</b>: Pix, Débito, Dinheiro, 🧺 vale ou 💳 um cartão de crédito (com nº de parcelas).','Toque em <b>Salvar</b>. O coach comenta e aparece o botão <b>Desfazer</b>.'],
+  d:['<b>Frase rápida:</b> no campo do topo escreva ou dite “mercado 85 no pix” e toque em ➜.','<b>Colar notificação:</b> copie o aviso do banco e toque em 📋 — o app lê valor e loja.','Com várias contas, o app pergunta de qual conta o dinheiro saiu.','<b>Mais opções</b> abre o formulário completo (descrição, data, grupo).']},
+ {id:'gastos',a:'dia',ic:'🧾',t:'Ver, editar e apagar gastos',go:['nav','expenses','Abrir Gastos'],onde:['Gastos'],
+  o:'A lista de tudo o que foi lançado no mês, agrupada por dia, incluindo as parcelas de cartão que caem naquela fatura.',
+  p:['Use a <b>busca</b> e os filtros de grupo e forma de pagamento.','<b>Toque num lançamento</b> para editar.','Dentro da edição: 🗑 apaga, ⧉ duplica e 📷 anexa a foto do comprovante.'],
+  d:['A foto do comprovante fica só naquele aparelho (não sincroniza), para não pesar os dados.','Apagou sem querer? O aviso que aparece embaixo tem <b>Desfazer</b>.']},
+ {id:'importar',a:'dia',ic:'⬆',t:'Importar o extrato do banco ou a fatura',go:['nav','importar','Abrir Importar extrato'],onde:[manMenu(),'Importar extrato'],
+  o:'Em vez de digitar tudo, traga o arquivo do banco: o app lê as linhas, sugere a categoria e deixa de fora o que já estava lançado.',
+  p:['No app ou site do banco, exporte o extrato (ou a fatura do cartão) em <b>OFX</b> ou <b>CSV</b>.','Aqui, escolha <b>Extrato de conta</b> ou <b>Fatura de cartão</b> e qual conta/cartão.','Toque em <b>Escolher arquivo</b>.','Confira a lista: desmarque o que não quer e ajuste as categorias.','Toque em <b>Importar</b>. Se algo sair errado, o aviso tem <b>Desfazer</b>.'],
+  d:['Linhas que parecem já lançadas vêm desmarcadas — importar o mesmo arquivo duas vezes não duplica.','Trocou a categoria de uma linha? As outras do mesmo estabelecimento acompanham, e o app aprende para a próxima vez.','Entradas de dinheiro vêm desmarcadas: marque só o que for renda (transferência entre suas contas não é renda).']},
+ {id:'busca',a:'dia',ic:'🔎',t:'Buscar em tudo e usar etiquetas',go:['nav','busca','Abrir Buscar & etiquetas'],onde:[manMenu(),'Buscar & etiquetas'],
+  o:'Ache qualquer lançamento de qualquer mês e some gastos de um projeto (viagem, reforma, festa) mesmo que estejam em categorias diferentes.',
+  p:['Abra <b>Buscar & etiquetas</b> (ou o botão 🔎 na tela Gastos).','Digite um nome (ifood), uma categoria, um valor (39,90) ou uma etiqueta (#viagem).','Toque num resultado para editar.','Para etiquetar: no lançamento rápido escreva na descrição <b>passagem #viagem</b>; ou edite o gasto e preencha <b>Etiquetas</b>.'],
+  d:['O total aparece no topo dos resultados — ótimo para saber quanto custou a viagem inteira.','Etiquetas não mudam o orçamento: o gasto continua na categoria dele.']},
+ {id:'possocomprar',a:'dia',ic:'🤔',t:'Posso comprar? (simulador)',go:['nav','possocomprar','Abrir Posso comprar?'],onde:[manMenu(),'Posso comprar?'],
+  o:'Antes de comprar, veja o efeito: categoria, mês, limite do cartão, saldo, faturas futuras e metas. Nada é lançado.',
+  p:['Digite o valor.','Escolha Pix/débito ou o cartão (e as parcelas).','Escolha a categoria.','Leia o veredito: 🟢 cabe, 🟡 aperta, 🔴 não cabe — e os motivos.','Comprou? Toque em <b>Comprei — lançar agora</b>.'],
+  d:['No cartão, o app mostra as próximas faturas já com a parcela somada.','Desejos acima de R$ 200 ganham o lembrete da regra das 24 horas.']},
+ {id:'recorrentes',a:'dia',ic:'🔁',t:'Renda e contas que se lançam sozinhas',go:['nav','bills','Abrir Contas fixas'],onde:['Renda & Orçamento / Contas fixas','Editar'],
+  o:'Salário que cai todo mês e conta em débito automático não precisam ser digitados de novo.',
+  p:['<b>Renda</b>: ao adicionar/editar, marque <b>🔁 Repetir automaticamente todo mês</b>. Nos meses seguintes ela já aparece lançada.','<b>Conta fixa</b>: edite e marque <b>⚙ Débito automático</b>. No dia do vencimento o pagamento é lançado sozinho.','Valor mudou? Edite o lançamento do mês mais recente — os próximos seguem o novo valor.'],
+  d:['Para parar, desmarque a opção no lançamento mais recente.','Apagou um lançamento automático? Ele não volta a aparecer naquele mês.','Itens automáticos mostram ⚙ na lista de gastos.']},
+ {id:'casal',a:'sistema',ic:'👥',t:'Casal / família: quem lançou',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Configurações › Casal / família'],
+  o:'Duas pessoas no mesmo orçamento, cada uma no próprio celular, vendo quem lançou cada gasto.',
+  p:['Uma pessoa gera o token do GitHub e conecta a sincronização.','Passe o token pessoalmente (nunca por WhatsApp/e-mail) e a outra pessoa conecta com o <b>mesmo token</b>.','Em cada celular, abra <b>Configurações › Casal / família</b> e escreva o seu nome.','Os novos lançamentos mostram 👤 nome; em Configurações aparece o total do mês por pessoa.'],
+  d:['O nome fica só no aparelho; não é senha.','Na busca, digite o nome para ver tudo o que a pessoa lançou.']},
+ {id:'rendimento',a:'dia',ic:'📈',t:'Investimentos que rendem sozinhos',go:['nav','invest','Abrir Investir'],onde:[manMenu(),'Investir › Minha carteira'],
+  o:'Informe a taxa (ex.: 100% do CDI) e o valor do investimento é estimado todo dia útil.',
+  p:['Abra <b>Investir</b> e toque no investimento (ou adicione um).','Em <b>Rendimento automático</b>, escolha % do CDI, Prefixado ou IPCA + taxa e digite a taxa.','Salve. O “Valor atual” passa a crescer sozinho.'],
+  d:['É uma estimativa bruta (antes do IR). De vez em quando, copie o valor real do app do banco e salve — a conta recomeça dali.','Selic e IPCA usados ficam no Simulador de Investir; atualize quando mudarem.']},
+ {id:'exportar',a:'sistema',ic:'📤',t:'Exportar planilha e PDF',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Configurações › Exportar'],
+  o:'Leve seus dados para o contador, o Imposto de Renda ou o Excel.',
+  p:['Abra <b>Configurações › Exportar</b> e escolha o ano.','<b>Planilha do ano (CSV)</b>: abre no Excel e no Google Planilhas.','<b>Relatório anual</b> ou <b>do mês (PDF)</b>: na tela de impressão, escolha <b>Salvar como PDF</b>.'],
+  d:['No celular, a planilha abre a tela de compartilhar: salve no Drive ou mande para você mesmo.']},
+ {id:'lixeira',a:'sistema',ic:'⏪',t:'Lixeira e voltar no tempo',go:['nav','versoes','Abrir Voltar no tempo'],onde:[manMenu(),'Lixeira / Voltar no tempo'],
+  o:'Apagou algo sem querer ou fez uma bagunça? Dá para desfazer.',
+  p:['<b>Lixeira</b>: tudo o que você apaga fica lá por 30 dias. Toque em <b>Restaurar</b>.','<b>Voltar no tempo</b>: o app guarda uma cópia por dia. Escolha a data e toque em <b>Voltar</b> — todos os dados voltam a ficar como estavam.','Com a sincronização ligada, também aparecem as <b>versões na nuvem</b> (uma a cada sincronização).'],
+  d:['Antes de voltar no tempo, o app guarda uma cópia de agora: se mudar de ideia, volte para ela.','A lixeira e as cópias diárias ficam no aparelho; o que você restaura vale também nos outros aparelhos sincronizados.']},
+ {id:'coach',a:'dia',ic:'🤖',t:'Coach: o comentário depois de cada gasto',go:['nav','learn','Abrir Aprender'],onde:[manMenu(),'Aprender'],
+  o:'Depois de salvar, um cartão mostra como ficou a categoria e dá uma dica prática.',
+  p:['🟢 <b>Dentro do budget</b>: quanto resta e quanto dá por dia.','🟡 <b>No limite / ritmo acelerado</b>: você está gastando mais rápido que o mês.','🔴 <b>Acima do budget</b>: quanto passou e o que fazer.','🟠 <b>Fora do orçamento</b>: a categoria não tem valor planejado — há um botão para criar.'],
+  d:['Para ligar ou desligar: '+manMenu()+' › Coach nos gastos.']},
+ {id:'vale',a:'dia',ic:'🧺',t:'Vale-alimentação / refeição',go:['nav','vale','Abrir o Vale'],onde:['Vale'],
+  o:'O vale funciona como uma carteira separada, com recarga automática todo mês.',
+  p:['Cadastre o vale: nome, valor mensal e dia da recarga.','Ao lançar um gasto, escolha <b>🧺 nome do vale</b> como pagamento.','O saldo desce sozinho e o app mostra quanto dá para gastar por dia até a próxima recarga.'],d:[]},
+ {id:'contas',a:'contas',ic:'🏦',t:'Contas e saldos (vários bancos)',go:['nav','contas','Abrir Contas e saldos'],onde:[manMenu(),'Contas e saldos'],
+  o:'Cadastre cada conta — corrente, poupança, carteira digital, dinheiro — com o saldo de hoje.',
+  p:['Toque em <b>+ Conta</b>, escolha o banco e o tipo e digite o saldo que aparece no app do banco.','Marque <b>⭐ Conta principal</b> na que você mais usa: lançamentos sem conta escolhida caem nela.','Com <b>“atualizar sozinho”</b> ligado, o saldo muda com os gastos (Pix/débito/boleto), as rendas com data e as faturas pagas por aquela conta.','De vez em quando, toque na conta e <b>confira com o banco</b> para corrigir diferenças.'],
+  d:['<b>⇄ Transferir</b> move dinheiro entre duas contas sem contar como gasto.','<b>Patrimônio líquido</b> = contas + investimentos + bens − dívidas.']},
+ {id:'cartoes',a:'contas',ic:'💳',t:'Cartões de crédito, limite e faturas',go:['nav','cards','Abrir Cartões'],onde:[manMenu(),'Cartões'],
+  o:'Cada cartão tem limite, dia de fechamento, dia de vencimento e a conta que paga a fatura.',
+  p:['Cadastre o cartão em <b>+ Cartão</b>.','Ao lançar um gasto, escolha <b>💳 Crédito — nome do cartão</b> e o número de parcelas.','A compra <b>desconta do limite</b> e entra na fatura certa, de acordo com a data e o fechamento.','No vencimento, o valor da fatura sai da conta que você indicou.','Pagou adiantado ou só uma parte? Toque em <b>💸 Pagar fatura</b>: o valor volta ao limite na hora e no vencimento sai só o que faltar.','Compra cancelada ou devolvida? Abra a compra e toque em <b>↩ Estorno</b> (também funciona em gastos de conta).'],
+  d:['No Início, cada cartão mostra o <b>limite livre</b> e uma barra de uso (amarela a partir de 70%, vermelha a partir de 90%).','Toque no cartão para editar ou apagar. Apagar o cartão apaga as compras dele.']},
+ {id:'orcamento',a:'plan',ic:'📋',t:'Renda & Orçamento (as abas)',go:['budTab','renda','Abrir Renda & Orçamento'],onde:[manMenu(),'Renda & Orçamento'],
+  o:'Onde você diz quanto entra e dá um destino para cada real. As abas separam: Renda, Needs, Wants, Savings, Poupança, Investimentos e Reserva.',
+  p:['<b>Renda</b>: cadastre cada fonte (fixa ou variável) e ajuste as porcentagens dos 3 grupos.','<b>Needs / Wants / Savings</b>: crie as categorias com o valor planejado. O gasto real aparece ao lado.','Em cada categoria: <b>＋ Lançar · ✎ Editar · 🗑 Apagar</b>.','Mês novo? Use <b>Copiar do mês anterior</b>.'],
+  d:['Categoria marcada <b>“não orçado”</b> veio de um gasto com nome diferente: use <b>Editar</b> para juntar com a categoria certa.','Renomear uma categoria pode valer para todo o histórico (opção já marcada).','<b>💡 Sugerir valores</b> usa a média dos seus últimos meses.','<b>♻ Acumular</b> (ao editar a categoria): o que sobrar no mês passa para o próximo — ideal para presentes, roupas e manutenção.']},
+ {id:'fixas',a:'plan',ic:'📅',t:'Contas fixas e vencimentos',go:['nav','bills','Abrir Contas fixas'],onde:[manMenu(),'Contas fixas'],
+  o:'Aluguel, internet, luz: contas que se repetem. O app avisa o que está para vencer.',
+  p:['Cadastre a conta com valor, dia do vencimento e categoria.','Quando pagar, toque em <b>Pagar</b>: o gasto é lançado sozinho na categoria.','As contas em aberto aparecem no Início e em <b>Próximos 30 dias</b>.'],d:[]},
+ {id:'fechar',a:'plan',ic:'🗓',t:'Fechar o mês em 5 minutos',go:['nav','fechar','Abrir Fechar o mês'],onde:[manMenu(),'Fechar o mês'],
+  o:'Um roteiro de 5 passos para encerrar o mês e preparar o próximo.',
+  p:['Veja como foi: renda, gastos, poupado e o que sobrou.','Confira onde passou do planejado e, se quiser, ajuste o orçamento do mês seguinte com um toque.','Resolva as pendências (contas sem pagamento, gastos fora do orçamento).','Copie as categorias e rendas fixas para o próximo mês.','Guarde uma cópia e toque em <b>Concluir</b>.'],
+  d:['Nos primeiros 10 dias do mês, o Início lembra você de fechar o mês anterior.']},
+ {id:'dividas',a:'futuro',ic:'⛓',t:'Dívidas e financiamentos',go:['nav','debts','Abrir Dívidas'],onde:[manMenu(),'Dívidas'],
+  o:'Cadastre cada dívida com parcela, total de parcelas, juros e, se for um bem (carro, casa), o valor dele.',
+  p:['Cadastre a dívida e vá marcando as parcelas pagas.','Em <b>Investir › Programa › Plano de quitação</b>, simule quanto tempo e juros você economiza pagando um pouco a mais.'],d:[]},
+ {id:'metas',a:'futuro',ic:'🎯',t:'Metas e reservas com destino',go:['nav','goals','Abrir Metas'],onde:[manMenu(),'Metas & Reservas'],
+  o:'Metas têm valor e prazo. Reservas com destino guardam um pouco por mês para gastos que você sabe que virão (IPVA, revisão do carro).',
+  p:['Crie a meta com valor-alvo e prazo: o app calcula quanto guardar por mês.','Use <b>+ Aporte</b> sempre que guardar dinheiro.','Uma meta com “reserva” ou “emergência” no nome conta como sua reserva de emergência.'],d:[]},
+ {id:'investir',a:'futuro',ic:'📈',t:'Investir e o programa “Para onde foi meu dinheiro?”',go:['invTab','prog','Abrir Investir'],onde:[manMenu(),'Investir'],
+  o:'Seis abas: Programa, Guia, Perfil, Carteira, Simular e Segurança.',
+  p:['<b>Programa</b>: 7 etapas, do diagnóstico à aposentadoria. O app marca sozinho o que você já cumpriu.','<b>Guia</b>: os tipos de investimento do Brasil, com risco, imposto, FGC e cuidados.','<b>Perfil</b>: 7 perguntas definem se você é conservador, moderado ou arrojado.','<b>Carteira</b>: registre seus investimentos; o app avisa sobre FGC, vencimentos e distribuição.','<b>Simular</b>: juros compostos e aposentadoria.','<b>Segurança</b>: sinais de golpe e checklist antes de investir.'],
+  d:['O conteúdo é educativo. Não é recomendação individual de investimento.']},
+ {id:'aprender',a:'futuro',ic:'🎓',t:'Aprender e Meu perfil',go:['nav','profile','Abrir Meu perfil'],onde:[manMenu(),'Aprender / Meu perfil'],
+  o:'Aulas curtas com os seus números e uma nota de 0 a 100 para a sua saúde financeira.',
+  p:['<b>Aprender</b>: 12 aulas de 2 a 4 minutos, cada uma com um exercício.','<b>Meu perfil</b>: nota em 5 pilares (poupar, gastos, dívidas, proteção, planejamento), o que mudou nos últimos meses e próximos passos.'],d:[]},
+ {id:'analises',a:'analise',ic:'📊',t:'Dashboard, Revisão e Relatório do mês',go:['nav','dashboard','Abrir o Dashboard'],onde:[manMenu(),'Visão geral'],
+  o:'Três formas de olhar os números do mês.',
+  p:['<b>Dashboard</b>: gráficos de renda, gastos e categorias.','<b>Revisão do período</b>: como foi o dia, a semana, a quinzena ou o mês.','<b>Relatório do mês</b>: nota de 0 a 100, indicadores, dicas e opção de imprimir.','<b>Planejado × Real</b>: categoria por categoria.'],d:[]},
+ {id:'anual',a:'analise',ic:'📆',t:'Ano, assinaturas e patrimônio',go:['nav','anual','Abrir Ano & assinaturas'],onde:[manMenu(),'Ano & assinaturas'],
+  o:'A visão do ano inteiro e os gastos que se repetem todo mês.',
+  p:['Veja renda, gastos e poupança mês a mês e as maiores categorias do ano.','<b>Assinaturas</b>: gastos com o mesmo nome em 3 meses ou mais, com o custo por ano.','<b>Patrimônio líquido</b>: o app guarda um retrato por mês e desenha a evolução.'],
+  d:['Para o app reconhecer uma assinatura, lance sempre com o mesmo nome.']},
+ {id:'dividir',a:'analise',ic:'🤝',t:'Dividir despesas com alguém',go:['nav','dividir','Abrir Dividir despesas'],onde:[manMenu(),'Dividir despesas'],
+  o:'Um caderno de “quem deve quem”.',
+  p:['Toque em <b>+ Despesa</b>: com quem, o que foi, valor total, quem pagou e a sua parte em %.','O app soma e mostra o saldo com cada pessoa.','Quando acertarem, toque em <b>Acertar</b>.'],
+  d:['É separado do orçamento: a sua parte do gasto você lança normalmente no +.']},
+ {id:'sync',a:'sistema',ic:'☁️',t:'Sincronizar celular e computador',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Configurações','Sincronização'],
+  o:'Com um token do GitHub, todos os seus aparelhos mostram os mesmos dados, automaticamente.',
+  p:['Em Configurações, toque no link que abre o GitHub (já com <b>gist</b> marcado).','Escolha <b>No expiration</b>, confira que só <b>gist</b> está marcado e gere o token.','Copie o código <code>ghp_…</code>, cole no app e toque em <b>Conectar</b>.','Nos outros aparelhos, abra o mesmo endereço do app e conecte com o <b>mesmo token</b>.'],
+  d:['☁️✓ no topo = em dia. ☁️⚠️ = erro (toque para ver).','O token é como uma senha: não mande por WhatsApp ou e-mail. Se vazar, apague no GitHub e gere outro.','Sincroniza ao abrir, ao voltar ao app, a cada minuto e logo depois de cada alteração.']},
+ {id:'backup',a:'sistema',ic:'💾',t:'Onde os dados ficam e como fazer backup',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Configurações'],
+  o:'Os dados ficam no seu aparelho, dentro do navegador. O GitHub guarda só o programa.',
+  p:['Cada alteração é salva na hora.','<b>Compartilhar backup</b> gera um arquivo .json que você pode mandar para o Google Drive.','<b>Importar backup</b> traz os dados de volta, juntando sem duplicar.'],
+  d:['Cada navegador tem a sua “gaveta”: os dados do Firefox não aparecem no Chrome. Use a sincronização ou o backup para levar de um para o outro.','Sem sincronização, faça backup toda semana — o Início lembra você.']},
+ {id:'bloqueio',a:'sistema',ic:'🔒',t:'Bloqueio: senha, padrão e digital',go:['lockMenu','','Abrir Bloqueio'],onde:[manMenu(),'Bloqueio'],
+  o:'Tranca o app para quem pegar o seu aparelho.',
+  p:['Faça um backup (ou ligue a sincronização) antes.','Escolha <b>Usar senha</b> ou <b>Usar padrão</b> e confirme duas vezes.','Se quiser, ative a <b>👆 Digital</b>: ela é pedida sozinha ao abrir.','Escolha quando bloquear: só manual, ao sair do app, ou após 1, 5 ou 15 minutos fora.','Para bloquear na hora, toque no <b>cadeado 🔒</b> do topo. No computador, o atalho é <kbd>Alt</kbd> + <kbd>L</kbd>.'],
+  d:['O app sempre abre trancado. Enquanto está trancado, nada aparece e os atalhos não funcionam.','É uma trava de privacidade: ela <b>não criptografa</b> os dados guardados no navegador.','<b>Esqueceu?</b> Não há recuperação: o botão “Esqueci” apaga os dados do aparelho. Com a sincronização ligada, basta conectar o token de novo.','O bloqueio vale só naquele aparelho e não protege o arquivo de backup.']},
+ {id:'instalar',a:'sistema',ic:'📲',t:'Instalar, atualizar e trocar o ícone',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Atualizar o app'],
+  o:'O app pode ser instalado na tela inicial e funciona sem internet.',
+  p:['<b>Celular:</b> abra o endereço no navegador › menu ⋮ › <b>Instalar</b> (ou “Adicionar à tela inicial”).','<b>Computador:</b> é só abrir o endereço; no Chrome/Edge há um ícone de instalar na barra de endereço.','<b>Atualizar:</b> '+manMenu()+' › 🔄 Atualizar o app. Seus dados não são apagados.'],
+  d:['Use sempre pelo ícone instalado: a aba comum do navegador guarda os dados separados.']},
+ {id:'aparencia',a:'sistema',ic:'🎨',t:'Tema, animações e gestos',go:['theme','','Escolher um tema agora'],onde:[manMenu()],
+  o:'Deixe o app do seu jeito.',
+  p:['<b>Temas</b>: '+manMenu()+' › Temas. São 5 visuais (Oceano, Dólar, Ônix, Pergaminho e Aurora), cada um com cores, fundo e fonte próprios.','<b>Animações 3D</b>: '+manMenu()+' › ✨ Animações 3D (ligar/desligar).','<b>Fechar telas</b>: arraste a folha para baixo, use o botão voltar ou toque fora dela.'],d:[]}
+];
+const MAN_FAQ=[
+ ['Lancei um gasto e ele não apareceu.','Confira o mês no topo: o gasto aparece no mês da data dele. Compras no cartão aparecem no mês da <b>fatura</b>, não no da compra.'],
+ ['Uma categoria aparece duas vezes, uma delas como “não orçado”.','Os nomes estão diferentes (um espaço, um hífen). Em Renda & Orçamento, toque em <b>Editar</b> na “não orçado” e escolha o nome da categoria certa — os gastos passam para ela.'],
+ ['O saldo da conta não bate com o banco.','O saldo é uma estimativa feita com o que você lança. Toque na conta, digite o saldo real do banco e salve: a conta recomeça dali.'],
+ ['O celular não mostra a versão nova.','Vá em '+manMenu()+' › 🔄 Atualizar o app. Se o botão não aparecer, abra o endereço no navegador comum, recarregue a página e tente de novo.'],
+ ['Troquei de navegador e os dados sumiram.','Eles continuam no navegador antigo. Ligue a sincronização nos dois (mesmo token) ou faça backup em um e importe no outro.'],
+ ['Posso usar no computador?','Sim, é o mesmo endereço. No computador o menu fica na lateral e as tabelas ficam largas; no celular, o menu fica embaixo e as tabelas viram cartões.'],
+ ['Meus dados ficam públicos no GitHub?','Não. O repositório guarda só o programa. Com a sincronização, os dados vão para um Gist <b>privado</b> da sua conta.'],
+ ['Esqueci a senha do bloqueio.','Use “Esqueci” na tela de bloqueio: apaga os dados daquele aparelho. Depois conecte a sincronização de novo ou importe o backup.'],
+ ['A digital não é pedida.','Depende de o navegador liberar o leitor para sites. Se não liberar, use a senha ou o padrão; no Chrome o suporte costuma ser melhor.']
+];
+const MAN_GLOSS=[['Needs (Necessidades)','O que não dá para cortar sem prejuízo: moradia, mercado, contas, transporte.'],['Wants (Desejos)','O que é opcional: lazer, restaurante, assinaturas, compras.'],['Savings (Poupança)','O que você guarda: reserva, metas, investimentos.'],['Budget','O valor planejado para uma categoria no mês.'],['Fatura','A conta mensal do cartão, com as compras feitas até o dia do fechamento.'],['Limite livre','Limite do cartão menos tudo o que ainda falta pagar (incluindo parcelas futuras).'],['Reserva de emergência','De 3 a 6 meses das suas Necessidades, guardados para imprevistos.'],['Token','Código gerado no GitHub que autoriza o app a guardar seus dados na sua conta.']];
+function manPassos(){
+  const ym=todayYM();let inst=false;try{inst=standalone()}catch(e){}
+  return[
+   ['Cadastrar sua renda',incomeTotal(ym)>0,'budTab','renda','Renda & Orçamento › Renda'],
+   ['Montar o orçamento do mês',!!(state.months[ym]&&month(ym).budget.length),'budTab','needs','Crie as categorias de Needs, Wants e Savings'],
+   ['Cadastrar suas contas e saldos',(state.contas||[]).length>0,'nav','contas','Uma para cada banco'],
+   ['Cadastrar seus cartões',state.cards.length>0,'nav','cards','Com limite, fechamento e vencimento'],
+   ['Lançar o primeiro gasto',state.expenses.length>0,'quickAdd','','Pelo botão +'],
+   ['Ligar a sincronização (ou fazer um backup)',!!SY.cfg||!!meta.exportAt,'nav','settings','Para nunca perder os dados'],
+   ['Proteger com bloqueio',!!lkGet(),'lockMenu','','Senha, padrão ou digital'],
+   ['Instalar o app neste aparelho',inst,'manAbre','instalar','Ícone na tela inicial']];
+}
+function vManual(){
+  const L=manLidos(),area=ui.manArea||'todas',P=manPassos(),feitos=P.filter(p=>p[1]).length,lidos=MAN.filter(t=>L[t.id]).length,prox=P.find(p=>!p[1]);
+  const topico=t=>`<details class="man-t" id="man-${t.id}" data-k="${esc(norm(t.t+' '+t.o+' '+t.p.join(' ')+' '+t.d.join(' ')).replace(/<[^>]+>/g,''))}" ontoggle="if(this.open)manLeu('${t.id}')">
+    <summary><span class="man-ic">${t.ic}</span><span class="man-tt"><b>${t.t}</b><small>${t.onde.map(x=>`<i>${x}</i>`).join(' › ')}</small></span>${L[t.id]?'<span class="man-ok" title="Lido">✓</span>':''}<span class="man-ch">›</span></summary>
+    <div class="man-b"><p>${t.o}</p><ol class="man-ol">${t.p.map(x=>`<li>${x}</li>`).join('')}</ol>${t.d.length?`<div class="man-dica"><b>💡 Dicas</b><ul>${t.d.map(x=>`<li>${x}</li>`).join('')}</ul></div>`:''}
+    <button class="btn primary" data-act="${t.go[0]}" data-id="${t.go[1]}">${t.go[2]} ›</button></div></details>`;
+  return`<div class="card hero man-hero"><div class="lbl">📖 Manual do Minhas Finanças</div><div class="big" style="font-size:24px">Como posso ajudar?</div>
+    <input type="search" id="manBusca" placeholder="🔎 Buscar: cartão, sincronizar, categoria…" oninput="manFiltra(this.value)" autocomplete="off">
+    <div class="row" style="margin-top:12px"><button class="btn" data-act="tour">🧭 Fazer o tour guiado (1 min)</button><span class="mini" style="margin:0"><span>${lidos} de ${MAN.length} tópicos lidos</span></span></div></div>
+  <div class="card man-sec"><div class="card-head"><div><h3>🚀 Comece por aqui</h3><div class="sub" style="margin:0">${feitos} de ${P.length} passos concluídos${prox?' · próximo: <b>'+prox[0]+'</b>':' 🎉'}</div></div></div>${bar(feitos/P.length*100,'ok')}
+    <div class="man-passos">${P.map((p,i)=>`<div class="mrow ${p===prox?'sel':''}" data-act="${p[2]}" data-id="${p[3]}"><div class="ic" style="background:${p[1]?'color-mix(in srgb,var(--ok) 22%,transparent)':'var(--panel2)'}">${p[1]?'✓':i+1}</div><div class="tx"><b>${p[0]}</b><small>${p[4]}</small></div><div class="vl">${p[1]?'':'›'}</div></div>`).join('')}</div></div>
+  <div class="chips man-sec" style="flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px">${MAN_AREAS.map(([k,l])=>`<button class="chip ${area===k?'on':''}" data-act="manArea" data-id="${k}" style="flex:none">${l}</button>`).join('')}</div>
+  <div class="man-grid" id="manGrid">${MAN.filter(t=>area==='todas'||t.a===area).map(topico).join('')}</div>
+  <div id="manVazio" class="card empty" hidden>Nada encontrado. Tente outra palavra — ou veja as dúvidas frequentes abaixo.</div>
+  <div class="card man-sec"><h3>❓ Dúvidas frequentes</h3>${MAN_FAQ.map(([q,r])=>`<details class="man-faq" data-k="${esc(norm(q+' '+r).replace(/<[^>]+>/g,''))}"><summary>${q}<span class="man-ch">›</span></summary><p>${r}</p></details>`).join('')}</div>
+  <div class="card man-sec"><h3>🔤 Palavras que o app usa</h3><div class="man-gloss">${MAN_GLOSS.map(([a,b])=>`<div><b>${a}</b><span>${b}</span></div>`).join('')}</div></div>
+  <div class="muted man-sec" style="font-size:12px;padding:0 4px">Versão ${APP_VERSAO} · O manual acompanha o aparelho: no celular os caminhos começam em “Mais”; no computador, no menu lateral.</div>`;
+}
+function manLeu(id){const L=manLidos();if(L[id])return;L[id]=1;try{localStorage.setItem('finm_manual',JSON.stringify(L))}catch(e){}const s=document.querySelector('#man-'+id+' summary .man-ch');if(s&&!s.previousElementSibling.classList.contains('man-ok'))s.insertAdjacentHTML('beforebegin','<span class="man-ok">✓</span>')}
+function manFiltra(q){q=norm(q);let n=0;document.querySelectorAll('#manGrid .man-t,.man-faq').forEach(e=>{const ok=!q||q.split(/\s+/).every(w=>e.dataset.k.includes(w));e.hidden=!ok;if(ok&&e.classList.contains('man-t'))n++});
+  const v=$('#manVazio');if(v)v.hidden=n>0||!q;document.querySelectorAll('.man-passos,.man-gloss').forEach(e=>e.closest('.card').hidden=!!q)}
+/* ---------- tour guiado: destaca cada parte da tela ---------- */
+let TOUR=null;
+function tourPassos(){return isMobile()?[
+  ['.card.money','Seu dinheiro hoje','Saldo das contas, do vale e limite livre dos cartões. Toque numa linha para editar.'],
+  ['.card.hero','Quanto ainda pode gastar','O que resta do orçamento do mês e quanto dá por dia.'],
+  ['.bnav .fab','Lançar gasto','O botão mais importante: valor, categoria, pagamento e Salvar.'],
+  ['.bnav button[data-id=expenses]','Gastos','Tudo o que foi lançado no mês. Toque num item para editar.'],
+  ['.bnav button[data-act=more]','Mais','Todas as outras telas: contas, orçamento, investir, configurações e este manual.'],
+  ['.month-nav','Mês','Use as setas para ver outro mês. Toque no nome para voltar ao atual.'],
+  ['#saveStatus','Salvamento','A bolinha mostra que está salvo. A nuvem ☁️ aparece quando a sincronização está ligada.']]
+ :[['.sidebar','Menu lateral','Todas as telas ficam aqui, separadas por assunto.'],
+  ['.card.money','Seu dinheiro hoje','Saldo das contas, do vale e limite livre dos cartões. Clique numa linha para editar.'],
+  ['.card.hero','Quanto ainda pode gastar','O que resta do orçamento do mês e quanto dá por dia.'],
+  ['.topbar [data-act=addExpense]','Lançar gasto','Abre o lançamento: valor, categoria, pagamento e Salvar.'],
+  ['.month-nav','Mês','Use as setas para ver outro mês.'],
+  ['#saveStatus','Salvamento','Mostra que está salvo. Clique para ver backup, sincronização e bloqueio.']]}
+function tourMostra(){
+  const T=TOUR;if(!T)return;let alvo=null;
+  for(;T.i<T.p.length;T.i++){const e=document.querySelector(T.p[T.i][0]);if(e&&e.getClientRects().length){alvo=e;break}}
+  if(!alvo){tourFim(true);return}
+  alvo.scrollIntoView({block:'center',behavior:'instant'});
+  const r=alvo.getBoundingClientRect(),m=6,o=$('#tour'),[,tit,txt]=T.p[T.i];
+  const top=Math.max(4,r.top-m),h=Math.min(innerHeight-8,r.height+2*m),left=Math.max(4,r.left-m),w=Math.min(innerWidth-8,r.width+2*m),embaixo=top+h+190<innerHeight||top<200;
+  o.innerHTML=`<div class="tour-furo" style="top:${top}px;left:${left}px;width:${w}px;height:${Math.min(h,innerHeight-top-4)}px"></div>
+   <div class="tour-cx" style="${embaixo?'top:'+Math.min(innerHeight-200,top+h+12)+'px':'bottom:'+(innerHeight-top+12)+'px'};left:${Math.max(12,Math.min(innerWidth-332,left))}px">
+    <div class="muted" style="font-size:12px">Passo ${T.i+1} de ${T.p.length}</div><h3 style="margin:2px 0 6px">${tit}</h3><p style="margin:0 0 12px;font-size:14px;line-height:1.45">${txt}</p>
+    <div class="row" style="justify-content:space-between"><button class="lk-link" data-act="tourFim" style="padding:6px 0">Pular</button><div class="row">${T.i?'<button class="btn sm" data-act="tourVolta">‹ Voltar</button>':''}<button class="btn sm primary" data-act="tourProx">${T.i===T.p.length-1?'Concluir ✓':'Próximo ›'}</button></div></div></div>`;
+}
+function tourFim(ok){const o=$('#tour');if(o)o.remove();if(TOUR&&ok===true)toast('Tour concluído ✓ O manual fica em '+manMenu()+' › Manual');TOUR=null;removeEventListener('resize',tourMostra)}
+Object.assign(ACT,{
+  manArea:id=>{ui.manArea=id;render()},
+  manAbre:id=>{view='manual';ui.manArea='todas';render();setTimeout(()=>{const e=$('#man-'+id);if(e){e.open=true;e.scrollIntoView({block:'start',behavior:'smooth'})}},80)},
+  tour:()=>{closeModal();curMonth=todayYM();view='home';render();window.scrollTo(0,0);let o=$('#tour');if(!o){o=document.createElement('div');o.id='tour';document.body.appendChild(o)}TOUR={i:0,p:tourPassos()};addEventListener('resize',tourMostra);setTimeout(tourMostra,isMobile()?900:300)},
+  tourProx:()=>{if(!TOUR)return;TOUR.i++;if(TOUR.i>=TOUR.p.length)tourFim(true);else tourMostra()},
+  tourVolta:()=>{if(TOUR&&TOUR.i>0){TOUR.i--;tourMostra()}},
+  tourFim:()=>tourFim(false)
+});
+VIEWS.manual=vManual;
+addEventListener('keydown',e=>{if(e.key==='/'&&view==='manual'&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)){e.preventDefault();const b=$('#manBusca');b&&b.focus()}if(e.key==='Escape'&&TOUR)tourFim(false)});
+
+/* ============================================================
+   BLOCO 1 — importar extrato, lixeira, voltar no tempo,
+   pagamento de fatura, estorno e sobra que acumula
+   ============================================================ */
+const dataHora=ms=>new Date(ms).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+const keepScroll=()=>{const y=scrollY;render();scrollTo(0,y)};
+
+/* ---------- LIXEIRA (30 dias, só neste aparelho) ---------- */
+const LIX_COLS=['expenses','cardPurchases','debts','cards','goals','bills','benefits','investimentos','contas','transfers','splits','cardPayments'];
+let LIX=null;
+async function lixCarrega(){try{LIX=(await kvGet('lixeira'))||[]}catch(e){LIX=[]}}
+function lixSalva(){const lim=Date.now()-30*864e5;LIX=LIX.filter(x=>x.quando>lim).slice(0,400);kvSet('lixeira',LIX).catch(()=>{})}
+function lixAdd(id){
+  if(!LIX)return;const cp=x=>JSON.parse(JSON.stringify(x)),novo=x=>x.criado&&Date.now()-x.criado<120000;
+  for(const k of LIX_COLS){const x=(state[k]||[]).find(y=>y.id===id);if(x){if(novo(x))return;LIX=LIX.filter(y=>y.id!==id);LIX.unshift({id,k,item:cp(x),quando:Date.now()});lixSalva();return}}
+  for(const[ym,m]of Object.entries(state.months||{}))for(const k of['income','budget']){const x=(m[k]||[]).find(y=>y.id===id);if(x){if(novo(x))return;LIX=LIX.filter(y=>y.id!==id);LIX.unshift({id,k,ym,item:cp(x),quando:Date.now()});lixSalva();return}}
+}
+function lixLabel(x){const it=x.item;const L={expenses:['🧾',it.desc||it.cat,brl(it.valor)+' · '+fmtDate(it.date)],cardPurchases:['💳',it.desc,brl(it.valorTotal)+(it.parcelas>1?' em '+it.parcelas+'×':'')],
+  income:['💵',(it.fonte||'Renda')+(it.desc?' — '+it.desc:''),brl(it.valor)+' · '+mLabel(x.ym||'')],budget:['📋','Categoria '+it.cat,brl(it.valor)+' · '+mLabel(x.ym||'')],cards:['💳','Cartão '+it.nome,''],contas:['🏦','Conta '+it.nome,''],
+  goals:['🎯','Meta '+it.nome,''],bills:['🧾','Conta fixa '+it.nome,brl(it.valor)],debts:['⛓','Dívida '+it.nome,''],investimentos:['📈',it.nome,brl(it.atual||it.aplicado)],transfers:['⇄','Transferência',brl(it.valor)],
+  splits:['🤝',it.desc||'Divisão',brl(it.valor)],cardPayments:['💸','Pagamento de fatura',brl(it.valor)],benefits:['🧺',it.nome,'']};return L[x.k]||['•',x.k,'']}
+function lixGrupos(){const G=[];(LIX||[]).forEach(x=>{const g=G[G.length-1];if(g&&g[g.length-1].quando-x.quando<2500)g.push(x);else G.push([x])});return G}
+function lixRestaura(ents){const t='r:'+new Date().toISOString();let n=0;state.deleted=state.deleted||{};
+  ents.forEach(x=>{const arr=x.ym?month(x.ym,true)[x.k]:(state[x.k]=state[x.k]||[]);if(!arr.some(y=>y.id===x.id)){arr.push(x.item);n++}state.deleted[x.id]=t});
+  LIX=LIX.filter(x=>!ents.includes(x));lixSalva();save();render();toast(n+' item(ns) restaurado(s)')}
+function vLixeira(){
+  if(LIX===null){lixCarrega().then(()=>{if(view==='lixeira')render()});return'<div class="card empty">Abrindo a lixeira…</div>'}
+  const G=lixGrupos();
+  return`<div class="card"><div class="card-head"><div><h3>🗑 Lixeira</h3><div class="sub" style="margin:0">O que você apagou nos últimos 30 dias, neste aparelho. Toque em Restaurar para trazer de volta.</div></div>${G.length?'<button class="btn sm danger" data-act="lixEsvazia">Esvaziar</button>':''}</div>
+   ${G.length?G.map((g,i)=>{const[ic,t,v]=lixLabel(g[0]);return`<div class="mrow" style="cursor:default"><div class="ic" style="background:var(--panel2)">${ic}</div><div class="tx"><b>${esc(t)}${g.length>1?` <span class="muted" style="font-weight:400">+ ${g.length-1} item(ns) apagado(s) junto</span>`:''}</b><small>${v?v+' · ':''}apagado ${dataHora(g[0].quando)}</small></div><button class="btn sm" data-act="lixRest" data-id="${i}">Restaurar</button></div>`}).join('')
+   :'<div class="empty">A lixeira está vazia.</div>'}</div>
+  <div class="muted" style="font-size:12px;padding:0 4px">Com a sincronização ligada, o item restaurado volta também nos outros aparelhos. Para desfazer mudanças maiores, use <a data-act="nav" data-id="versoes" style="color:var(--accent);cursor:pointer">Voltar no tempo</a>.</div>`;
+}
+
+/* ---------- VOLTAR NO TEMPO (cópias diárias + versões da nuvem) ---------- */
+async function snapAuto(forca,nota){if(!hasData(state))return;let S=[];try{S=(await kvGet('snaps'))||[]}catch(e){}
+  if(!forca&&S[0]&&Date.now()-S[0].quando<20*3600e3)return;S.unshift({quando:Date.now(),rev,nota:nota||'',dados:JSON.parse(jj(state))});S=S.slice(0,16);try{await kvSet('snaps',S)}catch(e){}if(ui.ver)ui.ver.snaps=S}
+function idsDe(s){const o=new Set();LISTAS.forEach(k=>(s[k]||[]).forEach(x=>o.add(x.id)));Object.values(s.months||{}).forEach(m=>['income','budget'].forEach(k=>(m[k]||[]).forEach(x=>o.add(x.id))));return o}
+function voltarPara(D){
+  D=Object.assign(defaultState(),JSON.parse(jj(D)));const t=new Date().toISOString(),del=Object.assign({},D.deleted),velho=idsDe(D);
+  idsDe(state).forEach(id=>{if(!velho.has(id))del[id]=t});           // o que não existia naquela data: apaga (inclusive nos outros aparelhos)
+  velho.forEach(id=>{if(isDead(del[id])||isDead((state.deleted||{})[id]))del[id]='r:'+t});   // o que existia: volta a valer
+  const set=state.settings;state=D;state.deleted=mergeDead(state.deleted,del);state.settings=set;rev++;save();render();
+}
+const resumoDados=d=>`${(d.expenses||[]).length} gastos · ${(d.cardPurchases||[]).length} compras no cartão · ${Object.keys(d.months||{}).length} meses`;
+function verConfirma(D,rotulo){
+  openForm({title:'Voltar para '+rotulo,saveLabel:'Voltar para esta versão',danger:true,fields:[{type:'html',html:`<p style="margin:0 0 8px">Todos os dados voltam a ficar como estavam em <b>${esc(rotulo)}</b>.</p>
+   <div class="stat-line"><span>Agora</span><b>${resumoDados(state)}</b></div><div class="stat-line"><span>Naquela versão</span><b>${resumoDados(D)}</b></div>
+   <p class="muted" style="font-size:12px;margin:8px 0 0">Antes de voltar, o app guarda uma cópia de agora em “Cópias deste aparelho” — se mudar de ideia, é só voltar para ela. Tema e configurações continuam como estão.</p>`}],
+   onSave:()=>{snapAuto(true,'Antes de voltar no tempo').then(()=>{voltarPara(D);toast('Dados de volta para '+rotulo+' ✓')})}});
+}
+function vVersoes(){
+  const V=ui.ver||(ui.ver={snaps:null,nuvem:null});
+  if(V.snaps===null){V.snaps=[];kvGet('snaps').then(s=>{V.snaps=s||[];if(view==='versoes')render()}).catch(()=>{})}
+  return`<div class="card"><h3>⏪ Voltar no tempo</h3><div class="sub" style="margin:0">Fez uma bagunça? Volte <b>todos</b> os dados para como estavam numa data. Antes de voltar, o app guarda uma cópia de agora — dá para desfazer.</div></div>
+  <div class="card"><h3>📱 Cópias deste aparelho</h3><div class="sub">Uma por dia, das últimas duas semanas</div>${V.snaps.length?V.snaps.map((s,i)=>`<div class="mrow" style="cursor:default"><div class="tx"><b>${dataHora(s.quando)}</b><small>${s.nota?esc(s.nota)+' · ':''}${resumoDados(s.dados)}</small></div><button class="btn sm" data-act="verSnap" data-id="${i}">Voltar</button></div>`).join(''):'<div class="empty">Nenhuma cópia ainda — a primeira é feita hoje.</div>'}</div>
+  <div class="card"><h3>☁️ Versões na nuvem</h3><div class="sub">Cada sincronização guarda uma versão no seu GitHub</div>
+   ${!SY.cfg?'<div class="muted">Ligue a sincronização (Configurações) para ter o histórico de cada alteração.</div>':V.nuvem===null?'<button class="btn" data-act="verCarrega">Carregar versões</button>':V.nuvem==='carregando'?'<div class="muted">Carregando…</div>':typeof V.nuvem==='string'?`<div class="alert bad">${esc(V.nuvem)}</div>`:V.nuvem.length?V.nuvem.map(v=>`<div class="mrow" style="cursor:default"><div class="tx"><b>${dataHora(Date.parse(v.committed_at))}</b><small>versão ${esc(v.version.slice(0,7))}</small></div><button class="btn sm" data-act="verNuvem" data-id="${esc(v.version)}">Voltar</button></div>`).join(''):'<div class="empty">Nenhuma versão encontrada.</div>'}</div>`;
+}
+
+/* ---------- PAGAR FATURA (adiantado ou em parte) ---------- */
+function pagoFatura(cid,ym){return sum((state.cardPayments||[]).filter(p=>p.cardId===cid&&p.ym===ym),p=>+p.valor)}
+{const _cu=cardUsed;cardUsed=function(cid,ym){return Math.max(0,_cu(cid,ym)-sum((state.cardPayments||[]).filter(p=>p.cardId===cid&&p.ym>=ym),p=>+p.valor))}}
+{const _pf=proxFatura;proxFatura=function(c){const r=_pf(c),pg=pagoFatura(c.id,r.ym);r.bruto=r.v;r.pago=pg;r.v=Math.max(0,r.v-pg);return r}}
+function pagarFaturaForm(cid){
+  const c=find(state.cards,cid);if(!c)return;const pf=proxFatura(c),C=state.contas||[];
+  const ops=[-1,0,1,2].map(i=>addM(pf.ym,i)).map(ym=>{const b=cardFatura(cid,ym),pg=pagoFatura(cid,ym);return[ym,`${mLabel(ym,true)} — ${brl(b)}${pg?' (já pago '+brl(pg)+')':''}`]});
+  openForm({title:'💸 Pagar fatura — '+c.nome,saveLabel:'Registrar pagamento',fields:[
+    {type:'html',html:'<p class="muted" style="margin:0">Para pagar <b>adiantado</b> ou <b>só uma parte</b>. O valor volta ao limite na hora; no vencimento, sai da conta só o que faltar.</p>'},
+    {name:'ym',label:'Qual fatura',type:'select',options:ops,value:pf.ym},
+    {name:'valor',label:'Valor pago (R$)',type:'number',step:'0.01',min:0,value:Math.round(pf.v*100)/100,required:true},
+    {name:'date',label:'Data do pagamento',type:'date',value:todayISO(),required:true},
+    ...(C.length?[{name:'contaId',label:'Saiu de qual conta',type:'select',options:C.map(x=>[x.id,x.nome]),value:c.contaId||(contaPrincipal()||C[0]).id}]:[])
+  ],onSave:d=>{if(!(d.valor>0)){toast('Digite o valor','err');return false}state.cardPayments=state.cardPayments||[];state.cardPayments.push({id:uid(),criado:Date.now(),cardId:cid,...d});
+    setTimeout(()=>toast('Pagamento registrado · limite livre '+brl(Math.max(0,(+c.limite||0)-cardUsed(cid,todayYM())))),60)}});
+}
+
+/* ---------- SOBRA QUE ACUMULA (envelope) ---------- */
+let CMPC={rev:-1,m:{}};
+function sobraDe(b,ym,d){if(d>11)return 0;const p=addM(ym,-1),pm=state.months[p];if(!pm)return 0;const pb=(pm.budget||[]).find(x=>x.tipo===b.tipo&&norm(x.cat)===norm(b.cat));if(!pb||!pb.acumula)return 0;
+  const r=cmpCom(p,d+1).find(x=>x.tipo===b.tipo&&norm(x.cat)===norm(b.cat));return r?Math.max(0,r.plan-r.real):0}
+let _cmpBase=null;
+function cmpCom(ym,d){if(CMPC.rev!==rev)CMPC={rev,m:{}};if(CMPC.m[ym])return CMPC.m[ym];const rows=_cmpBase(ym),m=state.months[ym];
+  if(m)(m.budget||[]).filter(b=>b.acumula).forEach(b=>{const r=rows.find(x=>x.tipo===b.tipo&&norm(x.cat)===norm(b.cat));if(!r)return;const s=sobraDe(b,ym,d||0);if(s>0.004){r.sobra=s;r.plan+=s;r.diff=r.real-r.plan;r.usePct=r.plan>0?r.real/r.plan*100:(r.real>0?Infinity:0);r.diffPct=r.plan>0?r.diff/r.plan*100:0}});
+  CMPC.m[ym]=rows;return rows}
+{_cmpBase=comparison;comparison=function(ym){return cmpCom(ym,0).map(r=>({...r}))}}
+
+/* ---------- IMPORTAR EXTRATO / FATURA (OFX e CSV) ---------- */
+function decodeTxt(buf){try{return new TextDecoder('utf-8',{fatal:true}).decode(buf)}catch(e){return new TextDecoder('windows-1252').decode(buf)}}
+function pVal(s){let t=String(s??'').trim();if(!t)return NaN;let neg=false;
+  if(/^\(.*\)$/.test(t)){neg=true;t=t.slice(1,-1)}
+  if(/\s?D$/i.test(t)&&/\d\s?D$/i.test(t)){neg=true;t=t.replace(/\s?D$/i,'')}else t=t.replace(/(\d)\s?C$/i,'$1');
+  t=t.replace(/R\$|\s| /g,'');if(t.endsWith('-')){neg=!neg;t=t.slice(0,-1)}if(t.startsWith('-')){neg=!neg;t=t.slice(1)}else if(t.startsWith('+'))t=t.slice(1);
+  const c=t.lastIndexOf(','),d=t.lastIndexOf('.');
+  if(c>=0&&d>=0)t=c>d?t.replace(/\./g,'').replace(',','.'):t.replace(/,/g,'');else if(c>=0)t=t.replace(/\./g,'').replace(',','.');else if(/^\d{1,3}(\.\d{3})+$/.test(t))t=t.replace(/\./g,'');
+  if(!/^\d*\.?\d+$/.test(t))return NaN;const n=parseFloat(t);return neg?-n:n}
+function pData(s){s=String(s||'').trim();let m=s.match(/^(\d{4})-?(\d{2})-?(\d{2})/),y,mo,d;
+  if(m){y=+m[1];mo=+m[2];d=+m[3]}else{m=s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})/);if(!m)return null;d=+m[1];mo=+m[2];y=+m[3];if(y<100)y+=2000}
+  if(mo<1||mo>12||d<1||d>31||y<2000||y>2100)return null;return`${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`}
+function lerOFX(t){const out=[];t.split(/<STMTTRN>/i).slice(1).forEach(b=>{b=b.split(/<\/STMTTRN>/i)[0];const g=k=>{const m=b.match(new RegExp('<'+k+'>([^<\\r\\n]*)','i'));return m?m[1].trim():''};
+  const v=parseFloat(g('TRNAMT').replace(',','.'));const memo=g('MEMO'),name=g('NAME');out.push({date:pData(g('DTPOSTED')),desc:(memo||name||'Sem descrição').replace(/\s+/g,' '),valor:v,fitid:g('FITID')})});
+  return{rows:out,cartao:/<CCSTMTRS>|<CREDITCARDMSGSRSV1>/i.test(t)}}
+function splitCSV(l,sep){const o=[];let c='',q=false;for(let i=0;i<l.length;i++){const ch=l[i];if(q){if(ch==='"'){if(l[i+1]==='"'){c+='"';i++}else q=false}else c+=ch}else if(ch==='"')q=true;else if(ch===sep){o.push(c);c=''}else c+=ch}o.push(c);return o.map(x=>x.trim())}
+function lerCSV(t){
+  const L=t.replace(/^﻿/,'').split(/\r?\n/).filter(l=>l.trim());if(!L.length)return{rows:[]};
+  const conta=(l,s)=>splitCSV(l,s).length;const sep=[';','\t',','].map(s=>[s,Math.min(...L.slice(0,5).map(l=>conta(l,s)))]).sort((a,b)=>b[1]-a[1])[0][0];
+  const lin=L.map(l=>splitCSV(l,sep));let hi=lin.slice(0,12).findIndex(r=>r.some(c=>/^(data|date|dt)/i.test(sa(c)))&&r.some(c=>/valor|amount|quantia|montante|debito|credito|value/.test(sa(c))));
+  let di=-1,ti=-1,vi=-1,dbi=-1,cri=-1;
+  if(hi>=0){const H=lin[hi].map(sa);di=H.findIndex(h=>/^(data|date|dt)/.test(h));ti=H.findIndex(h=>/descri/.test(h));if(ti<0)ti=H.findIndex(h=>/hist|titulo|title|lancamento|estabelecimento|memo|detalhe|favorecido/.test(h));
+    vi=H.findIndex(h=>/^valor|amount|quantia|montante|value/.test(h)&&!/saldo/.test(h));dbi=H.findIndex(h=>/debito|saida/.test(h));cri=H.findIndex(h=>/credito|entrada/.test(h));if(vi>=0){dbi=cri=-1}}
+  else{hi=-1;const r=lin.find(r=>r.some(c=>pData(c)))||[];di=r.findIndex(c=>pData(c));r.forEach((c,i)=>{if(i!==di&&isFinite(pVal(c)))vi=i});let mx=0;r.forEach((c,i)=>{if(i!==di&&i!==vi&&c.length>mx){mx=c.length;ti=i}})}
+  const rows=[];lin.slice(hi+1).forEach(r=>{const date=pData(r[di]);if(!date)return;const desc=(ti>=0?r[ti]:'')||'Sem descrição';if(/^saldo/i.test(sa(desc)))return;
+    let v=vi>=0?pVal(r[vi]):(isFinite(pVal(r[cri]))?Math.abs(pVal(r[cri])):0)-(isFinite(pVal(r[dbi]))?Math.abs(pVal(r[dbi])):0);if(!isFinite(v)||Math.abs(v)<0.005)return;
+    rows.push({date,desc:desc.replace(/\s+/g,' '),valor:v,fitid:''})});
+  return{rows};
+}
+const CAT_DICAS=[[/shopee|mercado ?livre|mercadolivre|amazon|magalu|magazine|americanas|shein|aliexpress|renner|riachuelo|c&a|casas bahia/,'Compras','wants'],[/mercad|supermerc|atacad|assai|carrefour|pao de acucar|hortifruti|sacolao|dia supermercado/,'Mercado','needs'],[/ifood|rappi|restaur|lanchon|padaria|burger|pizza|mc ?donald|subway|cafeteria|starbucks|outback|giraffas|habib/,'Restaurantes','wants'],
+ [/uber|99 ?app|99pop|99 tecnologia|taxi|posto|shell|ipiranga|petrobras|br mania|combust|estacion|pedagio|sem parar|conectcar|veloe/,'Transporte / combustível','needs'],[/netflix|spotify|prime video|amazon prime|disney|hbo|youtube|apple\.com|google one|deezer|globoplay|paramount|crunchyroll/,'Assinaturas','wants'],
+ [/farmac|drogar|drogasil|raia|pacheco|pague menos|panvel/,'Saúde','needs'],[/claro|vivo|\btim\b|\boi\b|internet|telefon/,'Telefone e internet','needs'],[/energia|enel|cpfl|light s|eletropaulo|neoenergia|sabesp|saneamento|comgas|naturgy/,'Contas de casa','needs'],
+ [/aluguel|condomin|imobiliaria/,'Aluguel','needs'],[/cinema|ingresso|steam|playstation|xbox|nintendo|cinemark/,'Lazer','wants'],[/academia|smart ?fit|bluefit|gympass|wellhub/,'Academia','wants']];
+function chaveDesc(d){return sa(d).replace(/[0-9*#\/\\.,:;_()+-]+/g,' ').replace(/\b(compra|compras|pagamento|pgto|pix|enviado|enviada|recebido|recebida|transferencia|transf|debito|credito|cartao|parcela|com|de|da|do|dos|das|em|no|na|para|ted|doc|aut|nacional|internacional)\b/g,' ').trim().split(/\s+/).filter(Boolean).slice(0,2).join(' ')}
+function sugereCat(desc){const k=chaveDesc(desc),R=state.catRules||{};if(k&&R[k])return R[k];
+  const w=k.split(' ')[0];if(w&&w.length>2){const ant=[...state.expenses,...state.cardPurchases].reverse().find(e=>e.cat&&e.cat!=='Sem categoria'&&chaveDesc(e.desc).split(' ')[0]===w);if(ant)return{cat:ant.cat,tipo:ant.tipo}}
+  const s=sa(desc),cats=categoriesList();for(const[re,cat,tipo]of CAT_DICAS)if(re.test(s)){const ex=cats.find(c=>sa(c)===sa(cat))||cats.find(c=>sa(c).startsWith(sa(cat).split(/[ /]/)[0]));return{cat:ex||cat,tipo:ex?(tipoOfCat(ex)||tipo):tipo}}
+  return null}
+function impDup(rows){const I=ui.imp,usados=new Set(),usa=(x)=>{if(!x||usados.has(x))return false;usados.add(x);return true};
+  rows.forEach(r=>{r.dup='';const ja=[...state.expenses,...state.cardPurchases].find(x=>x.imp===r.key)||Object.values(state.months).some(m=>(m.income||[]).some(x=>x.imp===r.key));if(ja){r.dup='importado antes';return}
+    if(I.modo==='cartao'){if(!r.compra)return;const inst=cardInstallments(I.fatura,I.dest).find(i=>!usados.has(i)&&Math.abs(i.valor-r.v)<0.011);if(inst&&usa(inst)){r.dup='já está na fatura';return}
+      const p=state.cardPurchases.find(p=>p.cardId===I.dest&&!usados.has(p)&&Math.abs(+p.valorTotal-r.v)<0.011&&Math.abs(dDiff(p.dataCompra,r.date))<=3);if(p&&usa(p))r.dup='parece já lançado'}
+    else if(r.compra){const e=state.expenses.find(e=>!usados.has(e)&&Math.abs(+e.valor-r.v)<0.011&&Math.abs(dDiff(e.date,r.date))<=3);if(e&&usa(e))r.dup='parece já lançado'}
+    else{const i=(month(r.date.slice(0,7)).income||[]).find(i=>!usados.has(i)&&Math.abs(+i.valor-r.v)<0.011);if(i&&usa(i))r.dup='renda já cadastrada'}})}
+function impMonta(){const I=ui.imp;if(!I.raw)return;const card=I.modo==='cartao';let rows=I.raw.filter(r=>r.date&&isFinite(r.valor)&&Math.abs(r.valor)>=0.005).map(r=>({...r}));
+  if(card){const pos=rows.filter(r=>r.valor>0).length,cp=pos>=rows.length-pos;rows.forEach(r=>{r.compra=cp?r.valor>0:r.valor<0;r.v=Math.abs(r.valor)});
+    if(!I.fatura){const mx=rows.reduce((a,r)=>r.date>a?r.date:a,'');I.fatura=I.dest&&mx?faturaDe(I.dest,mx):todayYM()}}
+  else rows.forEach(r=>{r.compra=r.valor<0;r.v=Math.abs(r.valor)});
+  rows.sort((a,b)=>b.date.localeCompare(a.date));
+  rows.forEach((r,i)=>{r.i=i;r.key=r.fitid?'ofx:'+r.fitid:r.date+'|'+sa(r.desc)+'|'+r.v.toFixed(2);const s=sugereCat(r.desc);r.cat=s?s.cat:'';r.tipo=s?s.tipo:'needs';if(card&&!r.compra&&/pagament|pgto|pag fat/i.test(sa(r.desc)))r.pagto=true});
+  impDup(rows);rows.forEach(r=>{r.ok=r.compra&&!r.dup});I.rows=rows}
+function impCats(){const m=new Map();const add=(c,t)=>{if(c&&c!=='Sem categoria'&&!m.has(t+'|'+norm(c)))m.set(t+'|'+norm(c),{cat:c,tipo:t})};
+  month(todayYM()).budget.forEach(b=>add(b.cat,b.tipo));Object.values(state.months).forEach(x=>(x.budget||[]).forEach(b=>add(b.cat,b.tipo)));Object.values(state.catRules||{}).forEach(r=>add(r.cat,r.tipo));
+  (ui.imp.rows||[]).forEach(r=>add(r.cat,r.tipo));return[...m.values()].sort((a,b)=>a.tipo.localeCompare(b.tipo)||a.cat.localeCompare(b.cat))}
+function vImportar(){
+  const C=state.contas||[];const I=ui.imp||(ui.imp={modo:'conta',dest:(contaPrincipal()||C[0]||{}).id||'',rows:null});
+  const dests=I.modo==='conta'?C.map(c=>[c.id,c.nome]):state.cards.map(c=>[c.id,c.nome]);
+  if(I.modo==='cartao'&&!dests.some(d=>d[0]===I.dest))I.dest=(dests[0]||[''])[0];
+  let h=`<div class="card"><h3>⬆ Importar extrato ou fatura</h3><div class="sub">Baixe o extrato no app ou no site do banco (arquivo <b>OFX</b> ou <b>CSV</b>) e traga para cá. O app sugere a categoria de cada linha e deixa de fora o que já estava lançado.</div>
+   <div class="chips" style="margin:4px 0 12px"><button class="chip ${I.modo==='conta'?'on':''}" data-act="impModo" data-id="conta">🏦 Extrato de conta</button><button class="chip ${I.modo==='cartao'?'on':''}" data-act="impModo" data-id="cartao">💳 Fatura de cartão</button></div>
+   ${dests.length?`<label style="display:grid;gap:5px;font-size:12px;color:var(--muted);font-weight:600">${I.modo==='conta'?'De qual conta é o extrato':'De qual cartão é a fatura'}<select data-impdest>${dests.map(([v,l])=>`<option value="${v}" ${v===I.dest?'selected':''}>${esc(l)}</option>`).join('')}</select></label>`
+    :I.modo==='cartao'?'<div class="alert warn">Cadastre um cartão primeiro (Mais › Cartões).</div>':'<div class="muted" style="font-size:13px">Sem contas cadastradas: os gastos entram sem conta. Dica: cadastre em Contas e saldos.</div>'}
+   ${I.modo==='cartao'&&!dests.length?'':'<button class="btn primary" data-act="impArquivo" style="margin-top:12px">📂 Escolher arquivo (.ofx ou .csv)</button>'}
+   <details class="man-faq" style="margin-top:10px"><summary>Como baixar o extrato no banco<span class="man-ch">›</span></summary><p>No app ou no site do banco, procure <b>Extrato</b> › <b>Exportar</b> (ou Baixar/Compartilhar) e escolha <b>OFX</b> (às vezes chamado “Money” ou “Quicken”) ou <b>CSV/Excel</b>. Para o cartão, abra a <b>fatura</b> e use “Exportar fatura”. O arquivo é lido só neste aparelho — não vai para lugar nenhum.</p></details></div>`;
+  if(I.rows){
+    const R=I.rows,sel=R.filter(r=>r.ok),gasto=sum(sel.filter(r=>r.compra),r=>r.v),ent=sum(sel.filter(r=>!r.compra),r=>r.v),dups=R.filter(r=>r.dup).length,semCat=sel.filter(r=>!r.cat).length,CATS=impCats();
+    const opt=r=>`<option value="">Sem categoria</option>`+CATS.map(c=>`<option value="${esc(c.tipo+'|'+c.cat)}" ${c.tipo===r.tipo&&norm(c.cat)===norm(r.cat)?'selected':''}>${esc(c.cat)} · ${BUCKETS[c.tipo].label}</option>`).join('');
+    const tag=r=>(/\b\d{1,2}\s*\/\s*\d{1,2}\b/.test(r.desc)?'<span class="badge">parcela '+r.desc.match(/\b(\d{1,2})\s*\/\s*(\d{1,2})\b/).slice(1).join('/')+'</span> ':'')+(r.dup?`<span class="badge warn">${r.dup}</span>`:I.modo==='cartao'&&!r.compra?`<span class="badge">${r.pagto?'pagamento da fatura':'estorno/crédito'}</span>`:!r.compra?'<span class="badge ok">entrada — marque se for renda</span>':'');
+    h+=`<div class="card"><div class="card-head"><div><h3>📄 ${esc(I.arquivo)}</h3><div class="sub" style="margin:0">${R.length} linha(s) · ${sel.length} marcada(s)${dups?' · '+dups+' já lançada(s), desmarcada(s)':''}</div></div></div>
+     ${I.modo==='cartao'?`<label style="display:grid;gap:5px;font-size:12px;color:var(--muted);font-weight:600;margin-bottom:8px">As compras entram na fatura de<select data-impfat>${[-2,-1,0,1,2].map(i=>addM(I.fatura,i)).map(ym=>`<option value="${ym}" ${ym===I.fatura?'selected':''}>${mLabel(ym,true)}</option>`).join('')}</select></label>`:''}
+     <div class="row" style="margin-bottom:6px"><button class="btn sm" data-act="impTodos" data-id="1">Marcar todas</button><button class="btn sm" data-act="impTodos" data-id="0">Desmarcar todas</button></div>
+     <div>${R.map(r=>`<div class="imp-row ${r.ok?'':'off'}"><input type="checkbox" data-impck="${r.i}" ${r.ok?'checked':''} aria-label="Importar"><div class="tx"><b>${esc(r.desc)}</b><small>${fmtDate(r.date)} ${tag(r)}</small>${r.compra||I.modo==='cartao'?`<select data-impcat="${r.i}">${opt(r)}</select>`:''}</div><div class="vl ${r.compra?'':'pos'}">${r.compra?'':'+'}${brl(r.v)}</div></div>`).join('')}</div>
+     <div class="stat-line" style="margin-top:12px"><span>Gastos a importar</span><b>${brl(gasto)}</b></div>${ent?`<div class="stat-line"><span>${I.modo==='cartao'?'Estornos/créditos':'Entradas (como renda)'}</span><b class="pos">${brl(ent)}</b></div>`:''}
+     ${semCat?`<div class="alert warn" style="margin-top:8px">${semCat} linha(s) sem categoria — entram como “Sem categoria” e você ajusta depois.</div>`:''}
+     <div class="row" style="margin-top:12px"><button class="btn" data-act="impCancela">Cancelar</button><button class="btn primary" data-act="impOk">Importar ${sel.length} lançamento(s)</button></div>
+     <div class="muted" style="font-size:12px;margin-top:8px">💡 Ao trocar a categoria de uma linha, as outras do mesmo estabelecimento acompanham — e o app aprende para as próximas importações.</div></div>`;
+  }
+  return h;
+}
+function impConfirma(){
+  const I=ui.imp,sel=(I.rows||[]).filter(r=>r.ok);if(!sel.length){toast('Nenhuma linha marcada','err');return}
+  const snap=JSON.stringify(state);state.catRules=Object.assign({},state.catRules);let n=0;const P=(typeof quem==='function'?quem():'')||undefined;
+  sel.forEach(r=>{const cat=r.cat||'Sem categoria',tipo=r.tipo||'needs',k=chaveDesc(r.desc);if(k&&r.cat)state.catRules[k]={cat,tipo};
+    if(I.modo==='cartao')state.cardPurchases.push({id:uid(),cardId:I.dest,desc:r.desc,valorTotal:r.compra?r.v:-r.v,parcelas:1,dataCompra:r.date,primeiraFatura:I.fatura,cat,tipo,imp:r.key,por:P});
+    else if(r.compra)state.expenses.push({id:uid(),desc:r.desc,valor:r.v,date:r.date,cat,tipo,pay:/pix/i.test(r.desc)?'Pix':'Débito',contaId:I.dest||undefined,imp:r.key,por:P});
+    else month(r.date.slice(0,7),true).income.push({id:uid(),fonte:'Importado do extrato',natureza:'variavel',desc:r.desc,valor:r.v,date:r.date,contaId:I.dest||undefined,imp:r.key,por:P});n++});
+  ui.imp=null;view='expenses';save();render();scrollTo(0,0);
+  toast(n+' lançamento(s) importado(s) ✓','',{label:'Desfazer',fn:()=>{state=JSON.parse(snap);overwriteNext=true;save();render();toast('Importação desfeita')}});
+}
+document.addEventListener('change',e=>{const t=e.target,I=ui.imp;if(!I||!t.dataset)return;
+  if(t.dataset.impck!=null){I.rows[+t.dataset.impck].ok=t.checked;keepScroll()}
+  else if(t.dataset.impcat!=null){const r=I.rows[+t.dataset.impcat],v=t.value,k=chaveDesc(r.desc);if(v){const p=v.indexOf('|');r.tipo=v.slice(0,p);r.cat=v.slice(p+1)}else r.cat='';r.manual=true;
+    const w=k.split(' ')[0];I.rows.forEach(x=>{if(x!==r&&!x.manual&&w&&chaveDesc(x.desc).split(' ')[0]===w){x.cat=r.cat;x.tipo=r.tipo}});keepScroll()}
+  else if(t.dataset.impdest!=null){I.dest=t.value;I.fatura=null;impMonta();keepScroll()}
+  else if(t.dataset.impfat!=null){I.fatura=t.value;impDup(I.rows);I.rows.forEach(r=>r.ok=r.ok&&!r.dup);keepScroll()}});
+
+Object.assign(ACT,{
+  lixRest:i=>{const g=lixGrupos()[+i];if(g)lixRestaura(g)},
+  lixEsvazia:()=>openForm({title:'Esvaziar a lixeira?',saveLabel:'Esvaziar',danger:true,fields:[{type:'html',html:'<p style="margin:0">Os itens da lixeira deste aparelho somem de vez. Os seus dados atuais não mudam.</p>'}],onSave:()=>{LIX=[];lixSalva();setTimeout(render,50)}}),
+  verSnap:i=>{const s=(ui.ver&&ui.ver.snaps||[])[+i];if(s)verConfirma(s.dados,dataHora(s.quando))},
+  verCarrega:async()=>{const V=ui.ver;V.nuvem='carregando';render();try{if(!SY.cfg.id)await syLer();if(!SY.cfg.id)throw new Error('Ainda não há dados na nuvem.');V.nuvem=await(await gh('/gists/'+SY.cfg.id+'/commits?per_page=40&_='+Date.now())).json()}catch(e){V.nuvem='Não consegui carregar: '+(e.message||e)}render()},
+  verNuvem:async v=>{toast('Baixando a versão…');try{const g=await(await gh('/gists/'+SY.cfg.id+'/'+v)).json(),f=g.files[SY.FILE];const txt=f.truncated?await(await fetch(f.raw_url,{cache:'no-store'})).text():f.content,p=JSON.parse(txt);
+    const it=(ui.ver.nuvem||[]).find(x=>x.version===v);verConfirma(p.dados||p,it?dataHora(Date.parse(it.committed_at)):v.slice(0,7))}catch(e){toast('Não consegui abrir essa versão: '+(e.message||e),'err')}},
+  pagarFatura:id=>{closeModal();setTimeout(()=>pagarFaturaForm(id),60)},
+  estorno:k=>{const[q,id]=k.split(':'),x=q==='p'?find(state.cardPurchases,id):find(state.expenses,id);if(!x)return;closeModal();const total=q==='p'?+x.valorTotal:+x.valor;
+    setTimeout(()=>openForm({title:'↩ Estorno — '+x.desc,saveLabel:'Registrar estorno',fields:[{type:'html',html:`<p class="muted" style="margin:0">O valor volta para ${q==='p'?'o limite e a fatura do cartão':'a conta'} e deixa de contar como gasto em <b>${esc(x.cat)}</b>.</p>`},
+      {name:'valor',label:'Valor estornado (R$)',type:'number',step:'0.01',min:0,value:total,required:true},{name:'date',label:'Data do estorno',type:'date',value:todayISO(),required:true}],
+      onSave:d=>{if(!(d.valor>0))return false;const b={id:uid(),criado:Date.now(),desc:'Estorno — '+x.desc,cat:x.cat,tipo:x.tipo,estornoDe:x.id};
+        if(q==='p')state.cardPurchases.push({...b,cardId:x.cardId,valorTotal:-d.valor,parcelas:1,dataCompra:d.date,primeiraFatura:faturaDe(x.cardId,d.date)});
+        else{const e={...b,valor:-d.valor,date:d.date,pay:x.pay};if(x.contaId)e.contaId=x.contaId;if(x.benefitId)e.benefitId=x.benefitId;state.expenses.push(e)}toast('Estorno registrado')}}),80)},
+  impModo:m=>{const I=ui.imp;I.modo=m;I.dest=m==='conta'?((contaPrincipal()||(state.contas||[])[0]||{}).id||''):((state.cards[0]||{}).id||'');I.fatura=null;impMonta();render()},
+  impArquivo:()=>{const inp=document.createElement('input');inp.type='file';inp.accept='.ofx,.qfx,.csv,.txt,text/csv,application/x-ofx';
+    inp.onchange=async()=>{const f=inp.files[0];if(!f)return;try{const t=decodeTxt(await f.arrayBuffer()),ofx=/<OFX>|OFXHEADER/i.test(t),r=ofx?lerOFX(t):lerCSV(t);
+      if(!r.rows.length){toast('Não encontrei lançamentos nesse arquivo. Tente o formato OFX.','err');return}
+      const I=ui.imp;if(r.cartao&&I.modo!=='cartao'&&state.cards.length){I.modo='cartao';I.dest=state.cards[0].id;toast('Esse arquivo é de cartão de crédito — escolhi o modo fatura')}
+      I.raw=r.rows;I.arquivo=f.name;I.fatura=null;impMonta();render()}catch(e){console.warn(e);toast('Não consegui ler o arquivo','err')}};inp.click()},
+  impTodos:v=>{ui.imp.rows.forEach(r=>r.ok=v==='1');keepScroll()},
+  impCancela:()=>{ui.imp.rows=null;ui.imp.raw=null;render()},
+  impOk:()=>impConfirma()
+});
+Object.assign(VIEWS,{importar:vImportar,lixeira:vLixeira,versoes:vVersoes});
+Object.assign(IC,{importar:IC.install,versoes:IC.review,lixeira:'<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/>'});
+
+/* ============================================================
+   BLOCO 2 — recorrentes automáticos, busca geral, etiquetas e "Posso comprar?"
+   ============================================================ */
+/* ---------- etiquetas ---------- */
+function parseTags(t){if(Array.isArray(t))return t;return[...new Set(String(t||'').split(/[\s,;]+/).map(x=>x.replace(/^#/,'').trim().toLowerCase()).filter(x=>x&&x.length<=30))]}
+const tagsTxt=x=>(x&&x.tags||[]).map(t=>'#'+t).join(' ');
+function todasEtiquetas(){const T={};const add=(tags,v,ym)=>(tags||[]).forEach(t=>{T[t]=T[t]||{t,v:0,n:0,ms:new Set()};T[t].v+=v;T[t].n++;T[t].ms.add(ym)});
+  state.expenses.forEach(e=>add(e.tags,+e.valor,(e.date||'').slice(0,7)));state.cardPurchases.forEach(p=>add(p.tags,+p.valorTotal,(p.dataCompra||'').slice(0,7)));
+  return Object.values(T).sort((a,b)=>b.v-a.v)}
+
+/* ---------- recorrentes automáticos (renda e contas fixas) ---------- */
+function autoRecorrentes(){
+  const hoje=todayISO(),ate=todayYM();let n=0;const D=state.deleted||{};
+  // renda: a última ocorrência marcada como "repetir" serve de modelo para os meses seguintes
+  const modelos={};Object.keys(state.months).sort().forEach(ym=>(state.months[ym].income||[]).forEach(i=>{if(i.recId)modelos[i.recId]={i,ym}}));
+  Object.values(modelos).forEach(({i,ym})=>{if(!i.recorrente)return;
+    for(let m=addM(ym,1);m<=ate;m=addM(m,1)){const gid=i.recId+'@'+m;if(isDead(D[gid]))continue;const mm=month(m,true);if((mm.income||[]).some(x=>x.recId===i.recId))continue;
+      const dia=i.date?Math.min(+i.date.slice(8),daysIn(m)):5;mm.income.push({...i,id:gid,date:isoOf(m,dia),criado:Date.now(),auto:true});n++}});
+  // contas fixas com débito automático: lança o pagamento quando a data chega
+  state.bills.filter(b=>b.auto&&b.ativo!==false).forEach(b=>{for(let m=b.autoDesde||ate;m<=ate;m=addM(m,1)){if(!billActive(b,m))continue;const d=isoOf(m,Math.min(+b.dia||1,daysIn(m)));if(d>hoje)continue;
+    if(state.expenses.some(e=>e.billId===b.id&&e.billMonth===m))continue;const gid='bill:'+b.id+'@'+m;if(isDead(D[gid]))continue;
+    const e={id:gid,criado:Date.now(),desc:b.nome,valor:+b.valor,date:d,cat:b.cat,tipo:b.tipo,pay:b.pay,billId:b.id,billMonth:m,auto:true};if(b.contaId)e.contaId=b.contaId;state.expenses.push(e);n++}});
+  if(n){save();render()}return n;
+}
+
+/* ---------- busca geral ---------- */
+function buscaItens(q){
+  q=sa(q).trim();if(!q)return[];const tag=q.startsWith('#')?q.slice(1):null,num=/^[\d.,]+$/.test(q)?pVal(q):NaN,ws=q.split(/\s+/);
+  const ok=(texto,valor,tags)=>{if(tag)return(tags||[]).some(t=>t===tag||t.startsWith(tag));if(isFinite(num)&&Math.abs(Math.abs(valor)-num)<0.011)return true;const s=sa(texto+' '+(tags||[]).map(t=>'#'+t).join(' '));return ws.every(w=>s.includes(w))};
+  const R=[];
+  state.expenses.forEach(e=>{if(ok(`${e.desc} ${e.cat} ${e.pay||''} ${e.por||''}`,+e.valor,e.tags))R.push({k:'e',x:e,date:e.date,desc:e.desc,cat:e.cat,tipo:e.tipo,v:+e.valor,sub:e.pay})});
+  state.cardPurchases.forEach(p=>{const c=find(state.cards,p.cardId);if(ok(`${p.desc} ${p.cat} ${c?c.nome:''} ${p.por||''}`,+p.valorTotal,p.tags))R.push({k:'p',x:p,date:p.dataCompra,desc:p.desc,cat:p.cat,tipo:p.tipo,v:+p.valorTotal,sub:'💳 '+(c?c.nome:'cartão')+(p.parcelas>1?' · '+p.parcelas+'×':'')})});
+  Object.entries(state.months).forEach(([ym,m])=>(m.income||[]).forEach(i=>{if(ok(`${i.fonte} ${i.desc||''} renda ${i.por||''}`,+i.valor))R.push({k:'i',x:i,ym,date:i.date||isoOf(ym,1),desc:(i.fonte||'Renda')+(i.desc?' — '+i.desc:''),cat:'Renda',tipo:'renda',v:+i.valor,sub:'renda'})}));
+  return R.sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,300);
+}
+function vBusca(){
+  const q=ui.busca||'',R=buscaItens(q),T=todasEtiquetas(),gasto=sum(R.filter(r=>r.k!=='i'),r=>r.v),renda=sum(R.filter(r=>r.k==='i'),r=>r.v);
+  const porMes={};R.forEach(r=>{const ym=(r.date||'').slice(0,7);(porMes[ym]=porMes[ym]||[]).push(r)});
+  return`<div class="card"><h3>🔎 Buscar em tudo</h3><div class="sub">Gastos, compras no cartão e rendas de todos os meses. Busque por nome, categoria, valor (ex.: 85,90) ou #etiqueta.</div>
+   <input type="search" id="buscaGeral" value="${esc(q)}" placeholder="Ex.: ifood, mercado, 39,90, #viagem" autocomplete="off" style="width:100%;font-size:16px;padding:12px 14px;border-radius:12px;border:1px solid var(--border);background:var(--panel2);color:var(--text)">
+   ${T.length?`<div class="chips" style="margin-top:10px">${T.slice(0,20).map(t=>`<button class="chip ${q==='#'+t.t?'on':''}" data-act="buscaTag" data-id="${esc(t.t)}">#${esc(t.t)} <span class="muted" style="font-weight:500">${brl(t.v)}</span></button>`).join('')}</div>`:''}</div>
+  ${q?`<div class="card"><div class="card-head"><div><h3>${R.length} resultado(s)</h3><div class="sub" style="margin:0">${gasto?'Gastos: <b>'+brl(gasto)+'</b>':''}${gasto&&renda?' · ':''}${renda?'Rendas: <b class="pos">'+brl(renda)+'</b>':''}</div></div></div>
+   ${R.length?Object.entries(porMes).map(([ym,L])=>`<div class="mday"><span>${mLabel(ym,true)}</span><span>${brl(sum(L.filter(r=>r.k!=='i'),r=>r.v))}</span></div>${L.map(r=>`<div class="mrow" data-act="buscaAbre" data-id="${r.k}:${r.x.id}:${r.ym||''}"><div class="ic" style="background:var(--panel2)">${r.k==='p'?'💳':r.k==='i'?'💵':'🧾'}</div><div class="tx"><b>${esc(r.desc)}</b><small>${fmtDate(r.date)} · ${esc(r.cat||'')}${r.sub?' · '+esc(r.sub):''}${r.x.tags&&r.x.tags.length?' · '+esc(tagsTxt(r.x)):''}${r.x.por?' · por '+esc(r.x.por):''}</small></div><div class="vl ${r.k==='i'||r.v<0?'pos':''}">${brl(r.v)}</div></div>`).join('')}`).join('')
+    :'<div class="empty">Nada encontrado.</div>'}</div>`
+  :T.length?`<div class="card"><h3>🏷 Suas etiquetas</h3><div class="sub">Somam gastos de várias categorias — ótimas para viagens, reformas, festas</div>${T.map(t=>`<div class="mrow" data-act="buscaTag" data-id="${esc(t.t)}"><div class="ic" style="background:var(--panel2)">🏷</div><div class="tx"><b>#${esc(t.t)}</b><small>${t.n} lançamento(s) · ${t.ms.size} mês(es)</small></div><div class="vl">${brl(t.v)}</div></div>`).join('')}</div>`
+  :`<div class="card"><h3>🏷 Etiquetas</h3><p class="muted" style="margin:0">Marque gastos com etiquetas para somar um projeto que passa por várias categorias. No lançamento, escreva na descrição: <b>passagem #viagem</b>, ou use o campo “Etiquetas” ao editar um gasto.</p></div>`}`;
+}
+let _buscaT;
+document.addEventListener('input',e=>{if(e.target.id!=='buscaGeral')return;const v=e.target.value;clearTimeout(_buscaT);_buscaT=setTimeout(()=>{ui.busca=v;const pos=e.target.selectionStart;render();const i=$('#buscaGeral');if(i){i.focus();try{i.setSelectionRange(pos,pos)}catch(_){}}},220)});
+
+/* ---------- Posso comprar? ---------- */
+function pcCalc(P){
+  const ym=todayYM(),v=Math.max(0,+P.valor||0),n=Math.max(1,Math.round(+P.parcelas||1)),pc=v/n,card=P.pay.startsWith('card:')?find(state.cards,P.pay.slice(5)):null;
+  const [tipo,cat]=P.cat?[P.cat.slice(0,P.cat.indexOf('|')),P.cat.slice(P.cat.indexOf('|')+1)]:['wants',''];
+  const ymF=card?faturaDe(card.id,todayISO()):ym,valMes=card?pc:v;
+  const achaC=m=>comparison(m).find(x=>x.tipo===tipo&&norm(x.cat)===norm(cat));let r=cat?{...(achaC(ymF)||{plan:0,real:0})}:null;if(r&&!r.plan&&ymF!==ym){const r0=achaC(ym);if(r0&&r0.plan)r.plan=r0.plan}
+  const bs=bucketSummary(ym),inc=incomeTotal(ym),base=(bs.needs.plan+bs.wants.plan)||inc,livre=base-(bs.needs.real+bs.wants.real),livre2=livre-(tipo!=='savings'&&ymF===ym?valMes:0);
+  const sinais=[],L=[];let pior=0;const marca=(n,t)=>{pior=Math.max(pior,n);sinais.push([n,t])};
+  if(!v)return'<div class="muted">Digite o valor para ver o efeito.</div>';
+  if(r){const antes=r.real,dep=r.real+valMes,pl=r.plan;
+    L.push(`<div class="stat-line"><span>${esc(cat)} em ${mLabel(ymF)}</span><b>${brl(antes)} → <span class="${pl&&dep>pl?'neg':''}">${brl(dep)}</span>${pl?' / '+brl(pl):' (sem budget)'}</b></div>${pl?bar(dep/pl*100,dep>pl?'bad':dep>pl*.85?'warn':'ok'):''}`);
+    if(!pl)marca(1,`“${esc(cat)}” não tem budget neste mês`);else if(dep>pl)marca(2,`passa o budget de ${esc(cat)} em ${brl(dep-pl)}`);else if(dep>pl*.85)marca(1,`deixa ${esc(cat)} no limite (${pctf(dep/pl*100,0)})`)}
+  if(ymF===ym&&tipo!=='savings'){L.push(`<div class="stat-line"><span>Ainda pode gastar no mês</span><b>${brl(livre)} → <span class="${livre2<0?'neg':''}">${brl(livre2)}</span></b></div>`);if(livre2<0)marca(2,`o mês fecha ${brl(-livre2)} acima do planejado — sairia da poupança`)}
+  if(card){const u=cardUsed(card.id,ym),lv=(+card.limite||0)-u;L.push(`<div class="stat-line"><span>Limite livre — ${esc(card.nome)}</span><b>${brl(lv)} → <span class="${lv-v<0?'neg':''}">${brl(lv-v)}</span></b></div>`);
+    if(lv-v<0)marca(2,'passa do limite do cartão');else if((u+v)/(+card.limite||1)>.9)marca(1,'deixa o cartão com mais de 90% do limite usado');
+    const ms=[...Array(Math.min(n,6))].map((_,i)=>addM(ymF,i));L.push(`<div class="q-label" style="margin-top:10px">Faturas com esta compra</div>${ms.map(m=>{const f=cardFatura(card.id,m)-pagoFatura(card.id,m);return`<div class="stat-line"><span>${mLabel(m,true)}</span><b>${brl(f)} → ${brl(f+pc)}</b></div>`}).join('')}${n>6?`<div class="muted" style="font-size:12px">…e mais ${n-6} parcela(s)</div>`:''}`);
+    if(n>1&&inc&&pc/inc>.1)marca(1,`a parcela (${brl(pc)}) é mais de 10% da sua renda por ${n} meses`)}
+  else{const C=state.contas||[],c=C.find(x=>x.id===P.conta)||contaPrincipal();if(c){const s=contaSaldo(c).v;L.push(`<div class="stat-line"><span>Saldo — ${esc(c.nome)}</span><b>${brl(s)} → <span class="${s-v<0?'neg':''}">${brl(s-v)}</span></b></div>`);if(s-v<0)marca(2,'o saldo da conta fica negativo')}}
+  if(inc){const h=horasTrab(v,ym);L.push(`<div class="stat-line"><span>Custa em horas de trabalho</span><b>${num(h,h<10?1:0)} h</b></div>`)}
+  const res=reservaInfo();if(res.needs&&res.meses<1&&tipo==='wants'&&v>200)marca(1,'você ainda não tem 1 mês de reserva de emergência');
+  const G=state.goals.filter(g=>g.kind!=='fundo'&&g.prazo&&g.alvo>g.guardado);if(G.length&&tipo==='wants'&&bs.savings.target){const g=G[0],ap=goalMonthly(g);if(ap>0)L.push(`<div class="stat-line"><span>Equivale a</span><b>${num(v/ap,1)} mês(es) de aporte na meta “${esc(g.nome)}”</b></div>`)}
+  const V=[['🟢','Cabe no orçamento','ok'],['🟡','Cabe, mas aperta','warn'],['🔴','Não cabe agora','bad']][pior];
+  return`<div class="alert ${V[2]}" style="margin-bottom:10px"><b style="font-size:16px">${V[0]} ${V[1]}</b>${sinais.length?'<ul style="margin:6px 0 0;padding-left:18px">'+sinais.map(s=>`<li>${s[1]}</li>`).join('')+'</ul>':'<div style="margin-top:4px">Não estoura categoria, mês, limite nem saldo.</div>'}</div>${L.join('')}
+   ${tipo==='wants'&&v>=200?`<div class="alert" style="margin-top:10px">🧠 Desejo acima de R$ 200: que tal a regra das 24 horas? Se amanhã ainda fizer sentido, compre sem culpa.</div>`:''}
+   <button class="btn primary" data-act="pcLanca" style="margin-top:12px">Comprei — lançar agora</button>`;
+}
+function vPossoComprar(){
+  const P=ui.pc||(ui.pc={valor:'',parcelas:1,pay:'Pix',conta:(contaPrincipal()||{}).id||'',cat:''});
+  const C=state.contas||[],cats=impCatsBase();if(!P.cat){const bm=month(todayYM()).budget.filter(x=>x.tipo==='wants'&&+x.valor>0),w=bm[0]||cats.find(c=>c.tipo==='wants');if(w)P.cat=w.tipo+'|'+w.cat}
+  const sel=(k,ops,v)=>`<select data-pc="${k}">${ops.map(([a,b])=>`<option value="${esc(a)}" ${a===v?'selected':''}>${esc(b)}</option>`).join('')}</select>`;
+  const lbl=t=>`style="display:grid;gap:5px;font-size:12px;color:var(--muted);font-weight:600"`;
+  return`<div class="card"><h3>🤔 Posso comprar?</h3><div class="sub">Simule antes de comprar: o app mostra o efeito no orçamento, no limite, no saldo e nas metas. Nada é lançado.</div>
+   <div class="grid g2"><label ${lbl()}>Valor (R$)<input type="text" inputmode="decimal" data-pc="valor" value="${esc(String(P.valor).replace('.',','))}" placeholder="0,00" style="font-size:22px;font-weight:800"></label>
+    <label ${lbl()}>Pagamento${sel('pay',[['Pix','Pix / débito'],...state.cards.map(c=>['card:'+c.id,'💳 '+c.nome])],P.pay)}</label>
+    ${P.pay.startsWith('card:')?`<label ${lbl()}>Parcelas<input type="text" inputmode="numeric" data-pc="parcelas" value="${P.parcelas}"></label>`:C.length>1?`<label ${lbl()}>Sai de qual conta${sel('conta',C.map(c=>[c.id,c.nome]),P.conta)}</label>`:''}
+    <label ${lbl()}>Categoria${sel('cat',cats.map(c=>[c.tipo+'|'+c.cat,c.cat+' · '+BUCKETS[c.tipo].label]),P.cat)}</label></div></div>
+  <div class="card"><h3>Resultado</h3><div id="pcRes">${pcCalc(P)}</div></div>`;
+}
+function impCatsBase(){const m=new Map();const add=(c,t)=>{if(c&&BUCKETS[t]&&!m.has(t+'|'+norm(c)))m.set(t+'|'+norm(c),{cat:c,tipo:t})};month(todayYM()).budget.forEach(b=>add(b.cat,b.tipo));Object.values(state.months).forEach(x=>(x.budget||[]).forEach(b=>add(b.cat,b.tipo)));return[...m.values()].sort((a,b)=>a.tipo.localeCompare(b.tipo)||a.cat.localeCompare(b.cat))}
+document.addEventListener('input',e=>{const k=e.target.dataset&&e.target.dataset.pc;if(!k||!ui.pc)return;ui.pc[k]=k==='valor'?parseNum(e.target.value):k==='parcelas'?parseNum(e.target.value):e.target.value;
+  if(k==='pay'){keepScroll();return}const r=$('#pcRes');if(r)r.innerHTML=pcCalc(ui.pc)});
+document.addEventListener('change',e=>{const k=e.target.dataset&&e.target.dataset.pc;if(!k||!ui.pc||e.target.tagName!=='SELECT')return;ui.pc[k]=e.target.value;if(k==='pay')keepScroll();else{const r=$('#pcRes');if(r)r.innerHTML=pcCalc(ui.pc)}});
+
+Object.assign(ACT,{
+  buscaTag:t=>{ui.busca='#'+t;view='busca';render();scrollTo(0,0)},
+  buscaAbre:k=>{const[q,id,ym]=k.split(':');if(q==='e'){const e=find(state.expenses,id);if(e)expenseForm(e)}else if(q==='p'){const p=find(state.cardPurchases,id);if(p)purchaseForm(p)}else{curMonth=ym;const i=find(month(ym).income,id);render();if(i)incomeForm(i)}},
+  pcLanca:()=>{const P=ui.pc;if(!(P.valor>0)){toast('Digite o valor','err');return}const i=P.cat.indexOf('|');quickAdd({valor:P.valor,tipo:P.cat.slice(0,i),cat:P.cat.slice(i+1),pay:P.pay});
+    setTimeout(()=>{const f=$('#modalForm');if(f&&f.elements.parcelas&&P.pay.startsWith('card:'))f.elements.parcelas.value=Math.max(1,Math.round(P.parcelas||1));if(f){const b=f.querySelector(`[data-q="pay"][data-v="${P.pay}"]`);if(b)b.click()}},120)}
+});
+Object.assign(VIEWS,{busca:vBusca,possocomprar:vPossoComprar});
+Object.assign(IC,{busca:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',possocomprar:'<path d="M6 6h15l-1.5 9h-12z"/><path d="M6 6L5 3H2"/><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/>'});
+
+/* ============================================================
+   BLOCO 3 — quem lançou, rendimento automático e exportar
+   ============================================================ */
+/* ---------- quem lançou (nome desta pessoa, guardado só neste aparelho) ---------- */
+const QUEM_K='finm_quem';
+function quem(){try{return(localStorage.getItem(QUEM_K)||'').trim()}catch(e){return''}}
+function stampPor(o){const q=quem();if(q&&o&&!o.por)o.por=q;return o}
+function pessoasLanc(){const S=new Set();state.expenses.forEach(e=>e.por&&S.add(e.por));state.cardPurchases.forEach(p=>p.por&&S.add(p.por));Object.values(state.months).forEach(m=>(m.income||[]).forEach(i=>i.por&&S.add(i.por)));return[...S].sort()}
+function quemCard(){const q=quem(),P=pessoasLanc();
+  const ym=curMonth,tot={};if(P.length){actualEntries(ym,true).forEach(e=>{const o=e.src==='exp'?e.ref:e.ref&&e.ref.p;if(e.tipo==='savings')return;const k=(o&&o.por)||'—';tot[k]=(tot[k]||0)+(+e.valor||0)})}
+  return`<div class="card"><h3>👥 Casal / família</h3><div class="sub">Duas pessoas podem usar o mesmo app: conectem a sincronização com o <b>mesmo token</b> (gerado por um de vocês e passado pessoalmente, nunca por mensagem). Cada uma põe o próprio nome aqui, e os lançamentos mostram quem lançou.</div>
+   <label style="display:grid;gap:5px;font-size:12px;color:var(--muted);font-weight:600">Seu nome neste aparelho<input type="text" id="quemNome" value="${esc(q)}" placeholder="Ex.: Rick" maxlength="20" autocomplete="off" style="font-size:16px;padding:11px 12px;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)"></label>
+   <div class="row" style="margin-top:10px"><button class="btn primary" data-act="quemSalva">Salvar nome</button>${q?'<button class="btn" data-act="quemLimpa">Remover</button>':''}</div>
+   ${Object.keys(tot).length>1||(Object.keys(tot).length===1&&!tot['—'])?`<div class="q-label" style="margin-top:14px">Gastos de ${mLabel(ym,true)} por pessoa</div>${Object.entries(tot).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="stat-line" data-act="buscaPor" data-id="${esc(k)}" style="cursor:pointer"><span>${k==='—'?'Sem nome (lançados antes)':esc(k)}</span><b>${brl(v)}</b></div>`).join('')}`:''}
+   <div class="muted" style="font-size:12px;margin-top:8px">O nome não é senha: fica só neste aparelho e serve para identificar quem lançou.</div></div>`}
+
+/* ---------- rendimento automático de investimentos ---------- */
+const REND=[['manual','Manual (eu atualizo o valor)'],['cdi','% do CDI (pós-fixado)'],['pre','Prefixado (% ao ano)'],['ipca','IPCA + taxa (% ao ano)']];
+function taxaAnual(x){const T=inv().taxas,t=+x.taxa||0,cdi=Math.max(0,(+T.selic||0)-0.1);
+  if(x.rendeTipo==='cdi')return cdi*t/100;if(x.rendeTipo==='pre')return t;if(x.rendeTipo==='ipca')return((1+(+T.ipca||0)/100)*(1+t/100)-1)*100;return 0}
+function diasUteis(a,b){let n=0;const d=new Date(a+'T12:00:00'),f=new Date(b+'T12:00:00');while(d<f){d.setDate(d.getDate()+1);const w=d.getDay();if(w&&w<6)n++}return n}
+function valorEstimado(x){if(!x.rendeTipo||x.rendeTipo==='manual'||!x.base)return null;const du=diasUteis(x.base.d,todayISO());return Math.round(x.base.v*Math.pow(1+taxaAnual(x)/100,du/252)*100)/100}
+function invAtualiza(){let n=0;(state.investimentos||[]).forEach(x=>{const v=valorEstimado(x);if(v!=null&&Math.abs(v-(+x.atual||0))>=0.01){x.atual=v;x.estimado=todayISO();n++}});if(n)save();return n}
+{const _f=invForm;invForm=function(x){_f(x);const f=$('#modalForm');if(!f||!f.elements.atual)return;const it=x||{};
+  const box=document.createElement('div');box.className='full';box.style.cssText='display:grid;gap:10px;grid-column:1/-1';
+  box.innerHTML=`<div class="grid g2"><label>Rendimento automático<select name="rendeTipo">${REND.map(([a,b])=>`<option value="${a}" ${(it.rendeTipo||'manual')===a?'selected':''}>${b}</option>`).join('')}</select></label>
+   <label id="rTaxaL">Taxa<input type="text" inputmode="decimal" name="taxa" value="${it.taxa!=null?String(it.taxa).replace('.',','):''}" placeholder=""></label></div><div id="rInfo" class="muted" style="font-size:12px"></div>`;
+  const ref=f.elements.liq.closest('label');ref.after(box);
+  const tp=f.elements.rendeTipo,tx=f.elements.taxa,info=box.querySelector('#rInfo'),T=inv().taxas;
+  const upd=()=>{const t=tp.value;box.querySelector('#rTaxaL').hidden=t==='manual';tx.placeholder=t==='cdi'?'Ex.: 100 (% do CDI)':t==='pre'?'Ex.: 12,5 (% a.a.)':'Ex.: 6,2 (% a.a. acima do IPCA)';
+    const a=taxaAnual({rendeTipo:t,taxa:parseNum(tx.value)});info.innerHTML=t==='manual'?'Você atualiza o “Valor atual” quando quiser (ex.: olhando o app do banco).':`O app estima o valor a cada dia útil a partir do “Valor atual” de hoje: ~<b>${num(a,2)}% ao ano</b> bruto (Selic ${num(T.selic,2)}% · IPCA ${num(T.ipca,2)}% — ajuste em Investir › Simulador). É uma estimativa antes do IR: confira com o banco de vez em quando e corrija o valor.`};
+  tp.addEventListener('change',upd);tx.addEventListener('input',upd);upd();
+  const sub=f.onsubmit;f.onsubmit=e=>{const t=tp.value,taxa=parseNum(tx.value)||0,atual=parseNum(f.elements.atual.value)||parseNum(f.elements.aplicado.value)||0;sub(e);
+    const alvo=x||state.investimentos[state.investimentos.length-1];if(!alvo||!$('#modal').classList.contains('hidden'))return;
+    alvo.rendeTipo=t;alvo.taxa=t==='manual'?undefined:taxa;alvo.base=t==='manual'?undefined:{d:todayISO(),v:atual};delete alvo.estimado;save();render()}}}
+
+/* ---------- exportar: CSV do ano e relatório anual em PDF ---------- */
+function csvCel(v){v=v==null?'':String(v);return/[;"\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v}
+function linhasAno(ano){const L=[],nm=t=>BUCKETS[t]?BUCKETS[t].label:t||'';
+  state.expenses.filter(e=>(e.date||'').startsWith(ano)).forEach(e=>L.push([e.date,'Gasto',e.desc,e.cat,nm(e.tipo),e.pay||'',-(+e.valor),'',tagsTxt(e),e.por||'']));
+  state.cardPurchases.forEach(p=>{const c=find(state.cards,p.cardId),n=Math.max(1,+p.parcelas||1);for(let k=0;k<n;k++){const ym=addM(p.primeiraFatura||faturaDe(p.cardId,p.dataCompra),k);if(!ym.startsWith(ano))continue;
+    L.push([p.dataCompra||isoOf(ym,1),'Cartão',p.desc+(n>1?` (${k+1}/${n})`:''),p.cat,nm(p.tipo),'💳 '+(c?c.nome:'cartão'),-(+p.valorTotal/n),ym,tagsTxt(p),p.por||''])}});
+  Object.entries(state.months).filter(([ym])=>ym.startsWith(ano)).forEach(([ym,m])=>(m.income||[]).forEach(i=>L.push([i.date||isoOf(ym,1),'Renda',(i.fonte||'')+(i.desc?' — '+i.desc:''),'Renda','','',+i.valor,'','',i.por||''])));
+  L.forEach(r=>{r[0]=r[0]||''});return L.sort((a,b)=>a[0].localeCompare(b[0]))}
+async function exportarCSV(ano){const L=linhasAno(ano);if(!L.length){toast('Nada lançado em '+ano,'err');return}
+  const fmt=v=>typeof v==='number'?v.toFixed(2).replace('.',','):v;
+  const txt='﻿'+[['Data','Tipo','Descrição','Categoria','Grupo','Pagamento','Valor (R$)','Fatura','Etiquetas','Quem lançou'],...L].map(r=>r.map(v=>csvCel(fmt(v))).join(';')).join('\r\n');
+  const nome=`minhas-financas-${ano}.csv`;
+  try{const file=new File([txt],nome,{type:'text/csv'});if(isMobile()&&navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:'Lançamentos '+ano});toast('Planilha compartilhada ✓');return}}catch(e){if(e.name==='AbortError')return}
+  download(nome,txt,'text/csv;charset=utf-8');toast(L.length+' lançamentos exportados')}
+function exportCard(){const anos=[...new Set([todayYM().slice(0,4),...Object.keys(state.months).map(m=>m.slice(0,4)),...state.expenses.map(e=>(e.date||'').slice(0,4))].filter(a=>/^\d{4}$/.test(a)))].sort().reverse();ui.expAno=ui.expAno||anos[0];
+  return`<div class="card"><h3>📤 Exportar</h3><div class="sub">Para o contador, o Imposto de Renda ou para analisar no Excel / Google Planilhas.</div>
+   <div class="row" style="align-items:center"><select data-expano style="max-width:120px">${anos.map(a=>`<option ${a===ui.expAno?'selected':''}>${a}</option>`).join('')}</select>
+   <button class="btn primary" data-act="expCSV">📊 Planilha do ano (CSV)</button><button class="btn" data-act="expPDF">🖨 Relatório anual (PDF)</button><button class="btn" data-act="expMesPDF">🖨 Relatório do mês (PDF)</button></div>
+   <div class="muted" style="font-size:12px;margin-top:8px">A planilha traz gastos, parcelas do cartão (no mês da fatura) e rendas, com categoria, etiquetas e quem lançou. Para PDF, na tela de impressão escolha <b>Salvar como PDF</b>.</div></div>`}
+document.addEventListener('change',e=>{if(e.target.dataset&&e.target.dataset.expano!==undefined)ui.expAno=e.target.value});
+{const _vs=VIEWS.settings;VIEWS.settings=()=>quemCard()+exportCard()+_vs();}
+
+Object.assign(ACT,{
+  quemSalva:()=>{const v=(($('#quemNome')||{}).value||'').trim().slice(0,20);try{v?localStorage.setItem(QUEM_K,v):localStorage.removeItem(QUEM_K)}catch(e){}toast(v?'Pronto: novos lançamentos vão mostrar “'+v+'”':'Nome removido');render()},
+  quemLimpa:()=>{try{localStorage.removeItem(QUEM_K)}catch(e){}render()},
+  buscaPor:k=>{if(k==='—')return;ui.busca=k;view='busca';render();scrollTo(0,0)},
+  expCSV:()=>exportarCSV(ui.expAno||todayYM().slice(0,4)),
+  expPDF:()=>{const a=ui.expAno||todayYM().slice(0,4);if(a!==curMonth.slice(0,4))curMonth=a+(a===todayYM().slice(0,4)?todayYM().slice(4):'-12');view='anual';render();scrollTo(0,0);setTimeout(()=>window.print(),500)},
+  expMesPDF:()=>{view='report';render();scrollTo(0,0);setTimeout(()=>window.print(),500)}
+});
+
+/* ============================================================
+   BLOQUEIO DO APP — senha, padrão desenhado ou impressão digital
+   A configuração fica só neste aparelho (não vai no backup).
+   É uma tranca de tela: impede que alguém com o celular na mão abra o app.
+   ============================================================ */
+const LK_KEY='finm_lock';
+const lkGet=()=>{try{return JSON.parse(localStorage.getItem(LK_KEY))||null}catch(e){return null}};
+const lkSet=c=>{try{c?localStorage.setItem(LK_KEY,JSON.stringify(c)):localStorage.removeItem(LK_KEY)}catch(e){}};
+const b64=buf=>btoa(String.fromCharCode(...new Uint8Array(buf))),unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+async function lkHash(segredo,salt){const k=await crypto.subtle.importKey('raw',new TextEncoder().encode(segredo),'PBKDF2',false,['deriveBits']);
+  return b64(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:unb64(salt),iterations:120000},k,256))}
+let LKS=null,lkBioBusy=false,lkSaiu=0;
+const lkTravado=()=>!!(LKS&&LKS.modo==='abrir');
+const lkAnima=()=>{try{return fxOn()&&document.visibilityState==='visible'}catch(e){return false}};
+function lkInerte(on){const h=document.documentElement;if(on)h.dataset.locked='1';else delete h.dataset.locked;[...document.body.children].forEach(e=>{if(e.id!=='lock'&&e.id!=='crtfx'&&e.tagName!=='SCRIPT'){on?e.setAttribute('inert',''):e.removeAttribute('inert')}})}
+function lkHide(){const o=$('#lock');if(o)o.remove();LKS=null;lkInerte(false)}
+function lkShow(modo,tipo,cb){LKS={modo,tipo,cb,first:null,novo:true};if(modo==='abrir')lkInerte(true);lkDraw()}
+function lkLock(efeito){const c=lkGet();if(!c||lkTravado())return;try{closeModal()}catch(e){}try{tourFim(false)}catch(e){}lkShow('abrir',c.tipo);
+  const o=$('#lock');if(o&&efeito&&lkAnima()){o.classList.add(efeito);setTimeout(()=>o.classList.remove(efeito),900)}
+  if(c.bio&&document.visibilityState==='visible')setTimeout(()=>lkBio(true),efeito?900:350)}
+/* bloquear com o app aberto: a tela "desliga" como TV de tubo e o cadeado fecha */
+let lkDesligando=false;
+function lkBloquear(){const c=lkGet();if(!c||lkTravado()||lkDesligando)return;if(!lkAnima()){lkLock();return}
+  lkDesligando=true;const h=document.documentElement;h.style.setProperty('--sy',(scrollY+innerHeight/2)+'px');let x=$('#crtfx');if(!x){x=document.createElement('div');x.id='crtfx';document.body.appendChild(x)}
+  h.classList.add('crt-off');setTimeout(()=>{lkLock('lk-fecha');h.classList.remove('crt-off');x.remove();lkDesligando=false;try{navigator.vibrate&&navigator.vibrate([18,40,30])}catch(e){}},520)}
+/* destravou: o cadeado abre e o app "liga" */
+function lkAbre(){const c=lkGet();if(c){c.erros=0;c.ate=0;lkSet(c)}const o=$('#lock');if(!o||!lkAnima()){lkHide();return}
+  if(LKS)LKS.abrindo=true;const cad=o.querySelector('.lk-cad');if(cad)cad.classList.add('aberto');const m=$('#lkMsg');if(m){m.textContent='Desbloqueado';m.className='lk-msg lk-okk'}
+  setTimeout(()=>{const h=document.documentElement;h.style.setProperty('--sy',(scrollY+innerHeight/2)+'px');lkHide();h.classList.add('crt-on');setTimeout(()=>h.classList.remove('crt-on'),620)},520)}
+const LK_CAD='<svg class="lk-cad" viewBox="0 0 96 110" aria-hidden="true"><path class="haste" d="M28 50V34a20 20 0 0 1 40 0v16" fill="none" stroke-width="9" stroke-linecap="round"/><rect class="corpo" x="14" y="48" width="68" height="54" rx="14"/><circle class="furo" cx="48" cy="70" r="7"/><rect class="furo" x="45" y="72" width="6" height="16" rx="3"/></svg>';
+function lkDraw(msg,erro){
+  const c=lkGet()||{},S=LKS;let o=$('#lock');if(!o){o=document.createElement('div');o.id='lock';document.body.appendChild(o)}
+  const T={abrir:['Minhas Finanças',S.tipo==='padrao'?'Desenhe seu padrão para entrar':'Digite sua senha para entrar'],
+    verifica:['Confirme que é você',S.tipo==='padrao'?'Desenhe o padrão atual':'Digite a senha atual'],
+    novo:[S.tipo==='padrao'?'Novo padrão':'Nova senha',S.tipo==='padrao'?'Ligue pelo menos 4 pontos':'Mínimo de 4 caracteres (letras ou números)'],
+    confirma:['Repita para confirmar',S.tipo==='padrao'?'Desenhe o mesmo padrão de novo':'Digite a mesma senha de novo'],
+    esqueci:['Esqueceu?','']}[S.modo];
+  const espera=c.ate&&c.ate>Date.now()&&(S.modo==='abrir'||S.modo==='verifica')?Math.ceil((c.ate-Date.now())/1000):0;
+  let corpo='';
+  if(S.modo==='esqueci')corpo=`<p class="lk-msg">Não existe como recuperar a senha ou o padrão. A única saída é <b>apagar os dados deste aparelho</b> e depois importar o seu último backup (.json).</p>
+    <button class="btn danger" data-act="lkApagar" style="width:100%;justify-content:center">${S.certeza?'Toque de novo para APAGAR TUDO':'Apagar os dados e recomeçar'}</button>
+    <button class="btn" data-act="lkVoltar" style="width:100%;justify-content:center;margin-top:10px">Voltar</button>`;
+  else if(espera)corpo=`<p class="lk-msg lk-erro">Muitas tentativas erradas.<br>Tente de novo em <b id="lkSeg">${espera}</b> s.</p>`;
+  else if(S.tipo==='padrao')corpo=`<div class="lk-pad" id="lkPad"></div>`;
+  else corpo=`<form id="lkForm" autocomplete="off"><input id="lkSenha" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Senha" enterkeyhint="go"><button class="btn primary" type="submit" style="width:100%;justify-content:center;margin-top:10px">${S.modo==='abrir'?'Entrar':'Continuar'}</button></form>`;
+  if(S.abrindo)return;
+  o.innerHTML=`<div class="lk-box ${S.novo?'':'lk-quieto'}">${S.modo==='abrir'?LK_CAD:'<img src="icons/icon-192.png?v=7" alt="" class="lk-logo">'}<h2>${S.modo==='abrir'?'Minhas Finanças bloqueado':T[0]}</h2>
+    <p class="lk-msg ${erro?'lk-erro':''}" id="lkMsg">${espera?'':msg||T[1]}</p>${corpo}
+    <div class="lk-links">${S.modo==='abrir'&&c.bio&&!espera?'<button class="btn primary" data-act="lkBio" style="font-size:15px;padding:13px 18px">👆 Usar impressão digital</button>':''}
+    ${S.modo==='abrir'||S.modo==='verifica'?'<button class="lk-link" data-act="lkEsqueci">Esqueci</button>':''}
+    ${S.modo!=='abrir'&&S.modo!=='esqueci'?'<button class="lk-link" data-act="lkCancelar">Cancelar</button>':''}</div></div>`;
+  S.novo=false;
+  if(erro){const b=o.querySelector('.lk-box');b.classList.add('lk-treme');try{navigator.vibrate&&navigator.vibrate(60)}catch(e){}}
+  if(espera){const t=setInterval(()=>{const e=$('#lkSeg');if(!e||!LKS){clearInterval(t);return}const s=Math.ceil((c.ate-Date.now())/1000);if(s<=0){clearInterval(t);lkDraw()}else e.textContent=s},500);return}
+  const f=$('#lkForm');if(f){f.onsubmit=e=>{e.preventDefault();lkTenta($('#lkSenha').value)};if(S.modo!=='abrir'||!c.bio)setTimeout(()=>{const i=$('#lkSenha');i&&i.focus()},80)}
+  const p=$('#lkPad');if(p)lkPad(p,lkTenta);
+}
+/* grade 3×3 para desenhar o padrão */
+function lkPad(el,pronto){
+  const P=i=>({x:(i%3)*95+45,y:Math.floor(i/3)*95+45});
+  el.innerHTML=`<svg viewBox="0 0 280 280"><polyline id="lkLinha" fill="none" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>${[...Array(9)].map((_,i)=>`<circle class="lk-dot" data-i="${i}" cx="${P(i).x}" cy="${P(i).y}" r="11"/>`).join('')}</svg>`;
+  const svg=el.querySelector('svg'),linha=el.querySelector('#lkLinha');let seq=[],on=false;
+  const pos=e=>{const r=svg.getBoundingClientRect();return{x:(e.clientX-r.left)/r.width*280,y:(e.clientY-r.top)/r.height*280}};
+  const desenha=d=>{linha.setAttribute('points',seq.map(i=>P(i).x+','+P(i).y).concat(d?[d.x+','+d.y]:[]).join(' '))};
+  const toca=e=>{const d=pos(e);for(let i=0;i<9;i++){if(!seq.includes(i)&&Math.hypot(P(i).x-d.x,P(i).y-d.y)<34){seq.push(i);svg.querySelector(`[data-i="${i}"]`).classList.add('on');try{navigator.vibrate&&navigator.vibrate(8)}catch(e){}}}desenha(on?d:null)};
+  svg.addEventListener('pointerdown',e=>{e.preventDefault();seq=[];svg.querySelectorAll('.on').forEach(x=>x.classList.remove('on'));on=true;try{svg.setPointerCapture(e.pointerId)}catch(_){}toca(e)});
+  svg.addEventListener('pointermove',e=>{if(on)toca(e)});
+  const fim=()=>{if(!on)return;on=false;desenha();if(seq.length<4){$('#lkMsg').textContent='Ligue pelo menos 4 pontos';$('#lkMsg').classList.add('lk-erro');setTimeout(()=>{seq=[];desenha();svg.querySelectorAll('.on').forEach(x=>x.classList.remove('on'))},500);return}pronto(seq.join('-'))};
+  svg.addEventListener('pointerup',fim);svg.addEventListener('pointercancel',fim);
+}
+async function lkTenta(seg){
+  const S=LKS,c=lkGet()||{};if(!S||!seg)return;
+  if(S.modo==='novo'){if(seg.length<4){lkDraw('Muito curta: use pelo menos 4 caracteres',true);return}S.first=seg;S.modo='confirma';lkDraw();return}
+  if(S.modo==='confirma'){if(seg!==S.first){S.modo='novo';S.first=null;lkDraw('Não conferiu. Comece de novo.',true);return}
+    const salt=b64(crypto.getRandomValues(new Uint8Array(16)));lkSet({tipo:S.tipo,salt,hash:await lkHash(seg,salt),bio:c.bio||null,auto:c.auto||0,erros:0});
+    lkHide();render();toast('Bloqueio ativado 🔒');return}
+  if(c.ate&&c.ate>Date.now()){lkDraw();return}
+  if(await lkHash(seg,c.salt)===c.hash){c.erros=0;c.ate=0;lkSet(c);const cb=S.cb;if(S.modo==='abrir'){lkAbre();return}lkHide();if(cb)cb();return}
+  c.erros=(c.erros||0)+1;if(c.erros>=5)c.ate=Date.now()+Math.min(600,30*Math.pow(2,c.erros-5))*1000;lkSet(c);
+  lkDraw(c.erros>=5?'':(S.tipo==='padrao'?'Padrão incorreto':'Senha incorreta')+` (${5-c.erros} tentativa(s) antes da pausa)`,true);
+}
+/* impressão digital / biometria do aparelho (WebAuthn) */
+const lkBioOk=async()=>{try{return!!(window.PublicKeyCredential&&await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable())}catch(e){return false}};
+async function lkBio(silencioso){
+  const c=lkGet();if(!c||!c.bio||!lkTravado()||lkBioBusy)return;lkBioBusy=true;
+  try{await navigator.credentials.get({publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)),allowCredentials:[{type:'public-key',id:unb64(c.bio)}],userVerification:'required',timeout:60000}});
+    lkAbre()}
+  catch(e){if(lkTravado()){lkDraw(silencioso?(c.tipo==='padrao'?'Desenhe seu padrão — ou toque em "Usar impressão digital"':'Digite sua senha — ou toque em "Usar impressão digital"'):'Não foi possível ler a digital. Use '+(c.tipo==='padrao'?'o padrão':'a senha')+'.',!silencioso);const i=$('#lkSenha');i&&i.focus()}}
+  finally{setTimeout(()=>lkBioBusy=false,600)}
+}
+async function lkBioAtivar(){
+  const c=lkGet();if(!c)return;
+  if(!(await lkBioOk())){toast('Este navegador/aparelho não liberou a biometria para sites. Use senha ou padrão.','err');return}
+  lkBioBusy=true;
+  try{const cred=await navigator.credentials.create({publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)),rp:{name:'Minhas Finanças'},
+      user:{id:crypto.getRandomValues(new Uint8Array(16)),name:'minhas-financas',displayName:'Minhas Finanças'},
+      pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
+      authenticatorSelection:{authenticatorAttachment:'platform',userVerification:'required',residentKey:'discouraged'},timeout:60000,attestation:'none'}});
+    c.bio=b64(cred.rawId);lkSet(c);render();toast('Impressão digital ativada 👆')}
+  catch(e){toast('Não foi possível ativar a biometria'+(e&&e.name?' ('+e.name+')':''),'err')}
+  finally{setTimeout(()=>lkBioBusy=false,600)}
+}
+/* bloqueia ao sair do app */
+document.addEventListener('visibilitychange',()=>{const c=lkGet();if(!c)return;
+  if(document.visibilityState==='hidden'){lkSaiu=Date.now();if(!c.auto&&!lkBioBusy)lkLock()}
+  else{if(c.auto>0&&lkSaiu&&Date.now()-lkSaiu>=c.auto*60000)lkLock('crt-liga');else if(lkTravado()&&c.bio&&!lkBioBusy)setTimeout(()=>lkBio(true),250)}});
+function lkCard(){
+  const c=lkGet(),auto=c?c.auto||0:0;
+  return`<div class="card"><div class="card-head"><div><h3>🔒 Bloqueio do app</h3><div class="sub">${c?'Ativo com <b>'+(c.tipo==='padrao'?'padrão desenhado':'senha')+'</b>'+(c.bio?' + <b>impressão digital</b>':''):'Desligado — qualquer pessoa com o celular desbloqueado abre o app'}</div></div>${c?'<span class="badge ok">Ativo</span>':'<span class="badge warn">Desligado</span>'}</div>
+   <div class="row"><button class="btn ${c&&c.tipo==='senha'?'primary':''}" data-act="lkDefinir" data-id="senha">🔑 ${c&&c.tipo==='senha'?'Trocar senha':'Usar senha'}</button><button class="btn ${c&&c.tipo==='padrao'?'primary':''}" data-act="lkDefinir" data-id="padrao">⬚ ${c&&c.tipo==='padrao'?'Trocar padrão':'Usar padrão'}</button>
+    ${c?`<button class="btn ${c.bio?'primary':''}" data-act="lkBioToggle">👆 Digital: ${c.bio?'ligada':'ativar'}</button>`:''}</div>
+   ${c?`<div class="q-label" style="margin-top:14px">Bloquear automaticamente</div><div class="chips">${[[-1,'Só manual'],[0,'Assim que sair do app'],[1,'Após 1 min fora'],[5,'Após 5 min fora'],[15,'Após 15 min fora']].map(([v,l])=>`<button class="chip ${auto===v?'on':''}" data-act="lkAuto" data-id="${v}">${l}</button>`).join('')}</div>
+   <div class="row" style="margin-top:14px"><button class="btn" data-act="lkAgora">Bloquear agora</button><button class="btn danger" data-act="lkDesligar">Desligar bloqueio</button></div>`:''}
+   <div class="muted" style="font-size:12px;margin-top:10px">⚠️ Não há como recuperar senha ou padrão esquecido: a saída é apagar os dados do aparelho e importar o backup. <b>Faça um backup antes de ativar.</b> O bloqueio vale só neste aparelho e protege a tela do app; o arquivo de backup não é protegido por ele.</div></div>`;
+}
+Object.assign(ACT,{
+  lkDefinir:tipo=>{closeModal();const ir=()=>lkShow('novo',tipo);const c=lkGet();c?lkShow('verifica',c.tipo,ir):ir()},
+  lkDesligar:()=>{const c=lkGet();if(c)lkShow('verifica',c.tipo,()=>{lkSet(null);render();toast('Bloqueio desligado')})},
+  lkBioToggle:()=>{const c=lkGet();if(!c)return;if(c.bio){c.bio=null;lkSet(c);render();toast('Impressão digital desligada')}else lkBioAtivar()},
+  lkAuto:v=>{const c=lkGet();if(!c)return;c.auto=+v;lkSet(c);render()},
+  lkAgora:()=>lkBloquear(),lkBio:()=>lkBio(false),
+  lkBotao:()=>{if(lkGet())lkBloquear();else{toast('Defina uma senha ou um padrão para usar o cadeado');ACT.lockMenu()}},
+  lkCancelar:()=>lkHide(),
+  lkEsqueci:()=>{LKS.antes=LKS.modo;LKS.modo='esqueci';LKS.certeza=false;lkDraw()},
+  lkVoltar:()=>{LKS.modo=LKS.antes||'abrir';lkDraw()},
+  lkApagar:async()=>{if(!LKS.certeza){LKS.certeza=true;lkDraw();return}
+    try{state=defaultState();rev=0;[STORE,'finm_meta','finm_wizard','finm_gist',LK_KEY].forEach(k=>localStorage.removeItem(k));await new Promise(r=>{const q=indexedDB.deleteDatabase('minhas_financas_mobile_db');q.onsuccess=q.onerror=q.onblocked=r})}catch(e){}
+    location.replace(location.pathname)},
+  lockMenu:()=>{closeModal();view='settings';render();setTimeout(()=>{const e=[...document.querySelectorAll('#view h3')].find(h=>h.textContent.includes('Bloqueio'));e&&e.scrollIntoView({block:'start'})},60)}
+});
+{const _vs=VIEWS.settings;VIEWS.settings=()=>lkCard()+_vs();}
+{const _r=render;render=function(){_r();const b=$('#lkBtn');if(b){const on=!!lkGet();b.textContent=on?'🔒':'🔓';b.title=on?'Bloquear agora (Alt+L)':'Ativar o bloqueio'}};}
+/* trancado: atalhos do app não funcionam; Alt+L bloqueia */
+addEventListener('keydown',e=>{if(document.documentElement.dataset.locked){e.stopImmediatePropagation();const dentro=e.target.closest&&e.target.closest('#lock'),combo=(e.ctrlKey||e.metaKey||e.altKey)&&!/^[acvxz]$/i.test(e.key);if((!dentro&&e.key!=='Tab')||combo)e.preventDefault();return}
+  if(e.altKey&&!e.ctrlKey&&!e.metaKey&&(e.key==='l'||e.key==='L'||e.code==='KeyL')){e.preventDefault();ACT.lkBotao()}},true);
+if(lkGet())lkLock('crt-liga');else lkInerte(false);   // já abre travado, antes de mostrar qualquer dado
+
+/* ============================================================
+   FX 3D — camada de animações (pode ser desligada em Mais › Animações 3D)
+   Só usa transform/opacity (leve para o celular) e respeita "reduzir movimento".
+   ============================================================ */
+const fxOn=()=>state.settings.fx!==false&&!matchMedia('(prefers-reduced-motion: reduce)').matches;
+const FX_ORDEM=['home','expenses','vale','contas','budget','compare','bills','debts','cards','goals','invest','learn','profile','dashboard','review','report','settings'];
+let fxKey='',fxT;
+const fxChave=()=>view+'|'+(ui.invTab||'')+'|'+(ui.budTab||'')+'|'+curMonth;
+{const _render=render;
+ render=function(){
+  const antes=fxKey,[v0,,,m0]=antes.split('|');
+  _render();
+  document.documentElement.dataset.fx=fxOn()?'on':'off';
+  fxKey=fxChave();
+  if(!fxOn()||fxKey===antes)return;
+  let dir=1;if(antes){if(v0!==view)dir=FX_ORDEM.indexOf(view)>=FX_ORDEM.indexOf(v0)?1:-1;else if(m0!==curMonth)dir=curMonth>m0?1:-1}
+  const b=document.body;b.classList.remove('fx-in');void b.offsetWidth;   // reinicia a animação
+  b.style.setProperty('--fx-dir',dir);b.classList.add('fx-in');
+  clearTimeout(fxT);fxT=setTimeout(()=>b.classList.remove('fx-in'),1100);
+  fxContar();
+ };}
+/* números "rolam" até o valor quando a tela entra */
+function fxContar(){
+  document.querySelectorAll('#view .hero .big,#view .kpi .value').forEach(el=>{
+    const t=el.textContent.trim(),m=t.match(/^([−-]?)R\$\s?([\d.]+),(\d{2})$/);if(!m)return;
+    const alvo=parseFloat(m[2].replace(/\./g,'')+'.'+m[3]);if(!(alvo>0))return;
+    const t0=performance.now(),dur=650;
+    const passo=now=>{if(!el.isConnected)return;const k=Math.min(1,(now-t0)/dur),e=1-Math.pow(1-k,3);el.textContent=m[1]+brl(alvo*e);if(k<1)requestAnimationFrame(passo);else el.textContent=t};
+    requestAnimationFrame(passo)});
+}
+/* toque: o cartão inclina na direção do dedo + onda saindo do ponto tocado */
+const FX_TILT='.kpi,.card.hero,.more-item,.item-card,.card[data-act],.ring';
+const FX_RIP='.btn,.chip,.more-item,.mrow,.icon-btn,.nav-btn,.bnav button:not(.fab)';
+let fxEl=null;
+document.addEventListener('pointerdown',e=>{
+  if(!fxOn()||e.target.closest('input,select,textarea'))return;
+  const r=e.target.closest(FX_RIP);
+  if(r){const b=r.getBoundingClientRect(),s=document.createElement('span'),d=Math.max(b.width,b.height)*1.2;
+    s.className='fx-rip';s.style.cssText=`width:${d}px;height:${d}px;left:${e.clientX-b.left-d/2}px;top:${e.clientY-b.top-d/2}px`;
+    if(getComputedStyle(r).position==='static')r.style.position='relative';
+    r.classList.add('fx-host');r.appendChild(s);setTimeout(()=>{s.remove();if(!r.querySelector('.fx-rip'))r.classList.remove('fx-host')},520)}
+  const t=e.target.closest(FX_TILT);
+  if(t){const b=t.getBoundingClientRect(),x=(e.clientX-b.left)/b.width-.5,y=(e.clientY-b.top)/b.height-.5,f=b.width>260?7:14;
+    fxEl=t;t.style.transition='transform .14s ease-out';t.style.transform=`perspective(700px) rotateX(${(-y*f).toFixed(2)}deg) rotateY(${(x*f).toFixed(2)}deg) scale(.975)`}
+},{passive:true});
+const fxSolta=()=>{if(!fxEl)return;const t=fxEl;fxEl=null;t.style.transition='transform .45s cubic-bezier(.2,1.6,.4,1)';t.style.transform='';setTimeout(()=>{t.style.transition=''},460)};
+['pointerup','pointercancel','scroll'].forEach(ev=>addEventListener(ev,fxSolta,{passive:true,capture:true}));
+/* giroscópio: o cartão principal acompanha a inclinação do celular e o brilho desliza */
+{let b0=null,gx=0,gy=0,raf=0;
+ addEventListener('deviceorientation',e=>{if(!fxOn()||e.gamma==null||e.beta==null)return;if(b0==null)b0=e.beta;
+  gx=Math.max(-9,Math.min(9,e.gamma/3));gy=Math.max(-7,Math.min(7,(e.beta-b0)/3));b0+=(e.beta-b0)*.02;   // recalibra devagar
+  if(!raf)raf=requestAnimationFrame(()=>{raf=0;const s=document.documentElement.style;s.setProperty('--gx',gx.toFixed(2)+'deg');s.setProperty('--gy',(-gy).toFixed(2)+'deg');s.setProperty('--gxp',(gx*4).toFixed(1)+'%');s.setProperty('--gyp',(gy*4).toFixed(1)+'%')})},{passive:true});}
+/* moeda 3D: gira e sobe do botão + quando um gasto é lançado */
+function fxMoeda(tipo){
+  if(!fxOn())return;const fab=document.querySelector('.bnav .fab i'),r=fab&&fab.offsetParent?fab.getBoundingClientRect():{left:innerWidth-90,top:innerHeight-120,width:54};
+  const w=document.createElement('div');w.className='fx-coin-wrap';w.style.left=(r.left+r.width/2-23)+'px';w.style.top=(r.top-6)+'px';
+  w.innerHTML=`<div class="fx-coin ${tipo==='savings'?'verde':''}"><i>R$</i><i class="v">${tipo==='savings'?'↑':'✓'}</i></div>`+[...Array(8)].map((_,k)=>`<b style="--a:${k*45}deg"></b>`).join('');
+  document.body.appendChild(w);setTimeout(()=>w.remove(),1300);try{navigator.vibrate&&navigator.vibrate(12)}catch(e){}
+}
+{const _coach=coachShow;coachShow=function(x,...r){fxMoeda(x&&x.tipo);return _coach(x,...r)};}
+/* trocar o tema: a tela vira como uma carta */
+{const _tema=ACT.theme;ACT.theme=()=>{if(!fxOn())return _tema();const v=$('#view');v.classList.add('fx-flipout');
+  setTimeout(()=>{_tema();v.classList.remove('fx-flipout');v.classList.add('fx-flipin');setTimeout(()=>v.classList.remove('fx-flipin'),420)},210)};}
+ACT.toggleFx=()=>{closeModal();state.settings.fx=state.settings.fx===false;save();fxKey='';render();toast('Animações 3D '+(state.settings.fx?'ligadas':'desligadas'))};
+
+/* ============================================================
+   TEMAS — 5 visuais completos (cores, fundo, fonte, cantos)
+   ============================================================ */
+const SKINS={
+ oceano:{n:'Oceano',d:'Azul-marinho com dourado. O clássico.',base:'dark',b:'#0b0f17',p:'#131a25',dd:'#253043',t:'#e7edf5',m:'#8a97aa',a:'#4f8cff',s:'#f2c14e',h:'linear-gradient(135deg,#3f73d9,#7e56c9)',f:"system-ui,sans-serif"},
+ dolar:{n:'Dólar',d:'Claro e limpo, em verde-nota.',base:'light',b:'#f3f5fa',p:'#ffffff',dd:'#e2e7f0',t:'#162033',m:'#66738a',a:'#1f8a4c',s:'#1f7a3f',h:'linear-gradient(135deg,#14532d,#1f8a4c 60%,#3fbf7a)',f:"system-ui,sans-serif"},
+ onix:{n:'Ônix',d:'Preto puro, minimalista. Economiza bateria em tela OLED.',base:'dark',b:'#000',p:'#0b0b0c',dd:'#27272b',t:'#f5f5f6',m:'#8d8d96',a:'#2fd39a',s:'#f1f1f3',h:'linear-gradient(140deg,#0c3b2c,#0b0b0c 75%)',f:"'Space Grotesk',system-ui,sans-serif",font:'Space+Grotesk:wght@400;500;700'},
+ pergaminho:{n:'Pergaminho',d:'Papel creme e títulos com serifa. Elegante para ler.',base:'light',b:'#f3eee4',p:'#fffdf8',dd:'#e2d8c6',t:'#2a2420',m:'#7b7064',a:'#b4532a',s:'#8f3f1e',h:'linear-gradient(135deg,#2f241c,#7a3b1f)',f:"'Fraunces',Georgia,serif",font:'Fraunces:opsz,wght@9..144,600;9..144,700'},
+ aurora:{n:'Aurora',d:'Roxo profundo com luzes coloridas e cantos bem redondos.',base:'dark',b:'#0c0920',p:'#16112d',dd:'#33295f',t:'#f0ebff',m:'#a79dd0',a:'#8b7bff',s:'#7ef0e0',h:'linear-gradient(135deg,#6a55f0,#c93fe0 55%,#22c5e0)',f:"'Plus Jakarta Sans',system-ui,sans-serif",font:'Plus+Jakarta+Sans:wght@400;600;800'}
+};
+const skinAtual=()=>SKINS[state.settings.skin]?state.settings.skin:(state.settings.theme==='light'?'dolar':'oceano');
+function skinFonte(id){const k=SKINS[id];if(!k||!k.font||document.getElementById('fonte-'+id))return;const l=document.createElement('link');l.id='fonte-'+id;l.rel='stylesheet';l.crossOrigin='anonymous';l.href='https://fonts.googleapis.com/css2?family='+k.font+'&display=swap';document.head.appendChild(l)}
+function skinPinta(id){id=id||skinAtual();const k=SKINS[id],h=document.documentElement;h.dataset.skin=id;h.dataset.theme=k.base;skinFonte(id);
+  const tc=document.querySelector('meta[name=theme-color]');if(tc)tc.content=k.b;try{localStorage.setItem('finm_skin',id)}catch(e){}}
+function skinCards(){const at=skinAtual();return`<div class="skin-grid">${Object.entries(SKINS).map(([id,k])=>`<button type="button" class="skin-card ${at===id?'on':''}" data-act="skin" data-id="${id}" style="--b:${k.b};--p:${k.p};--d:${k.dd};--t:${k.t};--m:${k.m};--a:${k.a};--s:${k.s};--h:${k.h}">
+   <div class="skin-pv" style="font-family:${k.f}"><div class="skin-hero">R$ 1.250,00<i></i></div><div class="skin-ln"><span>Mercado</span><em>R$ 85,00</em></div><div class="skin-ln"><span>Lazer</span><em>R$ 40,00</em></div><div class="skin-nv"><i class="on"></i><i></i><i class="fab"></i><i></i><i></i></div></div>
+   <b>${k.n}${at===id?'<span style="color:var(--ok);font-size:12px">✓ em uso</span>':''}</b><small>${k.d}</small></button>`).join('')}</div>`}
+function abrirTemas(){Object.keys(SKINS).forEach(skinFonte);const f=$('#modalForm');
+  f.innerHTML=`<header>🎨 Temas</header><div class="body"><div class="full"><p class="muted" style="margin:0 0 12px">Toque para experimentar — muda na hora. Cada tema troca cores, fundo, fonte e formato dos cartões.</p><div id="skinBox">${skinCards()}</div></div></div><footer><button type="button" class="btn primary" data-act="closeModal">Pronto</button></footer>`;
+  f.onsubmit=e=>e.preventDefault();f.onclick=null;$('#modal').classList.remove('hidden')}
+{const _r=render;render=function(){_r();skinPinta();const b=$('#themeBtn');if(b)b.textContent='🎨 Tema'};}
+{const _vs=VIEWS.settings;VIEWS.settings=()=>`<div class="card"><div class="card-head"><div><h3>🎨 Temas</h3><div class="sub">Escolha o visual do app</div></div></div>${skinCards()}</div>`+_vs();}
+Object.assign(ACT,{
+  theme:()=>{closeModal();abrirTemas()},
+  skin:id=>{if(!SKINS[id]||id===skinAtual())return;const aplica=()=>{state.settings.skin=id;state.settings.theme=SKINS[id].base;save();render();const b=$('#skinBox');if(b)b.innerHTML=skinCards()};
+    let anima=false;try{anima=fxOn()}catch(e){}if(!anima){aplica();return}
+    const v=$('#view');v.classList.add('fx-flipout');setTimeout(()=>{aplica();v.classList.remove('fx-flipout');v.classList.add('fx-flipin');setTimeout(()=>v.classList.remove('fx-flipin'),420)},210)}
+});
+try{const k=localStorage.getItem('finm_skin');if(SKINS[k]){document.documentElement.dataset.skin=k;document.documentElement.dataset.theme=SKINS[k].base;skinFonte(k)}}catch(e){}
+
+(async()=>{
+  if(isMobile())view='home';
+  if(location.search.includes('atualizado=')){history.replaceState(null,'',location.pathname);setTimeout(()=>toast('App atualizado ✓ versão '+APP_VERSAO),800)}
+  matchMedia('(max-width:820px)').addEventListener('change',()=>{if(!isMobile()&&view==='home')view='dashboard';render()});
+  const temDados=await carregar();revAoAbrir=rev;fileRev=-1;
+  pedirPersistencia().then(()=>{if(view==='settings')render()});
+  syPinta();syncNow();setTimeout(plRetrato,1500);lixCarrega();setTimeout(()=>snapAuto(),4000);setTimeout(autoRecorrentes,1200);setTimeout(invAtualiza,1500);setInterval(autoRecorrentes,3600e3);setInterval(()=>snapAuto(),3600e3);
+  const lerHash=()=>{if(!location.hash.startsWith('#n='))return;let t='';try{t=decodeURIComponent(location.hash.slice(3))}catch(e){}history.replaceState(null,'',location.pathname);if(t)setTimeout(()=>{closeModal();abrirNotif(t)},400)};
+  lerHash();addEventListener('hashchange',lerHash);
+  render();
+  await iniciarArquivo();
+  if(temDados&&new URLSearchParams(location.search).get('acao')==='lancar'){history.replaceState(null,'',location.pathname);quickAdd()}
+  if(!temDados&&!handle&&!pendingHandle){let w=null;try{w=localStorage.getItem('finm_wizard')}catch(e){}if(!w)mostrarAssistente()}
+})();
