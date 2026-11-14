@@ -665,7 +665,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.14-2';
+const APP_VERSAO='2026.11.14-3';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -824,8 +824,8 @@ const IC={
 Object.assign(IC,{anual:IC.report,fechar:IC.calendar,dividir:IC.profile,contas:IC.vale});
 const ico=n=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${IC[n]}</svg>`;
 const NAV=[
- ['sep','Visão geral'],['home','Início'],['dashboard','Dashboard'],['review','Revisão do período'],['report','Relatório do mês'],['anual','Ano & assinaturas'],['fechar','Fechar o mês'],['dividir','Dividir despesas'],
- ['sep','Planejamento'],['budget','Renda & Orçamento'],['compare','Planejado × Real'],['expenses','Gastos'],['contas','Contas e saldos'],['bills','Contas fixas'],['vale','Vale-alimentação'],
+ ['sep','Visão geral'],['home','Início'],['dashboard','Dashboard'],['review','Revisão do período'],['report','Relatório do mês'],['anual','Ano & assinaturas'],['fechar','Fechar o mês'],['dividir','Dividir despesas'],['busca','Buscar & etiquetas'],
+ ['sep','Planejamento'],['budget','Renda & Orçamento'],['compare','Planejado × Real'],['expenses','Gastos'],['contas','Contas e saldos'],['bills','Contas fixas'],['possocomprar','Posso comprar?'],['vale','Vale-alimentação'],
  ['sep','Compromissos'],['debts','Dívidas & Financiamentos'],['cards','Cartões de crédito'],['goals','Metas & Poupança'],
  ['sep','Coach'],['invest','Investir'],['learn','Aprender'],['profile','Meu perfil'],
  ['sep','Sistema'],['importar','Importar extrato'],['versoes','Voltar no tempo'],['lixeira','Lixeira'],['manual','Manual'],['settings','Configurações']
@@ -849,8 +849,8 @@ function openMore(){
   const sec=(t,h)=>`<div class="q-label" style="margin-top:12px">${t}</div><div class="more-grid">${h}</div>`;
   f.innerHTML=`<header>Mais</header><div class="body"><div class="full">
    ${sec('Coach financeiro',it('invest','Investir e sair das dívidas','invest')+it('learn','Aprender')+it('profile','Meu perfil')+`<button type="button" class="more-item ${state.settings.coach!==false?'on':''}" data-act="toggleCoach">🤖<span>Coach nos gastos: ${state.settings.coach!==false?'ligado':'desligado'}</span></button>`)}
-   ${sec('Visão geral',it('dashboard','Dashboard')+it('review','Revisão do período')+it('report','Relatório do mês')+it('anual','Ano & assinaturas','report')+it('fechar','Fechar o mês','calendar'))}
-   ${sec('Planejamento',it('contas','Contas e saldos','vale')+it('budget','Renda & Orçamento')+it('compare','Planejado × Real')+it('bills','Contas fixas'))}
+   ${sec('Visão geral',it('dashboard','Dashboard')+it('review','Revisão do período')+it('report','Relatório do mês')+it('anual','Ano & assinaturas','report')+it('fechar','Fechar o mês','calendar')+it('busca','Buscar & etiquetas'))}
+   ${sec('Planejamento',it('contas','Contas e saldos','vale')+it('budget','Renda & Orçamento')+it('compare','Planejado × Real')+it('bills','Contas fixas')+it('possocomprar','Posso comprar?'))}
    ${sec('Compromissos',it('debts','Dívidas')+it('cards','Cartões')+it('goals','Metas & Reservas')+it('dividir','Dividir despesas','profile'))}
    ${sec('Sistema',it('importar','Importar extrato','importar')+it('versoes','Voltar no tempo','versoes')+it('lixeira','Lixeira','lixeira')+it('manual','Manual e ajuda','manual')+`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme','Temas','theme','theme')+
      it('todayM','Ir para o mês atual','calendar','todayM')+(installEvt?it('install','Instalar app','install','installApp'):''))}
@@ -964,8 +964,9 @@ function billForm(b){
     {name:'cat',label:'Categoria do budget',value:b.cat,list:categoriesList(),required:true,placeholder:'Ex.: Internet'},
     {name:'tipo',label:'Grupo',type:'select',options:tipoOpts,value:b.tipo},
     {name:'inicio',label:'Começa em',type:'month',value:b.inicio},
-    {name:'fim',label:'Termina em (opcional)',type:'month',value:b.fim}
-  ],onSave:d=>{d.dia=Math.max(1,Math.min(31,Math.round(d.dia)));if(isNew)state.bills.push({id:uid(),ativo:true,...d});else Object.assign(b,d);toast('Conta fixa salva')}});
+    {name:'fim',label:'Termina em (opcional)',type:'month',value:b.fim},
+    {name:'auto',label:'⚙ Débito automático — lançar como paga sozinha no dia do vencimento',type:'checkbox',value:!!b.auto}
+  ],onSave:d=>{d.dia=Math.max(1,Math.min(31,Math.round(d.dia)));if(d.auto&&!b.auto)d.autoDesde=todayYM();if(isNew)state.bills.push({id:uid(),ativo:true,...d});else Object.assign(b,d);toast('Conta fixa salva')}});
 }
 /* fatura em que a compra cai: antes do fechamento → fatura que fecha neste mês; o mês da fatura é o mês do vencimento */
 function faturaDe(cardId,dateISO){
@@ -1278,7 +1279,7 @@ function dayLabel(iso){const t=todayISO(),y=toISO(new Date(Date.now()-864e5));if
 function expRow(e){
   const c=BUCKETS[e.tipo]?BUCKETS[e.tipo].color:'#888',act=e.src==='exp'?`data-act="editExpense" data-id="${e.ref.id}"`:`data-act="editPurchase" data-id="${e.ref.p.id}"`;
   const ini=(e.src==='card'?'💳':e.ref&&e.ref.benefitId?'🧺':esc((e.cat||'?').trim().charAt(0).toUpperCase()));
-  return`<div class="mrow" ${act}><div class="ic" style="background:${c}22;color:${c}">${ini}</div><div class="tx"><b>${esc(e.desc)}</b><small>${esc(e.cat||'Sem categoria')} · ${esc(e.pay||'')}${e.fund?' · pago pela reserva':''}</small></div><div class="vl ${e.tipo==='savings'?'pos':''}">${brl(e.valor)}</div></div>`;
+  return`<div class="mrow" ${act}><div class="ic" style="background:${c}22;color:${c}">${ini}</div><div class="tx"><b>${esc(e.desc)}</b><small>${esc(e.cat||'Sem categoria')} · ${esc(e.pay||'')}${e.fund?' · pago pela reserva':''}${(()=>{const o=e.src==='exp'?e.ref:e.ref&&e.ref.p;return o&&o.tags&&o.tags.length?' · <span style="color:var(--accent)">'+esc(tagsTxt(o))+'</span>':''})()}${e.ref&&(e.ref.auto||(e.ref.p&&e.ref.p.auto))?' · ⚙ automático':''}</small></div><div class="vl ${e.tipo==='savings'?'pos':''}">${brl(e.valor)}</div></div>`;
 }
 function expList(list){
   const by={};list.forEach(e=>(by[e.date]=by[e.date]||[]).push(e));
@@ -1291,7 +1292,7 @@ function vExpensesMobile(){
   if(f.tipo)list=list.filter(e=>e.tipo===f.tipo);
   if(f.pay)list=list.filter(e=>f.pay==='Cartão'?e.src==='card':e.pay===f.pay);
   const tot=sum(list.filter(e=>e.tipo!=='savings'),e=>e.valor),sav=sum(list.filter(e=>e.tipo==='savings'),e=>e.valor);
-  return`<div class="card"><div class="row" style="margin-bottom:10px"><button class="btn sm" data-act="nav" data-id="importar">⬆ Importar extrato</button><button class="btn sm" data-act="nav" data-id="lixeira">🗑 Lixeira</button></div><div class="filters" style="margin-bottom:6px"><input type="text" placeholder="🔎 Buscar gasto ou categoria" value="${esc(f.q)}" data-filter="q" style="flex:1 1 100%"><select data-filter="tipo"><option value="">Todos os grupos</option>${tipoOpts.map(([v,l])=>`<option value="${v}" ${f.tipo===v?'selected':''}>${l}</option>`).join('')}</select><select data-filter="pay"><option value="">Todas as formas</option>${[...PAY,'Cartão',...state.benefits.map(b=>b.nome)].map(p=>`<option ${f.pay===p?'selected':''}>${p}</option>`).join('')}</select></div>
+  return`<div class="card"><div class="row" style="margin-bottom:10px"><button class="btn sm" data-act="nav" data-id="busca">🔎 Buscar em tudo</button><button class="btn sm" data-act="nav" data-id="possocomprar">🤔 Posso comprar?</button><button class="btn sm" data-act="nav" data-id="importar">⬆ Importar extrato</button><button class="btn sm" data-act="nav" data-id="lixeira">🗑 Lixeira</button></div><div class="filters" style="margin-bottom:6px"><input type="text" placeholder="🔎 Buscar gasto ou categoria" value="${esc(f.q)}" data-filter="q" style="flex:1 1 100%"><select data-filter="tipo"><option value="">Todos os grupos</option>${tipoOpts.map(([v,l])=>`<option value="${v}" ${f.tipo===v?'selected':''}>${l}</option>`).join('')}</select><select data-filter="pay"><option value="">Todas as formas</option>${[...PAY,'Cartão',...state.benefits.map(b=>b.nome)].map(p=>`<option ${f.pay===p?'selected':''}>${p}</option>`).join('')}</select></div>
   <div class="row" style="justify-content:space-between;margin:10px 2px 0"><span class="muted">${list.length} lançamento(s)${sav?' · '+brl(sav)+' poupados':''}</span><b>${brl(tot)}</b></div>
   ${list.length?expList(list):'<div class="empty">Nenhum gasto encontrado.<br><br><button class="btn primary" data-act="quickAdd">+ Lançar gasto</button></div>'}
   <div class="muted" style="font-size:12px;margin-top:12px">Toque num lançamento para editar, duplicar ou excluir. Inclui as parcelas de cartão que caem na fatura de ${mLabel(curMonth,true)}.</div></div>`;
@@ -1373,10 +1374,10 @@ function quickAdd(preset={}){
   f.onsubmit=e=>{e.preventDefault();const d=read();
     if(!(d.valor>0)){toast('Digite o valor','err');f.elements.valor.focus();return}
     if(!d.cat){toast('Escolha a categoria','err');return}
-    const desc=d.desc||d.cat;let undo;
-    if(d.pay.startsWith('card:')){const cid=d.pay.slice(5),p={id:uid(),cardId:cid,desc,valorTotal:d.valor,parcelas:d.parcelas,dataCompra:d.date,primeiraFatura:faturaDe(cid,d.date),cat:d.cat,tipo:d.tipo};state.cardPurchases.push(p);
+    const tg=[];const desc=d.desc.replace(/#[\wÀ-ÿ-]+/g,m=>{tg.push(m);return''}).replace(/\s+/g,' ').trim()||d.cat;const tags=parseTags(tg.join(' '));let undo;
+    if(d.pay.startsWith('card:')){const cid=d.pay.slice(5),p={id:uid(),cardId:cid,desc,valorTotal:d.valor,parcelas:d.parcelas,dataCompra:d.date,primeiraFatura:faturaDe(cid,d.date),cat:d.cat,tipo:d.tipo};if(tags.length)p.tags=tags;state.cardPurchases.push(p);
       undo=()=>{tomb(p.id);state.cardPurchases=state.cardPurchases.filter(x=>x!==p)};}
-    else{const x={id:uid(),criado:Date.now(),desc,valor:d.valor,date:d.date,cat:d.cat,tipo:d.tipo,pay:d.pay};
+    else{const x={id:uid(),criado:Date.now(),desc,valor:d.valor,date:d.date,cat:d.cat,tipo:d.tipo,pay:d.pay};if(tags.length)x.tags=tags;
       if(CT.length>1&&(PAY_CONTA.includes(d.pay)||d.pay==='Dinheiro')&&sel.conta){x.contaId=sel.conta;meta.lastConta=sel.conta}
       if(d.pay.startsWith('ben:')){const b=find(state.benefits,d.pay.slice(4));x.benefitId=b?b.id:undefined;x.pay=b?b.nome:'Vale'}
       state.expenses.push(x);undo=()=>{tomb(x.id);state.expenses=state.expenses.filter(y=>y!==x)}}
@@ -2550,6 +2551,7 @@ function expenseForm(e,preset){
     {name:'pay',label:'Forma de pagamento',type:'select',options:payOpts,value:payVal},
     ...((state.contas||[]).length>1?[{name:'contaId',label:'Saiu de qual conta?',type:'select',options:[['','⭐ Conta principal']].concat(state.contas.map(x=>[x.id,x.nome])),value:e.contaId||''}]:[]),
     {name:'parcelas',label:'Nº de parcelas (cartão de crédito)',type:'number',step:'1',min:1,value:1},
+    {name:'tags',label:'Etiquetas (opcional)',value:tagsTxt(e),full:true,placeholder:'Ex.: #viagem #casa'},
     ...(isNew?[]:[{type:'html',html:'<div id="fotoBox"></div>'}]),
     {type:'html',html:`<div id="payInfo" class="alert info" hidden style="margin:0"></div><div class="muted" style="font-size:12px">💳 Escolhendo um cartão de crédito, a compra desconta do <b>limite</b> e entra na fatura certa (com parcelas).${state.benefits.length?' 🧺 Vale: desconta do saldo do vale.':''}</div>`}
   ],onRender:f=>{if(!isNew)fotoPinta(e.id);const pay=f.elements.pay,par=f.elements.parcelas,info=f.querySelector('#payInfo'),ct=f.elements.contaId;
@@ -2557,9 +2559,9 @@ function expenseForm(e,preset){
       info.hidden=!c;if(c){const v=parseNum(f.elements.valor.value),l=livre(c),n=Math.max(1,Math.round(parseNum(par.value)||1)),ft=faturaDe(c.id,f.elements.date.value||todayISO());
         info.className='alert '+(v>l?'bad':'info');info.innerHTML=`<div><b>${esc(c.nome)}</b> · limite livre <b>${brl(l)}</b> de ${brl(c.limite)}${v>0?`<br>Depois desta compra: <b>${brl(l-v)}</b>${v>l?' — passa do limite!':''}`:''}<br>1ª fatura: ${mLabel(ft,true)}${n>1&&v>0?' · '+n+'× de '+brl(v/n):''}</div>`}};
     [pay,par,f.elements.valor,f.elements.date].forEach(x=>{x.addEventListener('input',upd);x.addEventListener('change',upd)});upd()},
-  onSave:d=>{const parc=Math.max(1,Math.round(d.parcelas||1));delete d.parcelas;
+  onSave:d=>{const parc=Math.max(1,Math.round(d.parcelas||1));delete d.parcelas;d.tags=parseTags(d.tags);if(!d.tags.length)d.tags=undefined;
     if(String(d.pay)==='card:new'){toast('Cadastre o cartão primeiro','err');setTimeout(()=>cardForm(),80);return false}
-    if(String(d.pay).startsWith('card:')&&!(e.fundId&&!isNew)){const cid=d.pay.slice(5),ft=faturaDe(cid,d.date),p={id:uid(),cardId:cid,desc:d.desc,valorTotal:d.valor,parcelas:parc,dataCompra:d.date,primeiraFatura:ft,cat:d.cat,tipo:d.tipo};
+    if(String(d.pay).startsWith('card:')&&!(e.fundId&&!isNew)){const cid=d.pay.slice(5),ft=faturaDe(cid,d.date),p={id:uid(),cardId:cid,desc:d.desc,valorTotal:d.valor,parcelas:parc,dataCompra:d.date,primeiraFatura:ft,cat:d.cat,tipo:d.tipo};if(d.tags)p.tags=d.tags;
       state.cardPurchases.push(p);if(!isNew){tomb(e.id);state.expenses=state.expenses.filter(y=>y!==e)}
       const c=find(state.cards,cid);setTimeout(()=>{coachShow({cat:d.cat,tipo:d.tipo,valor:d.valor,date:d.date,ym:ft,valorMes:d.valor/parc,parcelas:parc},isNew?()=>{tomb(p.id);state.cardPurchases=state.cardPurchases.filter(y=>y!==p);save();render();toast('Lançamento desfeito')}:null,brl(d.valor)+' no '+(c?c.nome:'cartão'));if(c)toast('Limite livre do '+c.nome+': '+brl(livre(c)))},60);return}
     if(e.fundId&&!isNew){const g=find(state.goals,e.fundId);if(g)g.guardado=Math.round(((+g.guardado)+(+e.valor)-(+d.valor))*100)/100;d.pay=e.pay}
@@ -2575,8 +2577,9 @@ function incomeForm(i){
     {name:'desc',label:'Descrição / cliente',value:i.desc,placeholder:'Ex.: Tradução contrato — cliente X'},
     {name:'valor',label:'Valor líquido (R$)',type:'number',step:'0.01',min:0,value:i.valor,required:true},
     {name:'date',label:'Data de recebimento',type:'date',value:i.date},
-    ...((state.contas||[]).length>1?[{name:'contaId',label:'Caiu em qual conta?',type:'select',options:[['','⭐ Conta principal']].concat(state.contas.map(x=>[x.id,x.nome])),value:i.contaId||''}]:[])
-  ],onSave:d=>{const m=month(curMonth,true);if(isNew)m.income.push({id:uid(),criado:Date.now(),...d});else Object.assign(i,d);toast('Renda salva')}});
+    ...((state.contas||[]).length>1?[{name:'contaId',label:'Caiu em qual conta?',type:'select',options:[['','⭐ Conta principal']].concat(state.contas.map(x=>[x.id,x.nome])),value:i.contaId||''}]:[]),
+    {name:'recorrente',label:'🔁 Repetir automaticamente todo mês (lança sozinho nos próximos meses)',type:'checkbox',value:!!i.recorrente}
+  ],onSave:d=>{const m=month(curMonth,true);if(d.recorrente&&!i.recId)d.recId=uid();if(isNew)m.income.push({id:uid(),criado:Date.now(),...d});else Object.assign(i,d);toast(d.recorrente?'Renda salva — vai se repetir todo mês':'Renda salva');setTimeout(autoRecorrentes,50)}});
 }
 function budgetForm(b,preset){
   const isNew=!b;b=b||Object.assign({tipo:'needs'},preset);const old={cat:b.cat,tipo:b.tipo};
@@ -2639,6 +2642,7 @@ function purchaseForm(p,preset){
   const isNew=!p;const d0=curMonth===todayYM()?todayISO():isoOf(curMonth,1);p=p||Object.assign({cardId:state.cards[0]?.id,parcelas:1,dataCompra:d0,primeiraFatura:faturaDe(state.cards[0]?.id,d0),tipo:'wants'},preset);
   openForm({title:isNew?'Compra no cartão':'Editar compra',onRender:f=>{const upd=()=>{if(f.elements.dataCompra.value)f.elements.primeiraFatura.value=faturaDe(f.elements.cardId.value,f.elements.dataCompra.value)};f.elements.dataCompra.addEventListener('change',upd);f.elements.cardId.addEventListener('change',upd)},fields:[
     {name:'desc',label:'Descrição',value:p.desc,required:true,full:true},
+    {name:'tags',label:'Etiquetas (opcional)',value:tagsTxt(p),full:true,placeholder:'Ex.: #viagem #casa'},
     {name:'dataCompra',label:'Data da compra',type:'date',value:p.dataCompra||''},
     {name:'cardId',label:'Cartão',type:'select',options:state.cards.map(c=>[c.id,c.nome]),value:p.cardId},
     {name:'valorTotal',label:'Valor total (R$)',type:'number',step:'0.01',min:0,value:p.valorTotal,required:true},
@@ -2646,7 +2650,7 @@ function purchaseForm(p,preset){
     {name:'primeiraFatura',label:'Fatura da 1ª parcela (calculada pelo fechamento)',type:'month',value:p.primeiraFatura,required:true},
     {name:'cat',label:'Categoria',value:p.cat,list:categoriesList(),required:true},
     {name:'tipo',label:'Grupo',type:'select',options:tipoOpts,value:p.tipo}
-  ],onSave:d=>{d.parcelas=Math.max(1,Math.round(d.parcelas));if(isNew)state.cardPurchases.push({id:uid(),...d});else Object.assign(p,d);toast('Compra salva')},
+  ],onSave:d=>{d.parcelas=Math.max(1,Math.round(d.parcelas));d.tags=parseTags(d.tags);if(!d.tags.length)d.tags=undefined;if(isNew)state.cardPurchases.push({id:uid(),...d});else Object.assign(p,d);toast('Compra salva')},
     extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelPurchase" data-id="${p.id}" title="Excluir">🗑</button>${+p.valorTotal>0?`<button type="button" class="btn" data-act="estorno" data-id="p:${p.id}" title="Registrar estorno">↩ Estorno</button>`:''}`});
 }
 function goalForm(g){
@@ -3172,6 +3176,18 @@ const MAN=[
   o:'Em vez de digitar tudo, traga o arquivo do banco: o app lê as linhas, sugere a categoria e deixa de fora o que já estava lançado.',
   p:['No app ou site do banco, exporte o extrato (ou a fatura do cartão) em <b>OFX</b> ou <b>CSV</b>.','Aqui, escolha <b>Extrato de conta</b> ou <b>Fatura de cartão</b> e qual conta/cartão.','Toque em <b>Escolher arquivo</b>.','Confira a lista: desmarque o que não quer e ajuste as categorias.','Toque em <b>Importar</b>. Se algo sair errado, o aviso tem <b>Desfazer</b>.'],
   d:['Linhas que parecem já lançadas vêm desmarcadas — importar o mesmo arquivo duas vezes não duplica.','Trocou a categoria de uma linha? As outras do mesmo estabelecimento acompanham, e o app aprende para a próxima vez.','Entradas de dinheiro vêm desmarcadas: marque só o que for renda (transferência entre suas contas não é renda).']},
+ {id:'busca',a:'dia',ic:'🔎',t:'Buscar em tudo e usar etiquetas',go:['nav','busca','Abrir Buscar & etiquetas'],onde:[manMenu(),'Buscar & etiquetas'],
+  o:'Ache qualquer lançamento de qualquer mês e some gastos de um projeto (viagem, reforma, festa) mesmo que estejam em categorias diferentes.',
+  p:['Abra <b>Buscar & etiquetas</b> (ou o botão 🔎 na tela Gastos).','Digite um nome (ifood), uma categoria, um valor (39,90) ou uma etiqueta (#viagem).','Toque num resultado para editar.','Para etiquetar: no lançamento rápido escreva na descrição <b>passagem #viagem</b>; ou edite o gasto e preencha <b>Etiquetas</b>.'],
+  d:['O total aparece no topo dos resultados — ótimo para saber quanto custou a viagem inteira.','Etiquetas não mudam o orçamento: o gasto continua na categoria dele.']},
+ {id:'possocomprar',a:'dia',ic:'🤔',t:'Posso comprar? (simulador)',go:['nav','possocomprar','Abrir Posso comprar?'],onde:[manMenu(),'Posso comprar?'],
+  o:'Antes de comprar, veja o efeito: categoria, mês, limite do cartão, saldo, faturas futuras e metas. Nada é lançado.',
+  p:['Digite o valor.','Escolha Pix/débito ou o cartão (e as parcelas).','Escolha a categoria.','Leia o veredito: 🟢 cabe, 🟡 aperta, 🔴 não cabe — e os motivos.','Comprou? Toque em <b>Comprei — lançar agora</b>.'],
+  d:['No cartão, o app mostra as próximas faturas já com a parcela somada.','Desejos acima de R$ 200 ganham o lembrete da regra das 24 horas.']},
+ {id:'recorrentes',a:'dia',ic:'🔁',t:'Renda e contas que se lançam sozinhas',go:['nav','bills','Abrir Contas fixas'],onde:['Renda & Orçamento / Contas fixas','Editar'],
+  o:'Salário que cai todo mês e conta em débito automático não precisam ser digitados de novo.',
+  p:['<b>Renda</b>: ao adicionar/editar, marque <b>🔁 Repetir automaticamente todo mês</b>. Nos meses seguintes ela já aparece lançada.','<b>Conta fixa</b>: edite e marque <b>⚙ Débito automático</b>. No dia do vencimento o pagamento é lançado sozinho.','Valor mudou? Edite o lançamento do mês mais recente — os próximos seguem o novo valor.'],
+  d:['Para parar, desmarque a opção no lançamento mais recente.','Apagou um lançamento automático? Ele não volta a aparecer naquele mês.','Itens automáticos mostram ⚙ na lista de gastos.']},
  {id:'lixeira',a:'sistema',ic:'⏪',t:'Lixeira e voltar no tempo',go:['nav','versoes','Abrir Voltar no tempo'],onde:[manMenu(),'Lixeira / Voltar no tempo'],
   o:'Apagou algo sem querer ou fez uma bagunça? Dá para desfazer.',
   p:['<b>Lixeira</b>: tudo o que você apaga fica lá por 30 dias. Toque em <b>Restaurar</b>.','<b>Voltar no tempo</b>: o app guarda uma cópia por dia. Escolha a data e toque em <b>Voltar</b> — todos os dados voltam a ficar como estavam.','Com a sincronização ligada, também aparecem as <b>versões na nuvem</b> (uma a cada sincronização).'],
@@ -3542,6 +3558,108 @@ Object.assign(VIEWS,{importar:vImportar,lixeira:vLixeira,versoes:vVersoes});
 Object.assign(IC,{importar:IC.install,versoes:IC.review,lixeira:'<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/>'});
 
 /* ============================================================
+   BLOCO 2 — recorrentes automáticos, busca geral, etiquetas e "Posso comprar?"
+   ============================================================ */
+/* ---------- etiquetas ---------- */
+function parseTags(t){if(Array.isArray(t))return t;return[...new Set(String(t||'').split(/[\s,;]+/).map(x=>x.replace(/^#/,'').trim().toLowerCase()).filter(x=>x&&x.length<=30))]}
+const tagsTxt=x=>(x&&x.tags||[]).map(t=>'#'+t).join(' ');
+function todasEtiquetas(){const T={};const add=(tags,v,ym)=>(tags||[]).forEach(t=>{T[t]=T[t]||{t,v:0,n:0,ms:new Set()};T[t].v+=v;T[t].n++;T[t].ms.add(ym)});
+  state.expenses.forEach(e=>add(e.tags,+e.valor,(e.date||'').slice(0,7)));state.cardPurchases.forEach(p=>add(p.tags,+p.valorTotal,(p.dataCompra||'').slice(0,7)));
+  return Object.values(T).sort((a,b)=>b.v-a.v)}
+
+/* ---------- recorrentes automáticos (renda e contas fixas) ---------- */
+function autoRecorrentes(){
+  const hoje=todayISO(),ate=todayYM();let n=0;const D=state.deleted||{};
+  // renda: a última ocorrência marcada como "repetir" serve de modelo para os meses seguintes
+  const modelos={};Object.keys(state.months).sort().forEach(ym=>(state.months[ym].income||[]).forEach(i=>{if(i.recId)modelos[i.recId]={i,ym}}));
+  Object.values(modelos).forEach(({i,ym})=>{if(!i.recorrente)return;
+    for(let m=addM(ym,1);m<=ate;m=addM(m,1)){const gid=i.recId+'@'+m;if(isDead(D[gid]))continue;const mm=month(m,true);if((mm.income||[]).some(x=>x.recId===i.recId))continue;
+      const dia=i.date?Math.min(+i.date.slice(8),daysIn(m)):5;mm.income.push({...i,id:gid,date:isoOf(m,dia),criado:Date.now(),auto:true});n++}});
+  // contas fixas com débito automático: lança o pagamento quando a data chega
+  state.bills.filter(b=>b.auto&&b.ativo!==false).forEach(b=>{for(let m=b.autoDesde||ate;m<=ate;m=addM(m,1)){if(!billActive(b,m))continue;const d=isoOf(m,Math.min(+b.dia||1,daysIn(m)));if(d>hoje)continue;
+    if(state.expenses.some(e=>e.billId===b.id&&e.billMonth===m))continue;const gid='bill:'+b.id+'@'+m;if(isDead(D[gid]))continue;
+    const e={id:gid,criado:Date.now(),desc:b.nome,valor:+b.valor,date:d,cat:b.cat,tipo:b.tipo,pay:b.pay,billId:b.id,billMonth:m,auto:true};if(b.contaId)e.contaId=b.contaId;state.expenses.push(e);n++}});
+  if(n){save();render()}return n;
+}
+
+/* ---------- busca geral ---------- */
+function buscaItens(q){
+  q=sa(q).trim();if(!q)return[];const tag=q.startsWith('#')?q.slice(1):null,num=/^[\d.,]+$/.test(q)?pVal(q):NaN,ws=q.split(/\s+/);
+  const ok=(texto,valor,tags)=>{if(tag)return(tags||[]).some(t=>t===tag||t.startsWith(tag));if(isFinite(num)&&Math.abs(Math.abs(valor)-num)<0.011)return true;const s=sa(texto+' '+(tags||[]).map(t=>'#'+t).join(' '));return ws.every(w=>s.includes(w))};
+  const R=[];
+  state.expenses.forEach(e=>{if(ok(`${e.desc} ${e.cat} ${e.pay||''} ${e.por||''}`,+e.valor,e.tags))R.push({k:'e',x:e,date:e.date,desc:e.desc,cat:e.cat,tipo:e.tipo,v:+e.valor,sub:e.pay})});
+  state.cardPurchases.forEach(p=>{const c=find(state.cards,p.cardId);if(ok(`${p.desc} ${p.cat} ${c?c.nome:''} ${p.por||''}`,+p.valorTotal,p.tags))R.push({k:'p',x:p,date:p.dataCompra,desc:p.desc,cat:p.cat,tipo:p.tipo,v:+p.valorTotal,sub:'💳 '+(c?c.nome:'cartão')+(p.parcelas>1?' · '+p.parcelas+'×':'')})});
+  Object.entries(state.months).forEach(([ym,m])=>(m.income||[]).forEach(i=>{if(ok(`${i.fonte} ${i.desc||''} renda ${i.por||''}`,+i.valor))R.push({k:'i',x:i,ym,date:i.date||isoOf(ym,1),desc:(i.fonte||'Renda')+(i.desc?' — '+i.desc:''),cat:'Renda',tipo:'renda',v:+i.valor,sub:'renda'})}));
+  return R.sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,300);
+}
+function vBusca(){
+  const q=ui.busca||'',R=buscaItens(q),T=todasEtiquetas(),gasto=sum(R.filter(r=>r.k!=='i'),r=>r.v),renda=sum(R.filter(r=>r.k==='i'),r=>r.v);
+  const porMes={};R.forEach(r=>{const ym=(r.date||'').slice(0,7);(porMes[ym]=porMes[ym]||[]).push(r)});
+  return`<div class="card"><h3>🔎 Buscar em tudo</h3><div class="sub">Gastos, compras no cartão e rendas de todos os meses. Busque por nome, categoria, valor (ex.: 85,90) ou #etiqueta.</div>
+   <input type="search" id="buscaGeral" value="${esc(q)}" placeholder="Ex.: ifood, mercado, 39,90, #viagem" autocomplete="off" style="width:100%;font-size:16px;padding:12px 14px;border-radius:12px;border:1px solid var(--border);background:var(--panel2);color:var(--text)">
+   ${T.length?`<div class="chips" style="margin-top:10px">${T.slice(0,20).map(t=>`<button class="chip ${q==='#'+t.t?'on':''}" data-act="buscaTag" data-id="${esc(t.t)}">#${esc(t.t)} <span class="muted" style="font-weight:500">${brl(t.v)}</span></button>`).join('')}</div>`:''}</div>
+  ${q?`<div class="card"><div class="card-head"><div><h3>${R.length} resultado(s)</h3><div class="sub" style="margin:0">${gasto?'Gastos: <b>'+brl(gasto)+'</b>':''}${gasto&&renda?' · ':''}${renda?'Rendas: <b class="pos">'+brl(renda)+'</b>':''}</div></div></div>
+   ${R.length?Object.entries(porMes).map(([ym,L])=>`<div class="mday"><span>${mLabel(ym,true)}</span><span>${brl(sum(L.filter(r=>r.k!=='i'),r=>r.v))}</span></div>${L.map(r=>`<div class="mrow" data-act="buscaAbre" data-id="${r.k}:${r.x.id}:${r.ym||''}"><div class="ic" style="background:var(--panel2)">${r.k==='p'?'💳':r.k==='i'?'💵':'🧾'}</div><div class="tx"><b>${esc(r.desc)}</b><small>${fmtDate(r.date)} · ${esc(r.cat||'')}${r.sub?' · '+esc(r.sub):''}${r.x.tags&&r.x.tags.length?' · '+esc(tagsTxt(r.x)):''}${r.x.por?' · por '+esc(r.x.por):''}</small></div><div class="vl ${r.k==='i'||r.v<0?'pos':''}">${brl(r.v)}</div></div>`).join('')}`).join('')
+    :'<div class="empty">Nada encontrado.</div>'}</div>`
+  :T.length?`<div class="card"><h3>🏷 Suas etiquetas</h3><div class="sub">Somam gastos de várias categorias — ótimas para viagens, reformas, festas</div>${T.map(t=>`<div class="mrow" data-act="buscaTag" data-id="${esc(t.t)}"><div class="ic" style="background:var(--panel2)">🏷</div><div class="tx"><b>#${esc(t.t)}</b><small>${t.n} lançamento(s) · ${t.ms.size} mês(es)</small></div><div class="vl">${brl(t.v)}</div></div>`).join('')}</div>`
+  :`<div class="card"><h3>🏷 Etiquetas</h3><p class="muted" style="margin:0">Marque gastos com etiquetas para somar um projeto que passa por várias categorias. No lançamento, escreva na descrição: <b>passagem #viagem</b>, ou use o campo “Etiquetas” ao editar um gasto.</p></div>`}`;
+}
+let _buscaT;
+document.addEventListener('input',e=>{if(e.target.id!=='buscaGeral')return;const v=e.target.value;clearTimeout(_buscaT);_buscaT=setTimeout(()=>{ui.busca=v;const pos=e.target.selectionStart;render();const i=$('#buscaGeral');if(i){i.focus();try{i.setSelectionRange(pos,pos)}catch(_){}}},220)});
+
+/* ---------- Posso comprar? ---------- */
+function pcCalc(P){
+  const ym=todayYM(),v=Math.max(0,+P.valor||0),n=Math.max(1,Math.round(+P.parcelas||1)),pc=v/n,card=P.pay.startsWith('card:')?find(state.cards,P.pay.slice(5)):null;
+  const [tipo,cat]=P.cat?[P.cat.slice(0,P.cat.indexOf('|')),P.cat.slice(P.cat.indexOf('|')+1)]:['wants',''];
+  const ymF=card?faturaDe(card.id,todayISO()):ym,valMes=card?pc:v;
+  const achaC=m=>comparison(m).find(x=>x.tipo===tipo&&norm(x.cat)===norm(cat));let r=cat?{...(achaC(ymF)||{plan:0,real:0})}:null;if(r&&!r.plan&&ymF!==ym){const r0=achaC(ym);if(r0&&r0.plan)r.plan=r0.plan}
+  const bs=bucketSummary(ym),inc=incomeTotal(ym),base=(bs.needs.plan+bs.wants.plan)||inc,livre=base-(bs.needs.real+bs.wants.real),livre2=livre-(tipo!=='savings'&&ymF===ym?valMes:0);
+  const sinais=[],L=[];let pior=0;const marca=(n,t)=>{pior=Math.max(pior,n);sinais.push([n,t])};
+  if(!v)return'<div class="muted">Digite o valor para ver o efeito.</div>';
+  if(r){const antes=r.real,dep=r.real+valMes,pl=r.plan;
+    L.push(`<div class="stat-line"><span>${esc(cat)} em ${mLabel(ymF)}</span><b>${brl(antes)} → <span class="${pl&&dep>pl?'neg':''}">${brl(dep)}</span>${pl?' / '+brl(pl):' (sem budget)'}</b></div>${pl?bar(dep/pl*100,dep>pl?'bad':dep>pl*.85?'warn':'ok'):''}`);
+    if(!pl)marca(1,`“${esc(cat)}” não tem budget neste mês`);else if(dep>pl)marca(2,`passa o budget de ${esc(cat)} em ${brl(dep-pl)}`);else if(dep>pl*.85)marca(1,`deixa ${esc(cat)} no limite (${pctf(dep/pl*100,0)})`)}
+  if(ymF===ym&&tipo!=='savings'){L.push(`<div class="stat-line"><span>Ainda pode gastar no mês</span><b>${brl(livre)} → <span class="${livre2<0?'neg':''}">${brl(livre2)}</span></b></div>`);if(livre2<0)marca(2,`o mês fecha ${brl(-livre2)} acima do planejado — sairia da poupança`)}
+  if(card){const u=cardUsed(card.id,ym),lv=(+card.limite||0)-u;L.push(`<div class="stat-line"><span>Limite livre — ${esc(card.nome)}</span><b>${brl(lv)} → <span class="${lv-v<0?'neg':''}">${brl(lv-v)}</span></b></div>`);
+    if(lv-v<0)marca(2,'passa do limite do cartão');else if((u+v)/(+card.limite||1)>.9)marca(1,'deixa o cartão com mais de 90% do limite usado');
+    const ms=[...Array(Math.min(n,6))].map((_,i)=>addM(ymF,i));L.push(`<div class="q-label" style="margin-top:10px">Faturas com esta compra</div>${ms.map(m=>{const f=cardFatura(card.id,m)-pagoFatura(card.id,m);return`<div class="stat-line"><span>${mLabel(m,true)}</span><b>${brl(f)} → ${brl(f+pc)}</b></div>`}).join('')}${n>6?`<div class="muted" style="font-size:12px">…e mais ${n-6} parcela(s)</div>`:''}`);
+    if(n>1&&inc&&pc/inc>.1)marca(1,`a parcela (${brl(pc)}) é mais de 10% da sua renda por ${n} meses`)}
+  else{const C=state.contas||[],c=C.find(x=>x.id===P.conta)||contaPrincipal();if(c){const s=contaSaldo(c).v;L.push(`<div class="stat-line"><span>Saldo — ${esc(c.nome)}</span><b>${brl(s)} → <span class="${s-v<0?'neg':''}">${brl(s-v)}</span></b></div>`);if(s-v<0)marca(2,'o saldo da conta fica negativo')}}
+  if(inc){const h=horasTrab(v,ym);L.push(`<div class="stat-line"><span>Custa em horas de trabalho</span><b>${num(h,h<10?1:0)} h</b></div>`)}
+  const res=reservaInfo();if(res.needs&&res.meses<1&&tipo==='wants'&&v>200)marca(1,'você ainda não tem 1 mês de reserva de emergência');
+  const G=state.goals.filter(g=>g.kind!=='fundo'&&g.prazo&&g.alvo>g.guardado);if(G.length&&tipo==='wants'&&bs.savings.target){const g=G[0],ap=goalMonthly(g);if(ap>0)L.push(`<div class="stat-line"><span>Equivale a</span><b>${num(v/ap,1)} mês(es) de aporte na meta “${esc(g.nome)}”</b></div>`)}
+  const V=[['🟢','Cabe no orçamento','ok'],['🟡','Cabe, mas aperta','warn'],['🔴','Não cabe agora','bad']][pior];
+  return`<div class="alert ${V[2]}" style="margin-bottom:10px"><b style="font-size:16px">${V[0]} ${V[1]}</b>${sinais.length?'<ul style="margin:6px 0 0;padding-left:18px">'+sinais.map(s=>`<li>${s[1]}</li>`).join('')+'</ul>':'<div style="margin-top:4px">Não estoura categoria, mês, limite nem saldo.</div>'}</div>${L.join('')}
+   ${tipo==='wants'&&v>=200?`<div class="alert" style="margin-top:10px">🧠 Desejo acima de R$ 200: que tal a regra das 24 horas? Se amanhã ainda fizer sentido, compre sem culpa.</div>`:''}
+   <button class="btn primary" data-act="pcLanca" style="margin-top:12px">Comprei — lançar agora</button>`;
+}
+function vPossoComprar(){
+  const P=ui.pc||(ui.pc={valor:'',parcelas:1,pay:'Pix',conta:(contaPrincipal()||{}).id||'',cat:''});
+  const C=state.contas||[],cats=impCatsBase();if(!P.cat){const bm=month(todayYM()).budget.filter(x=>x.tipo==='wants'&&+x.valor>0),w=bm[0]||cats.find(c=>c.tipo==='wants');if(w)P.cat=w.tipo+'|'+w.cat}
+  const sel=(k,ops,v)=>`<select data-pc="${k}">${ops.map(([a,b])=>`<option value="${esc(a)}" ${a===v?'selected':''}>${esc(b)}</option>`).join('')}</select>`;
+  const lbl=t=>`style="display:grid;gap:5px;font-size:12px;color:var(--muted);font-weight:600"`;
+  return`<div class="card"><h3>🤔 Posso comprar?</h3><div class="sub">Simule antes de comprar: o app mostra o efeito no orçamento, no limite, no saldo e nas metas. Nada é lançado.</div>
+   <div class="grid g2"><label ${lbl()}>Valor (R$)<input type="text" inputmode="decimal" data-pc="valor" value="${esc(String(P.valor).replace('.',','))}" placeholder="0,00" style="font-size:22px;font-weight:800"></label>
+    <label ${lbl()}>Pagamento${sel('pay',[['Pix','Pix / débito'],...state.cards.map(c=>['card:'+c.id,'💳 '+c.nome])],P.pay)}</label>
+    ${P.pay.startsWith('card:')?`<label ${lbl()}>Parcelas<input type="text" inputmode="numeric" data-pc="parcelas" value="${P.parcelas}"></label>`:C.length>1?`<label ${lbl()}>Sai de qual conta${sel('conta',C.map(c=>[c.id,c.nome]),P.conta)}</label>`:''}
+    <label ${lbl()}>Categoria${sel('cat',cats.map(c=>[c.tipo+'|'+c.cat,c.cat+' · '+BUCKETS[c.tipo].label]),P.cat)}</label></div></div>
+  <div class="card"><h3>Resultado</h3><div id="pcRes">${pcCalc(P)}</div></div>`;
+}
+function impCatsBase(){const m=new Map();const add=(c,t)=>{if(c&&BUCKETS[t]&&!m.has(t+'|'+norm(c)))m.set(t+'|'+norm(c),{cat:c,tipo:t})};month(todayYM()).budget.forEach(b=>add(b.cat,b.tipo));Object.values(state.months).forEach(x=>(x.budget||[]).forEach(b=>add(b.cat,b.tipo)));return[...m.values()].sort((a,b)=>a.tipo.localeCompare(b.tipo)||a.cat.localeCompare(b.cat))}
+document.addEventListener('input',e=>{const k=e.target.dataset&&e.target.dataset.pc;if(!k||!ui.pc)return;ui.pc[k]=k==='valor'?parseNum(e.target.value):k==='parcelas'?parseNum(e.target.value):e.target.value;
+  if(k==='pay'){keepScroll();return}const r=$('#pcRes');if(r)r.innerHTML=pcCalc(ui.pc)});
+document.addEventListener('change',e=>{const k=e.target.dataset&&e.target.dataset.pc;if(!k||!ui.pc||e.target.tagName!=='SELECT')return;ui.pc[k]=e.target.value;if(k==='pay')keepScroll();else{const r=$('#pcRes');if(r)r.innerHTML=pcCalc(ui.pc)}});
+
+Object.assign(ACT,{
+  buscaTag:t=>{ui.busca='#'+t;view='busca';render();scrollTo(0,0)},
+  buscaAbre:k=>{const[q,id,ym]=k.split(':');if(q==='e'){const e=find(state.expenses,id);if(e)expenseForm(e)}else if(q==='p'){const p=find(state.cardPurchases,id);if(p)purchaseForm(p)}else{curMonth=ym;const i=find(month(ym).income,id);render();if(i)incomeForm(i)}},
+  pcLanca:()=>{const P=ui.pc;if(!(P.valor>0)){toast('Digite o valor','err');return}const i=P.cat.indexOf('|');quickAdd({valor:P.valor,tipo:P.cat.slice(0,i),cat:P.cat.slice(i+1),pay:P.pay});
+    setTimeout(()=>{const f=$('#modalForm');if(f&&f.elements.parcelas&&P.pay.startsWith('card:'))f.elements.parcelas.value=Math.max(1,Math.round(P.parcelas||1));if(f){const b=f.querySelector(`[data-q="pay"][data-v="${P.pay}"]`);if(b)b.click()}},120)}
+});
+Object.assign(VIEWS,{busca:vBusca,possocomprar:vPossoComprar});
+Object.assign(IC,{busca:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',possocomprar:'<path d="M6 6h15l-1.5 9h-12z"/><path d="M6 6L5 3H2"/><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/>'});
+
+/* ============================================================
    BLOQUEIO DO APP — senha, padrão desenhado ou impressão digital
    A configuração fica só neste aparelho (não vai no backup).
    É uma tranca de tela: impede que alguém com o celular na mão abra o app.
@@ -3779,7 +3897,7 @@ try{const k=localStorage.getItem('finm_skin');if(SKINS[k]){document.documentElem
   matchMedia('(max-width:820px)').addEventListener('change',()=>{if(!isMobile()&&view==='home')view='dashboard';render()});
   const temDados=await carregar();revAoAbrir=rev;fileRev=-1;
   pedirPersistencia().then(()=>{if(view==='settings')render()});
-  syPinta();syncNow();setTimeout(plRetrato,1500);lixCarrega();setTimeout(()=>snapAuto(),4000);setInterval(()=>snapAuto(),3600e3);
+  syPinta();syncNow();setTimeout(plRetrato,1500);lixCarrega();setTimeout(()=>snapAuto(),4000);setTimeout(autoRecorrentes,1200);setInterval(autoRecorrentes,3600e3);setInterval(()=>snapAuto(),3600e3);
   const lerHash=()=>{if(!location.hash.startsWith('#n='))return;let t='';try{t=decodeURIComponent(location.hash.slice(3))}catch(e){}history.replaceState(null,'',location.pathname);if(t)setTimeout(()=>{closeModal();abrirNotif(t)},400)};
   lerHash();addEventListener('hashchange',lerHash);
   render();
