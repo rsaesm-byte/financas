@@ -264,6 +264,13 @@ h1,h2,h3,.hero .big,.kpi .value,.brand,.lk-box h2{font-family:var(--font-h,var(-
 .skin-ln em{font-style:normal;color:var(--m)}
 .skin-nv{display:flex;gap:5px;justify-content:center}.skin-nv i{width:22px;height:12px;border-radius:5px;background:var(--p);border:1px solid var(--d)}.skin-nv i.on{background:color-mix(in srgb,var(--s) 22%,transparent);border-color:var(--s)}.skin-nv i.fab{background:var(--a);border-color:var(--a);border-radius:50%;width:14px;height:14px;margin-top:-1px}
 .skin-card>b{font-size:14px;padding:0 4px;display:flex;justify-content:space-between;align-items:center}.skin-card>small{color:var(--muted);font-size:11.5px;padding:0 4px 4px;line-height:1.3}
+/* ============ IMPORTAR ============ */
+.imp-row{display:flex;gap:10px;align-items:flex-start;padding:11px 2px;border-bottom:1px solid var(--border)}
+.imp-row.off{opacity:.5}.imp-row input[type=checkbox]{width:20px;height:20px;margin-top:2px;flex:none;accent-color:var(--accent)}
+.imp-row .tx{flex:1;min-width:0;display:grid;gap:3px}.imp-row .tx b{font-weight:600;overflow-wrap:anywhere}.imp-row .tx small{color:var(--muted);font-size:12px}
+.imp-row select{font-size:13px;padding:6px 8px;border-radius:9px;margin-top:3px;max-width:100%}
+.imp-row .vl{font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
+@media(max-width:820px){.imp-row select{font-size:16px}}
 /* ============ MANUAL ============ */
 .man-hero input{width:100%;margin-top:6px;font-size:16px;padding:13px 14px;border-radius:14px;border:0;background:rgba(255,255,255,.95);color:#162033;outline:none}
 .man-hero .btn{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.4);color:#fff}
@@ -456,7 +463,7 @@ const MN=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez
 const MNF=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const PALETTE=['#4f8cff','#a970ff','#22c58b','#f5a524','#f2555a','#2ec4d6','#ff7ab6','#9bd04b','#ff9f43','#7f8cff'];
 
-function defaultState(){return{settings:{theme:'dark',pct:{needs:50,wants:30,savings:20}},months:{},expenses:[],debts:[],cards:[],cardPurchases:[],goals:[],bills:[],benefits:[],deleted:{},profile:{},learn:{done:{}},investimentos:[],invest:{},contas:[],transfers:[],splits:[]}}
+function defaultState(){return{settings:{theme:'dark',pct:{needs:50,wants:30,savings:20}},months:{},expenses:[],debts:[],cards:[],cardPurchases:[],goals:[],bills:[],benefits:[],deleted:{},profile:{},learn:{done:{}},investimentos:[],invest:{},contas:[],transfers:[],splits:[],cardPayments:[],catRules:{}}}
 let state=defaultState();
 let curMonth=todayYM();
 let view='dashboard';
@@ -489,20 +496,23 @@ function oldHandle(){return new Promise(res=>{try{const r=indexedDB.open('financ
 /* ---------- utilidades ---------- */
 async function sha256(t){try{const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(t));return[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}catch(e){return null}}
 const hora=d=>d?d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
-function tomb(...ids){state.deleted=state.deleted||{};const t=new Date().toISOString();ids.forEach(id=>{if(id)state.deleted[id]=t})}
+function tomb(...ids){state.deleted=state.deleted||{};const t=new Date().toISOString();ids.forEach(id=>{if(id){try{lixAdd(id)}catch(e){}state.deleted[id]=t}})}
+/* exclusão pode ser desfeita: 'r:data' = restaurado. Em conflito, vale a marcação mais recente */
+function isDead(v){return!!v&&!String(v).startsWith('r:')}
+function mergeDead(a,b){const ts=v=>Date.parse(String(v||'').replace(/^r:/,''))||0,o=Object.assign({},a);Object.entries(b||{}).forEach(([k,v])=>{if(!(k in o)||ts(v)>=ts(o[k]))o[k]=v});return o}
 function hasData(s){return s&&(Object.keys(s.months||{}).length||(s.expenses||[]).length||(s.debts||[]).length||(s.cards||[]).length||(s.goals||[]).length)}
 
 /* junta dois bancos: itens são unidos pelo id; em conflito vale o "principal"; excluídos (deleted) somem dos dois */
-function mergeById(a=[],b=[],dead){const ids=new Set(a.map(x=>x.id));return a.filter(x=>!dead[x.id]).concat(b.filter(x=>!ids.has(x.id)&&!dead[x.id]))}
+function mergeById(a=[],b=[],dead){const ids=new Set(a.map(x=>x.id));return a.filter(x=>!isDead(dead[x.id])).concat(b.filter(x=>!ids.has(x.id)&&!isDead(dead[x.id])))}
 function mergeStates(p,s){
   p=Object.assign(defaultState(),p);s=Object.assign(defaultState(),s);
-  const dead=Object.assign({},s.deleted,p.deleted);
+  const dead=mergeDead(s.deleted,p.deleted);
   const o=Object.assign(defaultState(),s,p);o.deleted=dead;o.settings=p.settings;
-  ['expenses','debts','cards','cardPurchases','goals','bills','benefits','investimentos','contas','transfers','splits'].forEach(k=>o[k]=mergeById(p[k],s[k],dead));
+  ['expenses','debts','cards','cardPurchases','goals','bills','benefits','investimentos','contas','transfers','splits','cardPayments'].forEach(k=>o[k]=mergeById(p[k],s[k],dead));
   o.months={};
   new Set([...Object.keys(s.months),...Object.keys(p.months)]).forEach(ym=>{
     const a=p.months[ym],b=s.months[ym];
-    if(!a||!b){const m=JSON.parse(JSON.stringify(a||b));m.income=(m.income||[]).filter(x=>!dead[x.id]);m.budget=(m.budget||[]).filter(x=>!dead[x.id]);o.months[ym]=m;return}
+    if(!a||!b){const m=JSON.parse(JSON.stringify(a||b));m.income=(m.income||[]).filter(x=>!isDead(dead[x.id]));m.budget=(m.budget||[]).filter(x=>!isDead(dead[x.id]));o.months[ym]=m;return}
     o.months[ym]={pct:a.pct,income:mergeById(a.income,b.income,dead),budget:mergeById(a.budget,b.budget,dead)};
   });
   return o;
@@ -655,7 +665,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.14-1';
+const APP_VERSAO='2026.11.14-2';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -818,7 +828,7 @@ const NAV=[
  ['sep','Planejamento'],['budget','Renda & Orçamento'],['compare','Planejado × Real'],['expenses','Gastos'],['contas','Contas e saldos'],['bills','Contas fixas'],['vale','Vale-alimentação'],
  ['sep','Compromissos'],['debts','Dívidas & Financiamentos'],['cards','Cartões de crédito'],['goals','Metas & Poupança'],
  ['sep','Coach'],['invest','Investir'],['learn','Aprender'],['profile','Meu perfil'],
- ['sep','Sistema'],['manual','Manual'],['settings','Configurações']
+ ['sep','Sistema'],['importar','Importar extrato'],['versoes','Voltar no tempo'],['lixeira','Lixeira'],['manual','Manual'],['settings','Configurações']
 ];
 const TITLES=Object.fromEntries(NAV.filter(n=>n[0]!=='sep'));
 function renderNav(){
@@ -842,7 +852,7 @@ function openMore(){
    ${sec('Visão geral',it('dashboard','Dashboard')+it('review','Revisão do período')+it('report','Relatório do mês')+it('anual','Ano & assinaturas','report')+it('fechar','Fechar o mês','calendar'))}
    ${sec('Planejamento',it('contas','Contas e saldos','vale')+it('budget','Renda & Orçamento')+it('compare','Planejado × Real')+it('bills','Contas fixas'))}
    ${sec('Compromissos',it('debts','Dívidas')+it('cards','Cartões')+it('goals','Metas & Reservas')+it('dividir','Dividir despesas','profile'))}
-   ${sec('Sistema',it('manual','Manual e ajuda','manual')+`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme','Temas','theme','theme')+
+   ${sec('Sistema',it('importar','Importar extrato','importar')+it('versoes','Voltar no tempo','versoes')+it('lixeira','Lixeira','lixeira')+it('manual','Manual e ajuda','manual')+`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme','Temas','theme','theme')+
      it('todayM','Ir para o mês atual','calendar','todayM')+(installEvt?it('install','Instalar app','install','installApp'):''))}
   </div></div><footer><button type="button" class="btn" data-act="closeModal">Fechar</button></footer>`;
   f.onsubmit=e=>e.preventDefault();
@@ -1193,7 +1203,7 @@ function vBudget(){
       items.forEach(b=>{
         const r=cmap[b.tipo+'|'+norm(b.cat)]||{plan:+b.valor,real:0,diff:-b.valor,diffPct:-100,usePct:0,tipo:b.tipo};
         const st=status(r),bad=isS?r.diff<0:r.diff>0;
-        h+=`<tr><td data-act="editBudget" data-id="${b.id}" style="cursor:pointer" title="Editar categoria">${esc(b.cat)} <span class="muted" style="font-size:12px;font-weight:400">✎</span></td>
+        h+=`<tr><td data-act="editBudget" data-id="${b.id}" style="cursor:pointer" title="Editar categoria">${esc(b.cat)}${b.acumula?' <span title="Acumula a sobra">♻</span>':''}${r.sobra?` <span class="pill" title="Sobra acumulada dos meses anteriores">+${brl(r.sobra)} de sobra</span>`:''} <span class="muted" style="font-size:12px;font-weight:400">✎</span></td>
          <td class="num"><input type="number" min="0" step="0.01" value="${+b.valor||''}" placeholder="0,00" data-bval="${b.id}" style="text-align:right;padding:6px 8px"></td>
          <td class="num"><b>${brl(r.real)}</b></td>
          <td class="num ${bad?'neg':r.diff===0?'':'pos'}">${signBrl(r.diff)}</td>
@@ -1281,7 +1291,7 @@ function vExpensesMobile(){
   if(f.tipo)list=list.filter(e=>e.tipo===f.tipo);
   if(f.pay)list=list.filter(e=>f.pay==='Cartão'?e.src==='card':e.pay===f.pay);
   const tot=sum(list.filter(e=>e.tipo!=='savings'),e=>e.valor),sav=sum(list.filter(e=>e.tipo==='savings'),e=>e.valor);
-  return`<div class="card"><div class="filters" style="margin-bottom:6px"><input type="text" placeholder="🔎 Buscar gasto ou categoria" value="${esc(f.q)}" data-filter="q" style="flex:1 1 100%"><select data-filter="tipo"><option value="">Todos os grupos</option>${tipoOpts.map(([v,l])=>`<option value="${v}" ${f.tipo===v?'selected':''}>${l}</option>`).join('')}</select><select data-filter="pay"><option value="">Todas as formas</option>${[...PAY,'Cartão',...state.benefits.map(b=>b.nome)].map(p=>`<option ${f.pay===p?'selected':''}>${p}</option>`).join('')}</select></div>
+  return`<div class="card"><div class="row" style="margin-bottom:10px"><button class="btn sm" data-act="nav" data-id="importar">⬆ Importar extrato</button><button class="btn sm" data-act="nav" data-id="lixeira">🗑 Lixeira</button></div><div class="filters" style="margin-bottom:6px"><input type="text" placeholder="🔎 Buscar gasto ou categoria" value="${esc(f.q)}" data-filter="q" style="flex:1 1 100%"><select data-filter="tipo"><option value="">Todos os grupos</option>${tipoOpts.map(([v,l])=>`<option value="${v}" ${f.tipo===v?'selected':''}>${l}</option>`).join('')}</select><select data-filter="pay"><option value="">Todas as formas</option>${[...PAY,'Cartão',...state.benefits.map(b=>b.nome)].map(p=>`<option ${f.pay===p?'selected':''}>${p}</option>`).join('')}</select></div>
   <div class="row" style="justify-content:space-between;margin:10px 2px 0"><span class="muted">${list.length} lançamento(s)${sav?' · '+brl(sav)+' poupados':''}</span><b>${brl(tot)}</b></div>
   ${list.length?expList(list):'<div class="empty">Nenhum gasto encontrado.<br><br><button class="btn primary" data-act="quickAdd">+ Lançar gasto</button></div>'}
   <div class="muted" style="font-size:12px;margin-top:12px">Toque num lançamento para editar, duplicar ou excluir. Inclui as parcelas de cartão que caem na fatura de ${mLabel(curMonth,true)}.</div></div>`;
@@ -1578,7 +1588,7 @@ function vCards(){
   let h=`<div class="grid g4">${kpi('Faturas de '+mLabel(curMonth),brl(fat),state.cards.length+' cartão(ões)')}${kpi('Limite comprometido',brl(used),lim?pctf(used/lim*100,0)+' do limite total':'',null,used/lim>.8?'neg':'')}${kpi('Limite disponível',brl(lim-used),'De '+brl(lim),null,'pos')}${kpi('Compras parceladas ativas',String(state.cardPurchases.filter(p=>mDiff(p.primeiraFatura,curMonth)<p.parcelas).length),'Ainda com parcelas a vencer')}</div>
   <div class="card"><div class="card-head"><div><h3>Meus cartões</h3><div class="sub">Fatura do mês selecionado e uso do limite</div></div><div class="row"><button class="btn sm" data-act="addCard">+ Cartão</button><button class="btn primary sm" data-act="addPurchase" ${state.cards.length?'':'disabled'}>+ Compra no cartão</button></div></div>
   ${state.cards.length?`<div class="grid g3">${state.cards.map(c=>{const u=cardUsed(c.id,curMonth),p=c.limite?u/c.limite*100:0;return`<div class="item-card" style="background:linear-gradient(135deg,${c.cor||'#4f8cff'}33,var(--panel2))"><div class="row"><span class="t">💳 ${esc(c.nome)}</span><span class="spacer"></span><button class="icon-btn" data-act="editCard" data-id="${c.id}">✎</button><button class="icon-btn" data-act="delCard" data-id="${c.id}">🗑</button></div>
-   <div class="muted" style="font-size:12px;margin-bottom:10px">Fecha dia ${c.fechamento} · vence dia ${c.vencimento}</div><div class="stat-line"><span>Fatura ${mLabel(curMonth)}</span><b style="font-size:17px">${brl(cardFatura(c.id,curMonth))}</b></div><div class="stat-line"><span>Comprometido</span><b>${brl(u)}</b></div><div class="stat-line"><span>Disponível</span><b class="pos">${brl(c.limite-u)}</b></div><div style="margin-top:8px">${bar(p,p>80?'bad':p>50?'warn':'ok')}<div class="muted" style="font-size:11px;margin-top:3px">${pctf(p,0)} de ${brl(c.limite)}</div></div></div>`}).join('')}</div>`:'<div class="empty">Cadastre seus cartões para controlar faturas e parcelas.</div>'}</div>`;
+   <div class="muted" style="font-size:12px;margin-bottom:10px">Fecha dia ${c.fechamento} · vence dia ${c.vencimento}</div><div class="stat-line"><span>Fatura ${mLabel(curMonth)}</span><b style="font-size:17px">${brl(cardFatura(c.id,curMonth))}</b></div>${pagoFatura(c.id,curMonth)?`<div class="stat-line"><span>Já pago</span><b class="pos">${brl(pagoFatura(c.id,curMonth))}</b></div>`:''}<div class="stat-line"><span>Comprometido</span><b>${brl(u)}</b></div><div class="stat-line"><span>Disponível</span><b class="pos">${brl(c.limite-u)}</b></div><div style="margin-top:8px">${bar(p,p>80?'bad':p>50?'warn':'ok')}<div class="muted" style="font-size:11px;margin-top:3px">${pctf(p,0)} de ${brl(c.limite)}</div></div><button class="btn sm" data-act="pagarFatura" data-id="${c.id}" style="margin-top:10px">💸 Pagar fatura</button></div>`}).join('')}</div>`:'<div class="empty">Cadastre seus cartões para controlar faturas e parcelas.</div>'}</div>`;
   if(state.cards.length){
     const ps=state.cardPurchases.slice().sort((a,b)=>b.primeiraFatura.localeCompare(a.primeiraFatura));
     h+=`<div class="grid g21"><div class="card"><h3>Compras parceladas</h3><div class="sub">Parcela atual referente a ${mLabel(curMonth,true)}</div>${ps.length?`<div class="table-wrap"><table><thead><tr><th>Compra</th><th>Cartão</th><th>Categoria</th><th class="num">Total</th><th class="num">Parcela</th><th>Situação</th><th></th></tr></thead><tbody>${ps.map(p=>{const idx=mDiff(p.primeiraFatura,curMonth),c=cardById(p.cardId);const sit=idx<0?`<span class="badge info">começa ${mLabel(p.primeiraFatura)}</span>`:idx>=p.parcelas?'<span class="badge ok">quitada</span>':`<span class="badge warn">${idx+1}/${p.parcelas}</span>`;return`<tr><td>${esc(p.desc)}</td><td>${esc(c?c.nome:'?')}</td><td>${esc(p.cat)} ${tipoBadge(p.tipo)}</td><td class="num">${brl(p.valorTotal)}</td><td class="num">${p.parcelas}× ${brl(p.valorTotal/p.parcelas)}</td><td>${sit}</td><td class="num"><button class="icon-btn" data-act="editPurchase" data-id="${p.id}">✎</button><button class="icon-btn" data-act="delPurchase" data-id="${p.id}">🗑</button></td></tr>`}).join('')}</tbody></table></div>`:'<div class="empty">Nenhuma compra lançada.</div>'}</div>
@@ -2411,7 +2421,8 @@ function contaSaldo(c){
   const minha=x=>contaDe(x)===c.id;
   let ent=0;Object.values(state.months).forEach(m=>(m.income||[]).forEach(i=>{if(dentro(i.date,i)&&minha(i))ent+=+i.valor||0}));
   const sai=sum(state.expenses.filter(e=>dentro(e.date,e)&&minha(e)&&(PAY_CONTA.includes(e.pay)||(e.contaId&&e.pay==='Dinheiro'))&&!e.benefitId&&!e.fundId),e=>+e.valor||0);
-  let fat=0;state.cards.filter(cc=>contaDe(cc)===c.id).forEach(cc=>{for(let ym=d0.slice(0,7);ym<=hoje.slice(0,7);ym=addM(ym,1)){if(dentro(isoOf(ym,+cc.vencimento||10)))fat+=cardFatura(cc.id,ym)}});
+  let fat=0;state.cards.filter(cc=>contaDe(cc)===c.id).forEach(cc=>{for(let ym=d0.slice(0,7);ym<=hoje.slice(0,7);ym=addM(ym,1)){if(dentro(isoOf(ym,+cc.vencimento||10)))fat+=Math.max(0,cardFatura(cc.id,ym)-pagoFatura(cc.id,ym))}});
+  fat+=sum((state.cardPayments||[]).filter(p=>(p.contaId||contaDe(find(state.cards,p.cardId)||{}))===c.id&&dentro(p.date,p)),p=>+p.valor);
   return{v:(+c.saldo||0)+ent-sai-fat+_tr,ent,sai,fat};
 }
 function proxFatura(c){const hoje=todayISO();let ym=todayYM();if(isoOf(ym,+c.vencimento||10)<hoje)ym=addM(ym,1);return{ym,venc:isoOf(ym,+c.vencimento||10),v:cardFatura(c.id,ym),aberto:cardUsed(c.id,ym)}}
@@ -2554,7 +2565,7 @@ function expenseForm(e,preset){
     if(e.fundId&&!isNew){const g=find(state.goals,e.fundId);if(g)g.guardado=Math.round(((+g.guardado)+(+e.valor)-(+d.valor))*100)/100;d.pay=e.pay}
     else if(String(d.pay).startsWith('ben:')){const b=find(state.benefits,d.pay.slice(4));d.benefitId=b?b.id:undefined;d.pay=b?b.nome:'Vale'}else d.benefitId=undefined;
     if(isNew){const x={id:uid(),criado:Date.now(),...d};state.expenses.push(x);setTimeout(()=>coachShow(x,()=>{tomb(x.id);state.expenses=state.expenses.filter(y=>y!==x);save();render();toast('Lançamento desfeito')},brl(x.valor)+' lançado'),60)}else{Object.assign(e,d);toast('Gasto salvo')}},
-    extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelExpense" data-id="${e.id}" title="Excluir">🗑</button><button type="button" class="btn" data-act="dupExpense" data-id="${e.id}" title="Duplicar">⧉</button>`});
+    extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelExpense" data-id="${e.id}" title="Excluir">🗑</button><button type="button" class="btn" data-act="dupExpense" data-id="${e.id}" title="Duplicar">⧉</button>${+e.valor>0?`<button type="button" class="btn" data-act="estorno" data-id="e:${e.id}" title="Registrar estorno">↩</button>`:''}`});
 }
 function incomeForm(i){
   const isNew=!i;i=i||{date:isoOf(curMonth,5),natureza:'fixa',fonte:INCOME_SOURCES[0]};
@@ -2573,11 +2584,12 @@ function budgetForm(b,preset){
     {name:'cat',label:'Categoria',value:b.cat,list:categoriesList(),required:true,full:true,placeholder:'Ex.: Telefone celular'},
     {name:'tipo',label:'Grupo',type:'select',options:tipoOpts,value:b.tipo},
     {name:'valor',label:'Valor planejado (R$) — neste mês',type:'number',step:'0.01',min:0,value:b.valor,required:true},
+    {name:'acumula',type:'checkbox',value:!!b.acumula,label:'♻ Acumular: o que sobrar neste mês passa para o próximo (bom para presentes, roupas, manutenção)'},
     ...(isNew?[]:[{name:'tudo',type:'checkbox',value:true,label:'Se mudar o nome ou o grupo, aplicar também nos gastos já lançados, nos outros meses, nas contas fixas, cartões e vale (recomendado)'}])
   ],extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelBudget" data-id="${b.id}" title="Apagar">🗑 Apagar</button>`,
   onSave:d=>{const m=month(curMonth,true);
-    if(isNew){if(m.budget.some(x=>x.tipo===d.tipo&&norm(x.cat)===norm(d.cat))){toast('Essa categoria já existe neste grupo','err');return false}m.budget.push({id:uid(),cat:d.cat,tipo:d.tipo,valor:d.valor});toast('Categoria salva');return}
-    const mudou=norm(d.cat)!==norm(old.cat)||d.tipo!==old.tipo;b.valor=d.valor;
+    if(isNew){if(m.budget.some(x=>x.tipo===d.tipo&&norm(x.cat)===norm(d.cat))){toast('Essa categoria já existe neste grupo','err');return false}m.budget.push({id:uid(),cat:d.cat,tipo:d.tipo,valor:d.valor,acumula:!!d.acumula});toast('Categoria salva');return}
+    const mudou=norm(d.cat)!==norm(old.cat)||d.tipo!==old.tipo;b.valor=d.valor;b.acumula=!!d.acumula;
     if(!mudou){b.cat=d.cat;toast('Categoria salva');return}
     if(!d.tudo){const dup=m.budget.find(x=>x!==b&&x.tipo===d.tipo&&norm(x.cat)===norm(d.cat));if(dup){toast('Já existe "'+d.cat+'" nesse grupo neste mês','err');return false}b.cat=d.cat;b.tipo=d.tipo;toast('Categoria renomeada só neste mês');return}
     const n=renomearCategoria(old,{cat:d.cat,tipo:d.tipo});toast(`"${old.cat}" agora é "${d.cat}" — ${n} item(ns) atualizado(s)`)}});
@@ -2620,7 +2632,7 @@ function cardForm(c){
     {name:'vencimento',label:'Dia de vencimento',type:'number',min:1,step:'1',value:c.vencimento},
     {name:'cor',label:'Cor',type:'color',value:c.cor}
   ],onRender:f=>{const n=f.elements.nome,cr=f.elements.cor;n.addEventListener('change',()=>{const b=BANCOS.find(x=>norm(n.value).startsWith(norm(x[0])));if(b&&isNew)cr.value=b[1]})},
-  extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelCard" data-id="${c.id}" title="Apagar cartão">🗑</button><button type="button" class="btn" data-act="nav" data-id="cards" title="Compras e faturas">Compras</button>`,
+  extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelCard" data-id="${c.id}" title="Apagar cartão">🗑</button><button type="button" class="btn" data-act="pagarFatura" data-id="${c.id}" title="Pagar fatura">💸</button><button type="button" class="btn" data-act="nav" data-id="cards" title="Compras e faturas">Compras</button>`,
   onSave:d=>{if(isNew)state.cards.push({id:uid(),...d});else Object.assign(c,d);toast('Cartão salvo')}});
 }
 function purchaseForm(p,preset){
@@ -2635,7 +2647,7 @@ function purchaseForm(p,preset){
     {name:'cat',label:'Categoria',value:p.cat,list:categoriesList(),required:true},
     {name:'tipo',label:'Grupo',type:'select',options:tipoOpts,value:p.tipo}
   ],onSave:d=>{d.parcelas=Math.max(1,Math.round(d.parcelas));if(isNew)state.cardPurchases.push({id:uid(),...d});else Object.assign(p,d);toast('Compra salva')},
-    extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelPurchase" data-id="${p.id}" title="Excluir">🗑</button>`});
+    extra:isNew?'':`<button type="button" class="btn danger" data-act="mDelPurchase" data-id="${p.id}" title="Excluir">🗑</button>${+p.valorTotal>0?`<button type="button" class="btn" data-act="estorno" data-id="p:${p.id}" title="Registrar estorno">↩ Estorno</button>`:''}`});
 }
 function goalForm(g){
   const isNew=!g;g=g||{guardado:0,cor:PALETTE[(state.goals.length+2)%PALETTE.length]};
@@ -2925,7 +2937,7 @@ function proximosEventos(){
   const hoje=todayISO(),fim=toISO(new Date(Date.now()+30*864e5)),E=[];
   [todayYM(),addM(todayYM(),1)].forEach(ym=>{
     billsOf(ym).forEach(({b,pay})=>{if(!pay)E.push({d:isoOf(ym,+b.dia||1),ic:'🧾',t:b.nome,v:-b.valor,act:'nav',id:'bills'})});
-    state.cards.forEach(c=>{const v=cardFatura(c.id,ym);if(v>0)E.push({d:isoOf(ym,+c.vencimento||10),ic:'💳',t:'Fatura '+c.nome,v:-v,act:'editCard',id:c.id})});
+    state.cards.forEach(c=>{const v=cardFatura(c.id,ym)-pagoFatura(c.id,ym);if(v>0.004)E.push({d:isoOf(ym,+c.vencimento||10),ic:'💳',t:'Fatura '+c.nome,v:-v,act:'editCard',id:c.id})});
     (month(ym).income||[]).forEach(i=>{if(i.date)E.push({d:i.date,ic:'💵',t:i.fonte+(i.desc?' — '+i.desc:''),v:+i.valor,act:'budTab',id:'renda'})})});
   state.benefits.forEach(b=>E.push({d:benNext(b,hoje),ic:'🧺',t:'Recarga '+b.nome,v:+b.valorMensal||0,act:'nav',id:'vale',vale:true}));
   (state.investimentos||[]).forEach(x=>{if(x.venc)E.push({d:x.venc,ic:'📈',t:'Vence: '+x.nome,v:0,act:'invTab',id:'carteira'})});
@@ -2945,7 +2957,7 @@ function vCalendario(){
 const SY={FILE:'minhas-financas-dados.json',LS:'finm_gist',cfg:null,busy:false,st:'',err:'',quando:null,base:null,t:null};
 try{SY.cfg=JSON.parse(localStorage.getItem(SY.LS))||null}catch(e){}
 const syCfg=c=>{SY.cfg=c;try{c?localStorage.setItem(SY.LS,JSON.stringify(c)):localStorage.removeItem(SY.LS)}catch(e){}};
-const LISTAS=['expenses','debts','cards','cardPurchases','goals','bills','benefits','investimentos','contas','transfers','splits'];
+const LISTAS=['expenses','debts','cards','cardPurchases','goals','bills','benefits','investimentos','contas','transfers','splits','cardPayments'];
 const jj=x=>JSON.stringify(x===undefined?null:x);
 const canon=x=>JSON.stringify(x,(k,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.keys(v).sort().reduce((o,q)=>(o[q]=v[q],o),{}):v);
 const porId=s=>{const c=JSON.parse(jj(s));LISTAS.forEach(k=>c[k]=(c[k]||[]).slice().sort((a,b)=>String(a.id).localeCompare(String(b.id))));Object.values(c.months||{}).forEach(m=>['income','budget'].forEach(k=>m[k]=(m[k]||[]).slice().sort((a,b)=>String(a.id).localeCompare(String(b.id)))));return canon(c)};
@@ -2955,20 +2967,20 @@ async function gh(path,opt={}){
 /* junta listas por id: quem mudou desde a última sincronização vence; se os dois mudaram, vale o deste aparelho */
 function m3lista(L=[],R=[],B=[],dead){
   const mb=new Map(B.map(x=>[x.id,jj(x)])),mr=new Map(R.map(x=>[x.id,x])),out=[],vistos=new Set();
-  L.forEach(l=>{vistos.add(l.id);if(dead[l.id])return;const r=mr.get(l.id);
+  L.forEach(l=>{vistos.add(l.id);if(isDead(dead[l.id]))return;const r=mr.get(l.id);
     if(!r){out.push(l);return}                                   // só existe aqui (novo) → mantém
     out.push(jj(l)===mb.get(l.id)?r:l)});                        // não mexi aqui → pega o da nuvem
-  R.forEach(r=>{if(!vistos.has(r.id)&&!dead[r.id])out.push(r)}); // novo na nuvem
+  R.forEach(r=>{if(!vistos.has(r.id)&&!isDead(dead[r.id]))out.push(r)}); // novo na nuvem
   return out}
 const m3valor=(l,r,b)=>jj(l)===jj(b)?(r===undefined?l:r):l;
 function merge3(L,R,B){
   L=Object.assign(defaultState(),L);R=Object.assign(defaultState(),R);B=Object.assign(defaultState(),B||{});
-  const dead=Object.assign({},R.deleted,L.deleted),o=Object.assign({},R,L);o.deleted=dead;
+  const dead=mergeDead(R.deleted,L.deleted),o=Object.assign({},R,L);o.deleted=dead;
   LISTAS.forEach(k=>o[k]=m3lista(L[k],R[k],B[k],dead));
   Object.keys(o).forEach(k=>{if(k==='months'||k==='deleted'||LISTAS.includes(k))return;o[k]=m3valor(L[k],R[k],B[k])});
   o.months={};new Set([...Object.keys(L.months||{}),...Object.keys(R.months||{})]).forEach(ym=>{
     const a=L.months[ym],r=R.months[ym],b=(B.months||{})[ym]||{};
-    if(!a||!r){const m=JSON.parse(jj(a||r));m.income=(m.income||[]).filter(x=>!dead[x.id]);m.budget=(m.budget||[]).filter(x=>!dead[x.id]);o.months[ym]=m;return}
+    if(!a||!r){const m=JSON.parse(jj(a||r));m.income=(m.income||[]).filter(x=>!isDead(dead[x.id]));m.budget=(m.budget||[]).filter(x=>!isDead(dead[x.id]));o.months[ym]=m;return}
     o.months[ym]={pct:m3valor(a.pct,r.pct,b.pct),income:m3lista(a.income,r.income,b.income,dead),budget:m3lista(a.budget,r.budget,b.budget,dead)}});
   return o}
 async function syLer(){
@@ -3156,6 +3168,14 @@ const MAN=[
   o:'A lista de tudo o que foi lançado no mês, agrupada por dia, incluindo as parcelas de cartão que caem naquela fatura.',
   p:['Use a <b>busca</b> e os filtros de grupo e forma de pagamento.','<b>Toque num lançamento</b> para editar.','Dentro da edição: 🗑 apaga, ⧉ duplica e 📷 anexa a foto do comprovante.'],
   d:['A foto do comprovante fica só naquele aparelho (não sincroniza), para não pesar os dados.','Apagou sem querer? O aviso que aparece embaixo tem <b>Desfazer</b>.']},
+ {id:'importar',a:'dia',ic:'⬆',t:'Importar o extrato do banco ou a fatura',go:['nav','importar','Abrir Importar extrato'],onde:[manMenu(),'Importar extrato'],
+  o:'Em vez de digitar tudo, traga o arquivo do banco: o app lê as linhas, sugere a categoria e deixa de fora o que já estava lançado.',
+  p:['No app ou site do banco, exporte o extrato (ou a fatura do cartão) em <b>OFX</b> ou <b>CSV</b>.','Aqui, escolha <b>Extrato de conta</b> ou <b>Fatura de cartão</b> e qual conta/cartão.','Toque em <b>Escolher arquivo</b>.','Confira a lista: desmarque o que não quer e ajuste as categorias.','Toque em <b>Importar</b>. Se algo sair errado, o aviso tem <b>Desfazer</b>.'],
+  d:['Linhas que parecem já lançadas vêm desmarcadas — importar o mesmo arquivo duas vezes não duplica.','Trocou a categoria de uma linha? As outras do mesmo estabelecimento acompanham, e o app aprende para a próxima vez.','Entradas de dinheiro vêm desmarcadas: marque só o que for renda (transferência entre suas contas não é renda).']},
+ {id:'lixeira',a:'sistema',ic:'⏪',t:'Lixeira e voltar no tempo',go:['nav','versoes','Abrir Voltar no tempo'],onde:[manMenu(),'Lixeira / Voltar no tempo'],
+  o:'Apagou algo sem querer ou fez uma bagunça? Dá para desfazer.',
+  p:['<b>Lixeira</b>: tudo o que você apaga fica lá por 30 dias. Toque em <b>Restaurar</b>.','<b>Voltar no tempo</b>: o app guarda uma cópia por dia. Escolha a data e toque em <b>Voltar</b> — todos os dados voltam a ficar como estavam.','Com a sincronização ligada, também aparecem as <b>versões na nuvem</b> (uma a cada sincronização).'],
+  d:['Antes de voltar no tempo, o app guarda uma cópia de agora: se mudar de ideia, volte para ela.','A lixeira e as cópias diárias ficam no aparelho; o que você restaura vale também nos outros aparelhos sincronizados.']},
  {id:'coach',a:'dia',ic:'🤖',t:'Coach: o comentário depois de cada gasto',go:['nav','learn','Abrir Aprender'],onde:[manMenu(),'Aprender'],
   o:'Depois de salvar, um cartão mostra como ficou a categoria e dá uma dica prática.',
   p:['🟢 <b>Dentro do budget</b>: quanto resta e quanto dá por dia.','🟡 <b>No limite / ritmo acelerado</b>: você está gastando mais rápido que o mês.','🔴 <b>Acima do budget</b>: quanto passou e o que fazer.','🟠 <b>Fora do orçamento</b>: a categoria não tem valor planejado — há um botão para criar.'],
@@ -3169,12 +3189,12 @@ const MAN=[
   d:['<b>⇄ Transferir</b> move dinheiro entre duas contas sem contar como gasto.','<b>Patrimônio líquido</b> = contas + investimentos + bens − dívidas.']},
  {id:'cartoes',a:'contas',ic:'💳',t:'Cartões de crédito, limite e faturas',go:['nav','cards','Abrir Cartões'],onde:[manMenu(),'Cartões'],
   o:'Cada cartão tem limite, dia de fechamento, dia de vencimento e a conta que paga a fatura.',
-  p:['Cadastre o cartão em <b>+ Cartão</b>.','Ao lançar um gasto, escolha <b>💳 Crédito — nome do cartão</b> e o número de parcelas.','A compra <b>desconta do limite</b> e entra na fatura certa, de acordo com a data e o fechamento.','No vencimento, o valor da fatura sai da conta que você indicou.'],
+  p:['Cadastre o cartão em <b>+ Cartão</b>.','Ao lançar um gasto, escolha <b>💳 Crédito — nome do cartão</b> e o número de parcelas.','A compra <b>desconta do limite</b> e entra na fatura certa, de acordo com a data e o fechamento.','No vencimento, o valor da fatura sai da conta que você indicou.','Pagou adiantado ou só uma parte? Toque em <b>💸 Pagar fatura</b>: o valor volta ao limite na hora e no vencimento sai só o que faltar.','Compra cancelada ou devolvida? Abra a compra e toque em <b>↩ Estorno</b> (também funciona em gastos de conta).'],
   d:['No Início, cada cartão mostra o <b>limite livre</b> e uma barra de uso (amarela a partir de 70%, vermelha a partir de 90%).','Toque no cartão para editar ou apagar. Apagar o cartão apaga as compras dele.']},
  {id:'orcamento',a:'plan',ic:'📋',t:'Renda & Orçamento (as abas)',go:['budTab','renda','Abrir Renda & Orçamento'],onde:[manMenu(),'Renda & Orçamento'],
   o:'Onde você diz quanto entra e dá um destino para cada real. As abas separam: Renda, Needs, Wants, Savings, Poupança, Investimentos e Reserva.',
   p:['<b>Renda</b>: cadastre cada fonte (fixa ou variável) e ajuste as porcentagens dos 3 grupos.','<b>Needs / Wants / Savings</b>: crie as categorias com o valor planejado. O gasto real aparece ao lado.','Em cada categoria: <b>＋ Lançar · ✎ Editar · 🗑 Apagar</b>.','Mês novo? Use <b>Copiar do mês anterior</b>.'],
-  d:['Categoria marcada <b>“não orçado”</b> veio de um gasto com nome diferente: use <b>Editar</b> para juntar com a categoria certa.','Renomear uma categoria pode valer para todo o histórico (opção já marcada).','<b>💡 Sugerir valores</b> usa a média dos seus últimos meses.']},
+  d:['Categoria marcada <b>“não orçado”</b> veio de um gasto com nome diferente: use <b>Editar</b> para juntar com a categoria certa.','Renomear uma categoria pode valer para todo o histórico (opção já marcada).','<b>💡 Sugerir valores</b> usa a média dos seus últimos meses.','<b>♻ Acumular</b> (ao editar a categoria): o que sobrar no mês passa para o próximo — ideal para presentes, roupas e manutenção.']},
  {id:'fixas',a:'plan',ic:'📅',t:'Contas fixas e vencimentos',go:['nav','bills','Abrir Contas fixas'],onde:[manMenu(),'Contas fixas'],
   o:'Aluguel, internet, luz: contas que se repetem. O app avisa o que está para vencer.',
   p:['Cadastre a conta com valor, dia do vencimento e categoria.','Quando pagar, toque em <b>Pagar</b>: o gasto é lançado sozinho na categoria.','As contas em aberto aparecem no Início e em <b>Próximos 30 dias</b>.'],d:[]},
@@ -3310,6 +3330,216 @@ Object.assign(ACT,{
 });
 VIEWS.manual=vManual;
 addEventListener('keydown',e=>{if(e.key==='/'&&view==='manual'&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)){e.preventDefault();const b=$('#manBusca');b&&b.focus()}if(e.key==='Escape'&&TOUR)tourFim(false)});
+
+/* ============================================================
+   BLOCO 1 — importar extrato, lixeira, voltar no tempo,
+   pagamento de fatura, estorno e sobra que acumula
+   ============================================================ */
+const dataHora=ms=>new Date(ms).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+const keepScroll=()=>{const y=scrollY;render();scrollTo(0,y)};
+
+/* ---------- LIXEIRA (30 dias, só neste aparelho) ---------- */
+const LIX_COLS=['expenses','cardPurchases','debts','cards','goals','bills','benefits','investimentos','contas','transfers','splits','cardPayments'];
+let LIX=null;
+async function lixCarrega(){try{LIX=(await kvGet('lixeira'))||[]}catch(e){LIX=[]}}
+function lixSalva(){const lim=Date.now()-30*864e5;LIX=LIX.filter(x=>x.quando>lim).slice(0,400);kvSet('lixeira',LIX).catch(()=>{})}
+function lixAdd(id){
+  if(!LIX)return;const cp=x=>JSON.parse(JSON.stringify(x)),novo=x=>x.criado&&Date.now()-x.criado<120000;
+  for(const k of LIX_COLS){const x=(state[k]||[]).find(y=>y.id===id);if(x){if(novo(x))return;LIX=LIX.filter(y=>y.id!==id);LIX.unshift({id,k,item:cp(x),quando:Date.now()});lixSalva();return}}
+  for(const[ym,m]of Object.entries(state.months||{}))for(const k of['income','budget']){const x=(m[k]||[]).find(y=>y.id===id);if(x){if(novo(x))return;LIX=LIX.filter(y=>y.id!==id);LIX.unshift({id,k,ym,item:cp(x),quando:Date.now()});lixSalva();return}}
+}
+function lixLabel(x){const it=x.item;const L={expenses:['🧾',it.desc||it.cat,brl(it.valor)+' · '+fmtDate(it.date)],cardPurchases:['💳',it.desc,brl(it.valorTotal)+(it.parcelas>1?' em '+it.parcelas+'×':'')],
+  income:['💵',(it.fonte||'Renda')+(it.desc?' — '+it.desc:''),brl(it.valor)+' · '+mLabel(x.ym||'')],budget:['📋','Categoria '+it.cat,brl(it.valor)+' · '+mLabel(x.ym||'')],cards:['💳','Cartão '+it.nome,''],contas:['🏦','Conta '+it.nome,''],
+  goals:['🎯','Meta '+it.nome,''],bills:['🧾','Conta fixa '+it.nome,brl(it.valor)],debts:['⛓','Dívida '+it.nome,''],investimentos:['📈',it.nome,brl(it.atual||it.aplicado)],transfers:['⇄','Transferência',brl(it.valor)],
+  splits:['🤝',it.desc||'Divisão',brl(it.valor)],cardPayments:['💸','Pagamento de fatura',brl(it.valor)],benefits:['🧺',it.nome,'']};return L[x.k]||['•',x.k,'']}
+function lixGrupos(){const G=[];(LIX||[]).forEach(x=>{const g=G[G.length-1];if(g&&g[g.length-1].quando-x.quando<2500)g.push(x);else G.push([x])});return G}
+function lixRestaura(ents){const t='r:'+new Date().toISOString();let n=0;state.deleted=state.deleted||{};
+  ents.forEach(x=>{const arr=x.ym?month(x.ym,true)[x.k]:(state[x.k]=state[x.k]||[]);if(!arr.some(y=>y.id===x.id)){arr.push(x.item);n++}state.deleted[x.id]=t});
+  LIX=LIX.filter(x=>!ents.includes(x));lixSalva();save();render();toast(n+' item(ns) restaurado(s)')}
+function vLixeira(){
+  if(LIX===null){lixCarrega().then(()=>{if(view==='lixeira')render()});return'<div class="card empty">Abrindo a lixeira…</div>'}
+  const G=lixGrupos();
+  return`<div class="card"><div class="card-head"><div><h3>🗑 Lixeira</h3><div class="sub" style="margin:0">O que você apagou nos últimos 30 dias, neste aparelho. Toque em Restaurar para trazer de volta.</div></div>${G.length?'<button class="btn sm danger" data-act="lixEsvazia">Esvaziar</button>':''}</div>
+   ${G.length?G.map((g,i)=>{const[ic,t,v]=lixLabel(g[0]);return`<div class="mrow" style="cursor:default"><div class="ic" style="background:var(--panel2)">${ic}</div><div class="tx"><b>${esc(t)}${g.length>1?` <span class="muted" style="font-weight:400">+ ${g.length-1} item(ns) apagado(s) junto</span>`:''}</b><small>${v?v+' · ':''}apagado ${dataHora(g[0].quando)}</small></div><button class="btn sm" data-act="lixRest" data-id="${i}">Restaurar</button></div>`}).join('')
+   :'<div class="empty">A lixeira está vazia.</div>'}</div>
+  <div class="muted" style="font-size:12px;padding:0 4px">Com a sincronização ligada, o item restaurado volta também nos outros aparelhos. Para desfazer mudanças maiores, use <a data-act="nav" data-id="versoes" style="color:var(--accent);cursor:pointer">Voltar no tempo</a>.</div>`;
+}
+
+/* ---------- VOLTAR NO TEMPO (cópias diárias + versões da nuvem) ---------- */
+async function snapAuto(forca,nota){if(!hasData(state))return;let S=[];try{S=(await kvGet('snaps'))||[]}catch(e){}
+  if(!forca&&S[0]&&Date.now()-S[0].quando<20*3600e3)return;S.unshift({quando:Date.now(),rev,nota:nota||'',dados:JSON.parse(jj(state))});S=S.slice(0,16);try{await kvSet('snaps',S)}catch(e){}if(ui.ver)ui.ver.snaps=S}
+function idsDe(s){const o=new Set();LISTAS.forEach(k=>(s[k]||[]).forEach(x=>o.add(x.id)));Object.values(s.months||{}).forEach(m=>['income','budget'].forEach(k=>(m[k]||[]).forEach(x=>o.add(x.id))));return o}
+function voltarPara(D){
+  D=Object.assign(defaultState(),JSON.parse(jj(D)));const t=new Date().toISOString(),del=Object.assign({},D.deleted),velho=idsDe(D);
+  idsDe(state).forEach(id=>{if(!velho.has(id))del[id]=t});           // o que não existia naquela data: apaga (inclusive nos outros aparelhos)
+  velho.forEach(id=>{if(isDead(del[id])||isDead((state.deleted||{})[id]))del[id]='r:'+t});   // o que existia: volta a valer
+  const set=state.settings;state=D;state.deleted=mergeDead(state.deleted,del);state.settings=set;rev++;save();render();
+}
+const resumoDados=d=>`${(d.expenses||[]).length} gastos · ${(d.cardPurchases||[]).length} compras no cartão · ${Object.keys(d.months||{}).length} meses`;
+function verConfirma(D,rotulo){
+  openForm({title:'Voltar para '+rotulo,saveLabel:'Voltar para esta versão',danger:true,fields:[{type:'html',html:`<p style="margin:0 0 8px">Todos os dados voltam a ficar como estavam em <b>${esc(rotulo)}</b>.</p>
+   <div class="stat-line"><span>Agora</span><b>${resumoDados(state)}</b></div><div class="stat-line"><span>Naquela versão</span><b>${resumoDados(D)}</b></div>
+   <p class="muted" style="font-size:12px;margin:8px 0 0">Antes de voltar, o app guarda uma cópia de agora em “Cópias deste aparelho” — se mudar de ideia, é só voltar para ela. Tema e configurações continuam como estão.</p>`}],
+   onSave:()=>{snapAuto(true,'Antes de voltar no tempo').then(()=>{voltarPara(D);toast('Dados de volta para '+rotulo+' ✓')})}});
+}
+function vVersoes(){
+  const V=ui.ver||(ui.ver={snaps:null,nuvem:null});
+  if(V.snaps===null){V.snaps=[];kvGet('snaps').then(s=>{V.snaps=s||[];if(view==='versoes')render()}).catch(()=>{})}
+  return`<div class="card"><h3>⏪ Voltar no tempo</h3><div class="sub" style="margin:0">Fez uma bagunça? Volte <b>todos</b> os dados para como estavam numa data. Antes de voltar, o app guarda uma cópia de agora — dá para desfazer.</div></div>
+  <div class="card"><h3>📱 Cópias deste aparelho</h3><div class="sub">Uma por dia, das últimas duas semanas</div>${V.snaps.length?V.snaps.map((s,i)=>`<div class="mrow" style="cursor:default"><div class="tx"><b>${dataHora(s.quando)}</b><small>${s.nota?esc(s.nota)+' · ':''}${resumoDados(s.dados)}</small></div><button class="btn sm" data-act="verSnap" data-id="${i}">Voltar</button></div>`).join(''):'<div class="empty">Nenhuma cópia ainda — a primeira é feita hoje.</div>'}</div>
+  <div class="card"><h3>☁️ Versões na nuvem</h3><div class="sub">Cada sincronização guarda uma versão no seu GitHub</div>
+   ${!SY.cfg?'<div class="muted">Ligue a sincronização (Configurações) para ter o histórico de cada alteração.</div>':V.nuvem===null?'<button class="btn" data-act="verCarrega">Carregar versões</button>':V.nuvem==='carregando'?'<div class="muted">Carregando…</div>':typeof V.nuvem==='string'?`<div class="alert bad">${esc(V.nuvem)}</div>`:V.nuvem.length?V.nuvem.map(v=>`<div class="mrow" style="cursor:default"><div class="tx"><b>${dataHora(Date.parse(v.committed_at))}</b><small>versão ${esc(v.version.slice(0,7))}</small></div><button class="btn sm" data-act="verNuvem" data-id="${esc(v.version)}">Voltar</button></div>`).join(''):'<div class="empty">Nenhuma versão encontrada.</div>'}</div>`;
+}
+
+/* ---------- PAGAR FATURA (adiantado ou em parte) ---------- */
+function pagoFatura(cid,ym){return sum((state.cardPayments||[]).filter(p=>p.cardId===cid&&p.ym===ym),p=>+p.valor)}
+{const _cu=cardUsed;cardUsed=function(cid,ym){return Math.max(0,_cu(cid,ym)-sum((state.cardPayments||[]).filter(p=>p.cardId===cid&&p.ym>=ym),p=>+p.valor))}}
+{const _pf=proxFatura;proxFatura=function(c){const r=_pf(c),pg=pagoFatura(c.id,r.ym);r.bruto=r.v;r.pago=pg;r.v=Math.max(0,r.v-pg);return r}}
+function pagarFaturaForm(cid){
+  const c=find(state.cards,cid);if(!c)return;const pf=proxFatura(c),C=state.contas||[];
+  const ops=[-1,0,1,2].map(i=>addM(pf.ym,i)).map(ym=>{const b=cardFatura(cid,ym),pg=pagoFatura(cid,ym);return[ym,`${mLabel(ym,true)} — ${brl(b)}${pg?' (já pago '+brl(pg)+')':''}`]});
+  openForm({title:'💸 Pagar fatura — '+c.nome,saveLabel:'Registrar pagamento',fields:[
+    {type:'html',html:'<p class="muted" style="margin:0">Para pagar <b>adiantado</b> ou <b>só uma parte</b>. O valor volta ao limite na hora; no vencimento, sai da conta só o que faltar.</p>'},
+    {name:'ym',label:'Qual fatura',type:'select',options:ops,value:pf.ym},
+    {name:'valor',label:'Valor pago (R$)',type:'number',step:'0.01',min:0,value:Math.round(pf.v*100)/100,required:true},
+    {name:'date',label:'Data do pagamento',type:'date',value:todayISO(),required:true},
+    ...(C.length?[{name:'contaId',label:'Saiu de qual conta',type:'select',options:C.map(x=>[x.id,x.nome]),value:c.contaId||(contaPrincipal()||C[0]).id}]:[])
+  ],onSave:d=>{if(!(d.valor>0)){toast('Digite o valor','err');return false}state.cardPayments=state.cardPayments||[];state.cardPayments.push({id:uid(),criado:Date.now(),cardId:cid,...d});
+    setTimeout(()=>toast('Pagamento registrado · limite livre '+brl(Math.max(0,(+c.limite||0)-cardUsed(cid,todayYM())))),60)}});
+}
+
+/* ---------- SOBRA QUE ACUMULA (envelope) ---------- */
+let CMPC={rev:-1,m:{}};
+function sobraDe(b,ym,d){if(d>11)return 0;const p=addM(ym,-1),pm=state.months[p];if(!pm)return 0;const pb=(pm.budget||[]).find(x=>x.tipo===b.tipo&&norm(x.cat)===norm(b.cat));if(!pb||!pb.acumula)return 0;
+  const r=cmpCom(p,d+1).find(x=>x.tipo===b.tipo&&norm(x.cat)===norm(b.cat));return r?Math.max(0,r.plan-r.real):0}
+let _cmpBase=null;
+function cmpCom(ym,d){if(CMPC.rev!==rev)CMPC={rev,m:{}};if(CMPC.m[ym])return CMPC.m[ym];const rows=_cmpBase(ym),m=state.months[ym];
+  if(m)(m.budget||[]).filter(b=>b.acumula).forEach(b=>{const r=rows.find(x=>x.tipo===b.tipo&&norm(x.cat)===norm(b.cat));if(!r)return;const s=sobraDe(b,ym,d||0);if(s>0.004){r.sobra=s;r.plan+=s;r.diff=r.real-r.plan;r.usePct=r.plan>0?r.real/r.plan*100:(r.real>0?Infinity:0);r.diffPct=r.plan>0?r.diff/r.plan*100:0}});
+  CMPC.m[ym]=rows;return rows}
+{_cmpBase=comparison;comparison=function(ym){return cmpCom(ym,0).map(r=>({...r}))}}
+
+/* ---------- IMPORTAR EXTRATO / FATURA (OFX e CSV) ---------- */
+function decodeTxt(buf){try{return new TextDecoder('utf-8',{fatal:true}).decode(buf)}catch(e){return new TextDecoder('windows-1252').decode(buf)}}
+function pVal(s){let t=String(s??'').trim();if(!t)return NaN;let neg=false;
+  if(/^\(.*\)$/.test(t)){neg=true;t=t.slice(1,-1)}
+  if(/\s?D$/i.test(t)&&/\d\s?D$/i.test(t)){neg=true;t=t.replace(/\s?D$/i,'')}else t=t.replace(/(\d)\s?C$/i,'$1');
+  t=t.replace(/R\$|\s| /g,'');if(t.endsWith('-')){neg=!neg;t=t.slice(0,-1)}if(t.startsWith('-')){neg=!neg;t=t.slice(1)}else if(t.startsWith('+'))t=t.slice(1);
+  const c=t.lastIndexOf(','),d=t.lastIndexOf('.');
+  if(c>=0&&d>=0)t=c>d?t.replace(/\./g,'').replace(',','.'):t.replace(/,/g,'');else if(c>=0)t=t.replace(/\./g,'').replace(',','.');else if(/^\d{1,3}(\.\d{3})+$/.test(t))t=t.replace(/\./g,'');
+  if(!/^\d*\.?\d+$/.test(t))return NaN;const n=parseFloat(t);return neg?-n:n}
+function pData(s){s=String(s||'').trim();let m=s.match(/^(\d{4})-?(\d{2})-?(\d{2})/),y,mo,d;
+  if(m){y=+m[1];mo=+m[2];d=+m[3]}else{m=s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})/);if(!m)return null;d=+m[1];mo=+m[2];y=+m[3];if(y<100)y+=2000}
+  if(mo<1||mo>12||d<1||d>31||y<2000||y>2100)return null;return`${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`}
+function lerOFX(t){const out=[];t.split(/<STMTTRN>/i).slice(1).forEach(b=>{b=b.split(/<\/STMTTRN>/i)[0];const g=k=>{const m=b.match(new RegExp('<'+k+'>([^<\\r\\n]*)','i'));return m?m[1].trim():''};
+  const v=parseFloat(g('TRNAMT').replace(',','.'));const memo=g('MEMO'),name=g('NAME');out.push({date:pData(g('DTPOSTED')),desc:(memo||name||'Sem descrição').replace(/\s+/g,' '),valor:v,fitid:g('FITID')})});
+  return{rows:out,cartao:/<CCSTMTRS>|<CREDITCARDMSGSRSV1>/i.test(t)}}
+function splitCSV(l,sep){const o=[];let c='',q=false;for(let i=0;i<l.length;i++){const ch=l[i];if(q){if(ch==='"'){if(l[i+1]==='"'){c+='"';i++}else q=false}else c+=ch}else if(ch==='"')q=true;else if(ch===sep){o.push(c);c=''}else c+=ch}o.push(c);return o.map(x=>x.trim())}
+function lerCSV(t){
+  const L=t.replace(/^﻿/,'').split(/\r?\n/).filter(l=>l.trim());if(!L.length)return{rows:[]};
+  const conta=(l,s)=>splitCSV(l,s).length;const sep=[';','\t',','].map(s=>[s,Math.min(...L.slice(0,5).map(l=>conta(l,s)))]).sort((a,b)=>b[1]-a[1])[0][0];
+  const lin=L.map(l=>splitCSV(l,sep));let hi=lin.slice(0,12).findIndex(r=>r.some(c=>/^(data|date|dt)/i.test(sa(c)))&&r.some(c=>/valor|amount|quantia|montante|debito|credito|value/.test(sa(c))));
+  let di=-1,ti=-1,vi=-1,dbi=-1,cri=-1;
+  if(hi>=0){const H=lin[hi].map(sa);di=H.findIndex(h=>/^(data|date|dt)/.test(h));ti=H.findIndex(h=>/descri/.test(h));if(ti<0)ti=H.findIndex(h=>/hist|titulo|title|lancamento|estabelecimento|memo|detalhe|favorecido/.test(h));
+    vi=H.findIndex(h=>/^valor|amount|quantia|montante|value/.test(h)&&!/saldo/.test(h));dbi=H.findIndex(h=>/debito|saida/.test(h));cri=H.findIndex(h=>/credito|entrada/.test(h));if(vi>=0){dbi=cri=-1}}
+  else{hi=-1;const r=lin.find(r=>r.some(c=>pData(c)))||[];di=r.findIndex(c=>pData(c));r.forEach((c,i)=>{if(i!==di&&isFinite(pVal(c)))vi=i});let mx=0;r.forEach((c,i)=>{if(i!==di&&i!==vi&&c.length>mx){mx=c.length;ti=i}})}
+  const rows=[];lin.slice(hi+1).forEach(r=>{const date=pData(r[di]);if(!date)return;const desc=(ti>=0?r[ti]:'')||'Sem descrição';if(/^saldo/i.test(sa(desc)))return;
+    let v=vi>=0?pVal(r[vi]):(isFinite(pVal(r[cri]))?Math.abs(pVal(r[cri])):0)-(isFinite(pVal(r[dbi]))?Math.abs(pVal(r[dbi])):0);if(!isFinite(v)||Math.abs(v)<0.005)return;
+    rows.push({date,desc:desc.replace(/\s+/g,' '),valor:v,fitid:''})});
+  return{rows};
+}
+const CAT_DICAS=[[/shopee|mercado ?livre|mercadolivre|amazon|magalu|magazine|americanas|shein|aliexpress|renner|riachuelo|c&a|casas bahia/,'Compras','wants'],[/mercad|supermerc|atacad|assai|carrefour|pao de acucar|hortifruti|sacolao|dia supermercado/,'Mercado','needs'],[/ifood|rappi|restaur|lanchon|padaria|burger|pizza|mc ?donald|subway|cafeteria|starbucks|outback|giraffas|habib/,'Restaurantes','wants'],
+ [/uber|99 ?app|99pop|99 tecnologia|taxi|posto|shell|ipiranga|petrobras|br mania|combust|estacion|pedagio|sem parar|conectcar|veloe/,'Transporte / combustível','needs'],[/netflix|spotify|prime video|amazon prime|disney|hbo|youtube|apple\.com|google one|deezer|globoplay|paramount|crunchyroll/,'Assinaturas','wants'],
+ [/farmac|drogar|drogasil|raia|pacheco|pague menos|panvel/,'Saúde','needs'],[/claro|vivo|\btim\b|\boi\b|internet|telefon/,'Telefone e internet','needs'],[/energia|enel|cpfl|light s|eletropaulo|neoenergia|sabesp|saneamento|comgas|naturgy/,'Contas de casa','needs'],
+ [/aluguel|condomin|imobiliaria/,'Aluguel','needs'],[/cinema|ingresso|steam|playstation|xbox|nintendo|cinemark/,'Lazer','wants'],[/academia|smart ?fit|bluefit|gympass|wellhub/,'Academia','wants']];
+function chaveDesc(d){return sa(d).replace(/[0-9*#\/\\.,:;_()+-]+/g,' ').replace(/\b(compra|compras|pagamento|pgto|pix|enviado|enviada|recebido|recebida|transferencia|transf|debito|credito|cartao|parcela|com|de|da|do|dos|das|em|no|na|para|ted|doc|aut|nacional|internacional)\b/g,' ').trim().split(/\s+/).filter(Boolean).slice(0,2).join(' ')}
+function sugereCat(desc){const k=chaveDesc(desc),R=state.catRules||{};if(k&&R[k])return R[k];
+  const w=k.split(' ')[0];if(w&&w.length>2){const ant=[...state.expenses,...state.cardPurchases].reverse().find(e=>e.cat&&e.cat!=='Sem categoria'&&chaveDesc(e.desc).split(' ')[0]===w);if(ant)return{cat:ant.cat,tipo:ant.tipo}}
+  const s=sa(desc),cats=categoriesList();for(const[re,cat,tipo]of CAT_DICAS)if(re.test(s)){const ex=cats.find(c=>sa(c)===sa(cat))||cats.find(c=>sa(c).startsWith(sa(cat).split(/[ /]/)[0]));return{cat:ex||cat,tipo:ex?(tipoOfCat(ex)||tipo):tipo}}
+  return null}
+function impDup(rows){const I=ui.imp,usados=new Set(),usa=(x)=>{if(!x||usados.has(x))return false;usados.add(x);return true};
+  rows.forEach(r=>{r.dup='';const ja=[...state.expenses,...state.cardPurchases].find(x=>x.imp===r.key)||Object.values(state.months).some(m=>(m.income||[]).some(x=>x.imp===r.key));if(ja){r.dup='importado antes';return}
+    if(I.modo==='cartao'){if(!r.compra)return;const inst=cardInstallments(I.fatura,I.dest).find(i=>!usados.has(i)&&Math.abs(i.valor-r.v)<0.011);if(inst&&usa(inst)){r.dup='já está na fatura';return}
+      const p=state.cardPurchases.find(p=>p.cardId===I.dest&&!usados.has(p)&&Math.abs(+p.valorTotal-r.v)<0.011&&Math.abs(dDiff(p.dataCompra,r.date))<=3);if(p&&usa(p))r.dup='parece já lançado'}
+    else if(r.compra){const e=state.expenses.find(e=>!usados.has(e)&&Math.abs(+e.valor-r.v)<0.011&&Math.abs(dDiff(e.date,r.date))<=3);if(e&&usa(e))r.dup='parece já lançado'}
+    else{const i=(month(r.date.slice(0,7)).income||[]).find(i=>!usados.has(i)&&Math.abs(+i.valor-r.v)<0.011);if(i&&usa(i))r.dup='renda já cadastrada'}})}
+function impMonta(){const I=ui.imp;if(!I.raw)return;const card=I.modo==='cartao';let rows=I.raw.filter(r=>r.date&&isFinite(r.valor)&&Math.abs(r.valor)>=0.005).map(r=>({...r}));
+  if(card){const pos=rows.filter(r=>r.valor>0).length,cp=pos>=rows.length-pos;rows.forEach(r=>{r.compra=cp?r.valor>0:r.valor<0;r.v=Math.abs(r.valor)});
+    if(!I.fatura){const mx=rows.reduce((a,r)=>r.date>a?r.date:a,'');I.fatura=I.dest&&mx?faturaDe(I.dest,mx):todayYM()}}
+  else rows.forEach(r=>{r.compra=r.valor<0;r.v=Math.abs(r.valor)});
+  rows.sort((a,b)=>b.date.localeCompare(a.date));
+  rows.forEach((r,i)=>{r.i=i;r.key=r.fitid?'ofx:'+r.fitid:r.date+'|'+sa(r.desc)+'|'+r.v.toFixed(2);const s=sugereCat(r.desc);r.cat=s?s.cat:'';r.tipo=s?s.tipo:'needs';if(card&&!r.compra&&/pagament|pgto|pag fat/i.test(sa(r.desc)))r.pagto=true});
+  impDup(rows);rows.forEach(r=>{r.ok=r.compra&&!r.dup});I.rows=rows}
+function impCats(){const m=new Map();const add=(c,t)=>{if(c&&c!=='Sem categoria'&&!m.has(t+'|'+norm(c)))m.set(t+'|'+norm(c),{cat:c,tipo:t})};
+  month(todayYM()).budget.forEach(b=>add(b.cat,b.tipo));Object.values(state.months).forEach(x=>(x.budget||[]).forEach(b=>add(b.cat,b.tipo)));Object.values(state.catRules||{}).forEach(r=>add(r.cat,r.tipo));
+  (ui.imp.rows||[]).forEach(r=>add(r.cat,r.tipo));return[...m.values()].sort((a,b)=>a.tipo.localeCompare(b.tipo)||a.cat.localeCompare(b.cat))}
+function vImportar(){
+  const C=state.contas||[];const I=ui.imp||(ui.imp={modo:'conta',dest:(contaPrincipal()||C[0]||{}).id||'',rows:null});
+  const dests=I.modo==='conta'?C.map(c=>[c.id,c.nome]):state.cards.map(c=>[c.id,c.nome]);
+  if(I.modo==='cartao'&&!dests.some(d=>d[0]===I.dest))I.dest=(dests[0]||[''])[0];
+  let h=`<div class="card"><h3>⬆ Importar extrato ou fatura</h3><div class="sub">Baixe o extrato no app ou no site do banco (arquivo <b>OFX</b> ou <b>CSV</b>) e traga para cá. O app sugere a categoria de cada linha e deixa de fora o que já estava lançado.</div>
+   <div class="chips" style="margin:4px 0 12px"><button class="chip ${I.modo==='conta'?'on':''}" data-act="impModo" data-id="conta">🏦 Extrato de conta</button><button class="chip ${I.modo==='cartao'?'on':''}" data-act="impModo" data-id="cartao">💳 Fatura de cartão</button></div>
+   ${dests.length?`<label style="display:grid;gap:5px;font-size:12px;color:var(--muted);font-weight:600">${I.modo==='conta'?'De qual conta é o extrato':'De qual cartão é a fatura'}<select data-impdest>${dests.map(([v,l])=>`<option value="${v}" ${v===I.dest?'selected':''}>${esc(l)}</option>`).join('')}</select></label>`
+    :I.modo==='cartao'?'<div class="alert warn">Cadastre um cartão primeiro (Mais › Cartões).</div>':'<div class="muted" style="font-size:13px">Sem contas cadastradas: os gastos entram sem conta. Dica: cadastre em Contas e saldos.</div>'}
+   ${I.modo==='cartao'&&!dests.length?'':'<button class="btn primary" data-act="impArquivo" style="margin-top:12px">📂 Escolher arquivo (.ofx ou .csv)</button>'}
+   <details class="man-faq" style="margin-top:10px"><summary>Como baixar o extrato no banco<span class="man-ch">›</span></summary><p>No app ou no site do banco, procure <b>Extrato</b> › <b>Exportar</b> (ou Baixar/Compartilhar) e escolha <b>OFX</b> (às vezes chamado “Money” ou “Quicken”) ou <b>CSV/Excel</b>. Para o cartão, abra a <b>fatura</b> e use “Exportar fatura”. O arquivo é lido só neste aparelho — não vai para lugar nenhum.</p></details></div>`;
+  if(I.rows){
+    const R=I.rows,sel=R.filter(r=>r.ok),gasto=sum(sel.filter(r=>r.compra),r=>r.v),ent=sum(sel.filter(r=>!r.compra),r=>r.v),dups=R.filter(r=>r.dup).length,semCat=sel.filter(r=>!r.cat).length,CATS=impCats();
+    const opt=r=>`<option value="">Sem categoria</option>`+CATS.map(c=>`<option value="${esc(c.tipo+'|'+c.cat)}" ${c.tipo===r.tipo&&norm(c.cat)===norm(r.cat)?'selected':''}>${esc(c.cat)} · ${BUCKETS[c.tipo].label}</option>`).join('');
+    const tag=r=>(/\b\d{1,2}\s*\/\s*\d{1,2}\b/.test(r.desc)?'<span class="badge">parcela '+r.desc.match(/\b(\d{1,2})\s*\/\s*(\d{1,2})\b/).slice(1).join('/')+'</span> ':'')+(r.dup?`<span class="badge warn">${r.dup}</span>`:I.modo==='cartao'&&!r.compra?`<span class="badge">${r.pagto?'pagamento da fatura':'estorno/crédito'}</span>`:!r.compra?'<span class="badge ok">entrada — marque se for renda</span>':'');
+    h+=`<div class="card"><div class="card-head"><div><h3>📄 ${esc(I.arquivo)}</h3><div class="sub" style="margin:0">${R.length} linha(s) · ${sel.length} marcada(s)${dups?' · '+dups+' já lançada(s), desmarcada(s)':''}</div></div></div>
+     ${I.modo==='cartao'?`<label style="display:grid;gap:5px;font-size:12px;color:var(--muted);font-weight:600;margin-bottom:8px">As compras entram na fatura de<select data-impfat>${[-2,-1,0,1,2].map(i=>addM(I.fatura,i)).map(ym=>`<option value="${ym}" ${ym===I.fatura?'selected':''}>${mLabel(ym,true)}</option>`).join('')}</select></label>`:''}
+     <div class="row" style="margin-bottom:6px"><button class="btn sm" data-act="impTodos" data-id="1">Marcar todas</button><button class="btn sm" data-act="impTodos" data-id="0">Desmarcar todas</button></div>
+     <div>${R.map(r=>`<div class="imp-row ${r.ok?'':'off'}"><input type="checkbox" data-impck="${r.i}" ${r.ok?'checked':''} aria-label="Importar"><div class="tx"><b>${esc(r.desc)}</b><small>${fmtDate(r.date)} ${tag(r)}</small>${r.compra||I.modo==='cartao'?`<select data-impcat="${r.i}">${opt(r)}</select>`:''}</div><div class="vl ${r.compra?'':'pos'}">${r.compra?'':'+'}${brl(r.v)}</div></div>`).join('')}</div>
+     <div class="stat-line" style="margin-top:12px"><span>Gastos a importar</span><b>${brl(gasto)}</b></div>${ent?`<div class="stat-line"><span>${I.modo==='cartao'?'Estornos/créditos':'Entradas (como renda)'}</span><b class="pos">${brl(ent)}</b></div>`:''}
+     ${semCat?`<div class="alert warn" style="margin-top:8px">${semCat} linha(s) sem categoria — entram como “Sem categoria” e você ajusta depois.</div>`:''}
+     <div class="row" style="margin-top:12px"><button class="btn" data-act="impCancela">Cancelar</button><button class="btn primary" data-act="impOk">Importar ${sel.length} lançamento(s)</button></div>
+     <div class="muted" style="font-size:12px;margin-top:8px">💡 Ao trocar a categoria de uma linha, as outras do mesmo estabelecimento acompanham — e o app aprende para as próximas importações.</div></div>`;
+  }
+  return h;
+}
+function impConfirma(){
+  const I=ui.imp,sel=(I.rows||[]).filter(r=>r.ok);if(!sel.length){toast('Nenhuma linha marcada','err');return}
+  const snap=JSON.stringify(state);state.catRules=Object.assign({},state.catRules);let n=0;const P=(typeof quem==='function'?quem():'')||undefined;
+  sel.forEach(r=>{const cat=r.cat||'Sem categoria',tipo=r.tipo||'needs',k=chaveDesc(r.desc);if(k&&r.cat)state.catRules[k]={cat,tipo};
+    if(I.modo==='cartao')state.cardPurchases.push({id:uid(),cardId:I.dest,desc:r.desc,valorTotal:r.compra?r.v:-r.v,parcelas:1,dataCompra:r.date,primeiraFatura:I.fatura,cat,tipo,imp:r.key,por:P});
+    else if(r.compra)state.expenses.push({id:uid(),desc:r.desc,valor:r.v,date:r.date,cat,tipo,pay:/pix/i.test(r.desc)?'Pix':'Débito',contaId:I.dest||undefined,imp:r.key,por:P});
+    else month(r.date.slice(0,7),true).income.push({id:uid(),fonte:'Importado do extrato',natureza:'variavel',desc:r.desc,valor:r.v,date:r.date,contaId:I.dest||undefined,imp:r.key,por:P});n++});
+  ui.imp=null;view='expenses';save();render();scrollTo(0,0);
+  toast(n+' lançamento(s) importado(s) ✓','',{label:'Desfazer',fn:()=>{state=JSON.parse(snap);overwriteNext=true;save();render();toast('Importação desfeita')}});
+}
+document.addEventListener('change',e=>{const t=e.target,I=ui.imp;if(!I||!t.dataset)return;
+  if(t.dataset.impck!=null){I.rows[+t.dataset.impck].ok=t.checked;keepScroll()}
+  else if(t.dataset.impcat!=null){const r=I.rows[+t.dataset.impcat],v=t.value,k=chaveDesc(r.desc);if(v){const p=v.indexOf('|');r.tipo=v.slice(0,p);r.cat=v.slice(p+1)}else r.cat='';r.manual=true;
+    const w=k.split(' ')[0];I.rows.forEach(x=>{if(x!==r&&!x.manual&&w&&chaveDesc(x.desc).split(' ')[0]===w){x.cat=r.cat;x.tipo=r.tipo}});keepScroll()}
+  else if(t.dataset.impdest!=null){I.dest=t.value;I.fatura=null;impMonta();keepScroll()}
+  else if(t.dataset.impfat!=null){I.fatura=t.value;impDup(I.rows);I.rows.forEach(r=>r.ok=r.ok&&!r.dup);keepScroll()}});
+
+Object.assign(ACT,{
+  lixRest:i=>{const g=lixGrupos()[+i];if(g)lixRestaura(g)},
+  lixEsvazia:()=>openForm({title:'Esvaziar a lixeira?',saveLabel:'Esvaziar',danger:true,fields:[{type:'html',html:'<p style="margin:0">Os itens da lixeira deste aparelho somem de vez. Os seus dados atuais não mudam.</p>'}],onSave:()=>{LIX=[];lixSalva();setTimeout(render,50)}}),
+  verSnap:i=>{const s=(ui.ver&&ui.ver.snaps||[])[+i];if(s)verConfirma(s.dados,dataHora(s.quando))},
+  verCarrega:async()=>{const V=ui.ver;V.nuvem='carregando';render();try{if(!SY.cfg.id)await syLer();if(!SY.cfg.id)throw new Error('Ainda não há dados na nuvem.');V.nuvem=await(await gh('/gists/'+SY.cfg.id+'/commits?per_page=40&_='+Date.now())).json()}catch(e){V.nuvem='Não consegui carregar: '+(e.message||e)}render()},
+  verNuvem:async v=>{toast('Baixando a versão…');try{const g=await(await gh('/gists/'+SY.cfg.id+'/'+v)).json(),f=g.files[SY.FILE];const txt=f.truncated?await(await fetch(f.raw_url,{cache:'no-store'})).text():f.content,p=JSON.parse(txt);
+    const it=(ui.ver.nuvem||[]).find(x=>x.version===v);verConfirma(p.dados||p,it?dataHora(Date.parse(it.committed_at)):v.slice(0,7))}catch(e){toast('Não consegui abrir essa versão: '+(e.message||e),'err')}},
+  pagarFatura:id=>{closeModal();setTimeout(()=>pagarFaturaForm(id),60)},
+  estorno:k=>{const[q,id]=k.split(':'),x=q==='p'?find(state.cardPurchases,id):find(state.expenses,id);if(!x)return;closeModal();const total=q==='p'?+x.valorTotal:+x.valor;
+    setTimeout(()=>openForm({title:'↩ Estorno — '+x.desc,saveLabel:'Registrar estorno',fields:[{type:'html',html:`<p class="muted" style="margin:0">O valor volta para ${q==='p'?'o limite e a fatura do cartão':'a conta'} e deixa de contar como gasto em <b>${esc(x.cat)}</b>.</p>`},
+      {name:'valor',label:'Valor estornado (R$)',type:'number',step:'0.01',min:0,value:total,required:true},{name:'date',label:'Data do estorno',type:'date',value:todayISO(),required:true}],
+      onSave:d=>{if(!(d.valor>0))return false;const b={id:uid(),criado:Date.now(),desc:'Estorno — '+x.desc,cat:x.cat,tipo:x.tipo,estornoDe:x.id};
+        if(q==='p')state.cardPurchases.push({...b,cardId:x.cardId,valorTotal:-d.valor,parcelas:1,dataCompra:d.date,primeiraFatura:faturaDe(x.cardId,d.date)});
+        else{const e={...b,valor:-d.valor,date:d.date,pay:x.pay};if(x.contaId)e.contaId=x.contaId;if(x.benefitId)e.benefitId=x.benefitId;state.expenses.push(e)}toast('Estorno registrado')}}),80)},
+  impModo:m=>{const I=ui.imp;I.modo=m;I.dest=m==='conta'?((contaPrincipal()||(state.contas||[])[0]||{}).id||''):((state.cards[0]||{}).id||'');I.fatura=null;impMonta();render()},
+  impArquivo:()=>{const inp=document.createElement('input');inp.type='file';inp.accept='.ofx,.qfx,.csv,.txt,text/csv,application/x-ofx';
+    inp.onchange=async()=>{const f=inp.files[0];if(!f)return;try{const t=decodeTxt(await f.arrayBuffer()),ofx=/<OFX>|OFXHEADER/i.test(t),r=ofx?lerOFX(t):lerCSV(t);
+      if(!r.rows.length){toast('Não encontrei lançamentos nesse arquivo. Tente o formato OFX.','err');return}
+      const I=ui.imp;if(r.cartao&&I.modo!=='cartao'&&state.cards.length){I.modo='cartao';I.dest=state.cards[0].id;toast('Esse arquivo é de cartão de crédito — escolhi o modo fatura')}
+      I.raw=r.rows;I.arquivo=f.name;I.fatura=null;impMonta();render()}catch(e){console.warn(e);toast('Não consegui ler o arquivo','err')}};inp.click()},
+  impTodos:v=>{ui.imp.rows.forEach(r=>r.ok=v==='1');keepScroll()},
+  impCancela:()=>{ui.imp.rows=null;ui.imp.raw=null;render()},
+  impOk:()=>impConfirma()
+});
+Object.assign(VIEWS,{importar:vImportar,lixeira:vLixeira,versoes:vVersoes});
+Object.assign(IC,{importar:IC.install,versoes:IC.review,lixeira:'<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/>'});
 
 /* ============================================================
    BLOQUEIO DO APP — senha, padrão desenhado ou impressão digital
@@ -3549,7 +3779,7 @@ try{const k=localStorage.getItem('finm_skin');if(SKINS[k]){document.documentElem
   matchMedia('(max-width:820px)').addEventListener('change',()=>{if(!isMobile()&&view==='home')view='dashboard';render()});
   const temDados=await carregar();revAoAbrir=rev;fileRev=-1;
   pedirPersistencia().then(()=>{if(view==='settings')render()});
-  syPinta();syncNow();setTimeout(plRetrato,1500);
+  syPinta();syncNow();setTimeout(plRetrato,1500);lixCarrega();setTimeout(()=>snapAuto(),4000);setInterval(()=>snapAuto(),3600e3);
   const lerHash=()=>{if(!location.hash.startsWith('#n='))return;let t='';try{t=decodeURIComponent(location.hash.slice(3))}catch(e){}history.replaceState(null,'',location.pathname);if(t)setTimeout(()=>{closeModal();abrirNotif(t)},400)};
   lerHash();addEventListener('hashchange',lerHash);
   render();
