@@ -17,7 +17,7 @@ Os dados ficam no aparelho (IndexedDB/localStorage). Se a sincronização estive
 | `ferramentas/nova_versao.py` | Troca o número da versão em todos os lugares antes de publicar |
 
 ## Publicar uma versão nova
-1. Edite os arquivos.
+1. Edite os arquivos — e **atualize o manual dentro do app** (lista `MAN` em `js/app.js`) para toda função nova ou alterada.
 2. Rode os testes: `python testes/rodar.py` (precisa de `pip install playwright` e `python -m playwright install chromium`).
 3. Troque a versão: `python ferramentas/nova_versao.py` — atualiza `APP_VERSAO`, os `?v=` do `index.html` e o cache do `sw.js`.
    Sem esse passo o celular continua com os arquivos antigos.

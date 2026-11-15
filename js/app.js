@@ -218,7 +218,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.14-6';
+const APP_VERSAO='2026.11.15-1';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -2723,8 +2723,8 @@ const MAN=[
   d:['<b>Frase rápida:</b> no campo do topo escreva ou dite “mercado 85 no pix” e toque em ➜.','<b>Colar notificação:</b> copie o aviso do banco e toque em 📋 — o app lê valor e loja.','Com várias contas, o app pergunta de qual conta o dinheiro saiu.','<b>Mais opções</b> abre o formulário completo (descrição, data, grupo).']},
  {id:'gastos',a:'dia',ic:'🧾',t:'Ver, editar e apagar gastos',go:['nav','expenses','Abrir Gastos'],onde:['Gastos'],
   o:'A lista de tudo o que foi lançado no mês, agrupada por dia, incluindo as parcelas de cartão que caem naquela fatura.',
-  p:['Use a <b>busca</b> e os filtros de grupo e forma de pagamento.','<b>Toque num lançamento</b> para editar.','Dentro da edição: 🗑 apaga, ⧉ duplica e 📷 anexa a foto do comprovante.'],
-  d:['A foto do comprovante fica só naquele aparelho (não sincroniza), para não pesar os dados.','Apagou sem querer? O aviso que aparece embaixo tem <b>Desfazer</b>.']},
+  p:['Use a <b>busca</b> e os filtros de grupo e forma de pagamento.','<b>Toque num lançamento</b> para editar.','Dentro da edição: 🗑 apaga, ⧉ duplica, ↩ estorna e 📷 anexa a foto do comprovante.','<b>Etiquetas</b>: escreva <b>#viagem</b> na descrição (ou no campo Etiquetas) para somar um projeto que passa por várias categorias.'],
+  d:['Lançamentos com ⚙ foram feitos sozinhos (renda que se repete ou conta em débito automático); com 👤 mostram quem lançou.','Para achar algo de outros meses, use <b>🔎 Buscar em tudo</b>.','A foto do comprovante fica só naquele aparelho (não sincroniza), para não pesar os dados.','Apagou sem querer? O aviso que aparece embaixo tem <b>Desfazer</b>.']},
  {id:'importar',a:'dia',ic:'⬆',t:'Importar o extrato do banco ou a fatura',go:['nav','importar','Abrir Importar extrato'],onde:[manMenu(),'Importar extrato'],
   o:'Em vez de digitar tudo, traga o arquivo do banco: o app lê as linhas, sugere a categoria e deixa de fora o que já estava lançado.',
   p:['No app ou site do banco, exporte o extrato (ou a fatura do cartão) em <b>OFX</b> ou <b>CSV</b>.','Aqui, escolha <b>Extrato de conta</b> ou <b>Fatura de cartão</b> e qual conta/cartão.','Toque em <b>Escolher arquivo</b>.','Confira a lista: desmarque o que não quer e ajuste as categorias.','Toque em <b>Importar</b>. Se algo sair errado, o aviso tem <b>Desfazer</b>.'],
@@ -2782,20 +2782,20 @@ const MAN=[
   d:['Categoria marcada <b>“não orçado”</b> veio de um gasto com nome diferente: use <b>Editar</b> para juntar com a categoria certa.','Renomear uma categoria pode valer para todo o histórico (opção já marcada).','<b>💡 Sugerir valores</b> usa a média dos seus últimos meses.','<b>♻ Acumular</b> (ao editar a categoria): o que sobrar no mês passa para o próximo — ideal para presentes, roupas e manutenção.']},
  {id:'fixas',a:'plan',ic:'📅',t:'Contas fixas e vencimentos',go:['nav','bills','Abrir Contas fixas'],onde:[manMenu(),'Contas fixas'],
   o:'Aluguel, internet, luz: contas que se repetem. O app avisa o que está para vencer.',
-  p:['Cadastre a conta com valor, dia do vencimento e categoria.','Quando pagar, toque em <b>Pagar</b>: o gasto é lançado sozinho na categoria.','As contas em aberto aparecem no Início e em <b>Próximos 30 dias</b>.'],d:[]},
+  p:['Cadastre a conta com valor, dia do vencimento e categoria.','Quando pagar, toque em <b>Pagar</b>: o gasto é lançado sozinho na categoria.','As contas em aberto aparecem no Início e em <b>Próximos 30 dias</b>.','Débito automático? Edite a conta e marque <b>⚙ Débito automático</b>: o pagamento é lançado sozinho no dia do vencimento.'],d:['Ao marcar o débito automático, o app só lança a partir do mês atual (não cria pagamentos antigos).']},
  {id:'fechar',a:'plan',ic:'🗓',t:'Fechar o mês em 5 minutos',go:['nav','fechar','Abrir Fechar o mês'],onde:[manMenu(),'Fechar o mês'],
   o:'Um roteiro de 5 passos para encerrar o mês e preparar o próximo.',
   p:['Veja como foi: renda, gastos, poupado e o que sobrou.','Confira onde passou do planejado e, se quiser, ajuste o orçamento do mês seguinte com um toque.','Resolva as pendências (contas sem pagamento, gastos fora do orçamento).','Copie as categorias e rendas fixas para o próximo mês.','Guarde uma cópia e toque em <b>Concluir</b>.'],
   d:['Nos primeiros 10 dias do mês, o Início lembra você de fechar o mês anterior.']},
  {id:'dividas',a:'futuro',ic:'⛓',t:'Dívidas e financiamentos',go:['nav','debts','Abrir Dívidas'],onde:[manMenu(),'Dívidas'],
   o:'Cadastre cada dívida com parcela, total de parcelas, juros e, se for um bem (carro, casa), o valor dele.',
-  p:['Cadastre a dívida e vá marcando as parcelas pagas.','Em <b>Investir › Programa › Plano de quitação</b>, simule quanto tempo e juros você economiza pagando um pouco a mais.'],d:[]},
+  p:['Dívida com parcelas fixas (empréstimo, financiamento, acordo): <b>+ Parcelada</b>, e vá marcando as parcelas pagas.','Rotativo do cartão, cheque especial ou conta atrasada: <b>+ Saldo em aberto</b>, com quanto deve, juros ao mês e o mínimo que paga.','Para um plano de quitação que cabe no orçamento, abra <b>🎯 Sair das dívidas</b> (atalho no topo desta tela).'],d:['Pagou a mais num contrato? Em Sair das dívidas, o botão <b>Paguei</b> antecipa as últimas parcelas com desconto dos juros.','Saldos em aberto não se atualizam sozinhos: confira de vez em quando na fatura/extrato e edite.']},
  {id:'metas',a:'futuro',ic:'🎯',t:'Metas e reservas com destino',go:['nav','goals','Abrir Metas'],onde:[manMenu(),'Metas & Reservas'],
   o:'Metas têm valor e prazo. Reservas com destino guardam um pouco por mês para gastos que você sabe que virão (IPVA, revisão do carro).',
   p:['Crie a meta com valor-alvo e prazo: o app calcula quanto guardar por mês.','Use <b>+ Aporte</b> sempre que guardar dinheiro.','Uma meta com “reserva” ou “emergência” no nome conta como sua reserva de emergência.'],d:[]},
  {id:'investir',a:'futuro',ic:'📈',t:'Investir e o programa “Para onde foi meu dinheiro?”',go:['invTab','prog','Abrir Investir'],onde:[manMenu(),'Investir'],
   o:'Seis abas: Programa, Guia, Perfil, Carteira, Simular e Segurança.',
-  p:['<b>Programa</b>: 7 etapas, do diagnóstico à aposentadoria. O app marca sozinho o que você já cumpriu.','<b>Guia</b>: os tipos de investimento do Brasil, com risco, imposto, FGC e cuidados.','<b>Perfil</b>: 7 perguntas definem se você é conservador, moderado ou arrojado.','<b>Carteira</b>: registre seus investimentos; o app avisa sobre FGC, vencimentos e distribuição.','<b>Simular</b>: juros compostos e aposentadoria.','<b>Segurança</b>: sinais de golpe e checklist antes de investir.'],
+  p:['<b>Programa</b>: 7 etapas, do diagnóstico à aposentadoria. O app marca sozinho o que você já cumpriu.','<b>Guia</b>: os tipos de investimento do Brasil, com risco, imposto, FGC e cuidados.','<b>Perfil</b>: 7 perguntas definem se você é conservador, moderado ou arrojado.','<b>Carteira</b>: registre seus investimentos; o app avisa sobre FGC, vencimentos e distribuição. Em <b>Rendimento automático</b> (% do CDI, prefixado ou IPCA+), o valor cresce sozinho.','<b>Simular</b>: juros compostos e aposentadoria.','<b>Segurança</b>: sinais de golpe e checklist antes de investir.'],
   d:['O conteúdo é educativo. Não é recomendação individual de investimento.']},
  {id:'aprender',a:'futuro',ic:'🎓',t:'Aprender e Meu perfil',go:['nav','profile','Abrir Meu perfil'],onde:[manMenu(),'Aprender / Meu perfil'],
   o:'Aulas curtas com os seus números e uma nota de 0 a 100 para a sua saúde financeira.',
@@ -2814,7 +2814,7 @@ const MAN=[
  {id:'sync',a:'sistema',ic:'☁️',t:'Sincronizar celular e computador',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Configurações','Sincronização'],
   o:'Com um token do GitHub, todos os seus aparelhos mostram os mesmos dados, automaticamente.',
   p:['Em Configurações, toque no link que abre o GitHub (já com <b>gist</b> marcado).','Escolha <b>No expiration</b>, confira que só <b>gist</b> está marcado e gere o token.','Copie o código <code>ghp_…</code>, cole no app e toque em <b>Conectar</b>.','Nos outros aparelhos, abra o mesmo endereço do app e conecte com o <b>mesmo token</b>.'],
-  d:['☁️✓ no topo = em dia. ☁️⚠️ = erro (toque para ver).','O token é como uma senha: não mande por WhatsApp ou e-mail. Se vazar, apague no GitHub e gere outro.','Sincroniza ao abrir, ao voltar ao app, a cada minuto e logo depois de cada alteração.']},
+  d:['☁️✓ no topo = em dia. ☁️⚠️ = erro (toque para ver).','O token é como uma senha: não mande por WhatsApp ou e-mail. Se vazar, apague no GitHub e gere outro.','Sincroniza ao abrir, ao voltar ao app, a cada minuto e logo depois de cada alteração.','Casal/família usando o mesmo token: cada um põe o nome em <b>Configurações › Casal / família</b> para aparecer quem lançou.']},
  {id:'backup',a:'sistema',ic:'💾',t:'Onde os dados ficam e como fazer backup',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Configurações'],
   o:'Os dados ficam no seu aparelho, dentro do navegador. O GitHub guarda só o programa.',
   p:['Cada alteração é salva na hora.','<b>Compartilhar backup</b> gera um arquivo .json que você pode mandar para o Google Drive.','<b>Importar backup</b> traz os dados de volta, juntando sem duplicar.'],
