@@ -218,7 +218,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.15-3';
+const APP_VERSAO='2026.11.15-5';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -385,14 +385,17 @@ const NAV=[
 ];
 const TITLES=Object.fromEntries(NAV.filter(n=>n[0]!=='sep'));
 function renderNav(){
-  $('#sidebar').innerHTML='<div class="brand"><div class="logo">R$</div>Minhas Finanças <span class="pill">celular</span></div>'+
+  const side='<div class="brand"><div class="logo">R$</div>Minhas Finanças</div>'+
    NAV.map(([k,l])=>k==='sep'?`<div class="nav-sep">${l}</div>`:`<button class="nav-btn ${view===k?'active':''}" data-act="nav" data-id="${k}">${ico(k)}${l}</button>`).join('')+
    '<div class="side-foot">Salvamento automático no navegador. Faça backup pelo menu Mais › Configurações.</div>';
+  // só troca o menu se mudou: recriar os botões no meio de um clique fazia o clique se perder
+  const sb=$('#sidebar');if(sb._h!==side){sb.innerHTML=side;sb._h=side}
   const bt=(id,label,icon,on)=>`<button class="${on?'on':''}" data-act="${id==='more'?'more':'nav'}" data-id="${id}">${ico(icon)}${label}</button>`;
   const inMore=!['home','expenses','vale'].includes(view);
-  $('#bnav').innerHTML=bt('home','Início','home',view==='home')+bt('expenses','Gastos','expenses',view==='expenses')+
+  const bn=bt('home','Início','home',view==='home')+bt('expenses','Gastos','expenses',view==='expenses')+
     `<button class="fab" data-act="quickAdd" aria-label="Lançar gasto"><i>+</i><span style="margin-top:2px">Lançar</span></button>`+
     bt('vale','Vale','vale',view==='vale')+bt('more','Mais','more',inMore);
+  const nb=$('#bnav');if(nb._h!==bn){nb.innerHTML=bn;nb._h=bn}
 }
 const isMobile=()=>document.documentElement.classList.contains('mob');
 /* menu "Mais": todas as telas + atalhos do sistema */
@@ -2459,6 +2462,7 @@ function render(){
   destroyCharts();renderNav();
   $('#pageTitle').textContent=TITLES[view];
   $('#monthLabel').textContent=mLabel(curMonth,true);setSaveStatus();
+  $('#view').dataset.view=view;
   try{const v=view==='expenses'&&isMobile()?vExpensesMobile:VIEWS[view];$('#view').innerHTML=v();cardifyTables($('#view'))}catch(err){console.error(err);$('#view').innerHTML=`<div class="card empty">Erro ao montar a tela: ${esc(err.message)}</div>`}
 }
 
@@ -2760,7 +2764,11 @@ const MAN=[
  {id:'tela',a:'sistema',ic:'🖥',t:'Versão computador ou celular (layout da tela)',go:['nav','tela','Abrir Layout da tela'],onde:[manMenu(),'Layout da tela (também em Configurações)'],
   o:'O app escolhe sozinho: no celular, menu embaixo; no computador, menu lateral. Se abrir errado, você escolhe.',
   p:['Abra <b>Layout da tela</b>.','Escolha <b>🔄 Automático</b>, <b>🖥 Computador</b> ou <b>📱 Celular</b>.'],
-  d:['A escolha vale só para aquele aparelho.','No modo automático, um PC com mouse abre a versão computador mesmo com a janela mais estreita; abaixo de 640 px de largura vira celular.','Zoom muito alto no navegador (Ctrl +) deixa a tela “menor”; Ctrl 0 volta ao normal.']},
+  d:['A escolha vale só para aquele aparelho.','No modo automático, um PC com mouse abre a versão computador mesmo com a janela mais estreita; abaixo de 640 px de largura vira celular.','Zoom muito alto no navegador (Ctrl +) deixa a tela “menor”; Ctrl 0 volta ao normal.','No computador, o menu lateral rola sozinho: passe o mouse sobre ele e role a rodinha para ver os itens de baixo (Coach, Sistema, Configurações).']},
+ {id:'cmdk',a:'dia',ic:'⌨️',t:'Buscar ou executar (Ctrl K) e botões do topo',go:['cmdk','','Abrir a busca agora'],onde:['Barra de cima › 🔍','Teclado: Ctrl K (⌘ K no Mac)'],
+  o:'Como o Spotlight do Mac: digite e vá direto para qualquer tela, comando, tópico do manual ou lançamento.',
+  p:['Aperte <b>Ctrl K</b> (ou toque na 🔍 / “Buscar ou executar…” no topo).','Digite parte do que quer: “cartões”, “lançar”, “tema”, “ifood”, “39,90”…','Use ↑ ↓ para escolher e <b>Enter</b> para abrir (ou toque/clique no item).','<b>Esc</b> fecha.'],
+  d:['No topo também ficam: o botão de <b>layout</b> (🖥 com a letra A = automático, PC = computador, 📱 = celular — cada clique troca) e o botão <b>↻ Atualizar</b>, que baixa a versão nova sem apagar seus dados.','Lançamentos aparecem a partir de 2 letras digitadas, no fim da lista.']},
  {id:'lixeira',a:'sistema',ic:'⏪',t:'Lixeira e voltar no tempo',go:['nav','versoes','Abrir Voltar no tempo'],onde:[manMenu(),'Lixeira / Voltar no tempo'],
   o:'Apagou algo sem querer ou fez uma bagunça? Dá para desfazer.',
   p:['<b>Lixeira</b>: tudo o que você apaga fica lá por 30 dias. Toque em <b>Restaurar</b>.','<b>Voltar no tempo</b>: o app guarda uma cópia por dia. Escolha a data e toque em <b>Voltar</b> — todos os dados voltam a ficar como estavam.','Com a sincronização ligada, também aparecem as <b>versões na nuvem</b> (uma a cada sincronização).'],
@@ -3510,7 +3518,7 @@ Object.assign(ACT,{icone:k=>{try{k==='original'?localStorage.removeItem(ICONE_K)
 const LAYOUT_K='finm_layout';
 const layoutModo=()=>{try{const v=localStorage.getItem(LAYOUT_K);return v==='pc'||v==='cel'?v:'auto'}catch(e){return'auto'}};
 function layoutMob(){const m=layoutModo();if(m!=='auto')return m==='cel';const w=innerWidth,toque=matchMedia('(pointer:coarse)').matches;return w<=820&&(toque||w<640)}
-function layoutAplica(){const h=document.documentElement,antes=h.classList.contains('mob'),agora=layoutMob();h.classList.toggle('mob',agora);return antes!==agora}
+function layoutAplica(){const h=document.documentElement,antes=h.classList.contains('mob'),agora=layoutMob();h.classList.toggle('mob',agora);h.classList.toggle('pcmob',agora&&!matchMedia('(pointer:coarse)').matches);return antes!==agora}
 function layoutCard(){const m=layoutModo(),op=[['auto','🔄 Automático','Celular no celular, computador no PC'],['pc','🖥 Computador','Menu lateral e telas largas'],['cel','📱 Celular','Menu embaixo, como no celular']];
   return`<div class="card"><div class="card-head"><div><h3>🖥 Layout da tela</h3><div class="sub">Agora: <b>${isMobile()?'versão celular':'versão computador'}</b>. A escolha vale só para este aparelho.</div></div></div>
    <div class="grid g3">${op.map(([k,t,d])=>`<button type="button" class="card kpi" data-act="layout" data-id="${k}" style="cursor:pointer;text-align:left;${m===k?'outline:2px solid var(--accent)':''}"><div class="value" style="font-size:16px">${t}${m===k?' ✓':''}</div><div class="hint">${d}</div></button>`).join('')}</div>
@@ -3519,6 +3527,65 @@ function layoutCard(){const m=layoutModo(),op=[['auto','🔄 Automático','Celul
 VIEWS.tela=()=>layoutCard();Object.assign(IC,{tela:'<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'});
 Object.assign(ACT,{layout:k=>{try{k==='auto'?localStorage.removeItem(LAYOUT_K):localStorage.setItem(LAYOUT_K,k)}catch(e){}layoutAplica();if(!isMobile()&&view==='home')view='dashboard';render();toast(isMobile()?'Versão celular':'Versão computador')}});
 
+/* ============================================================
+   BARRA DE CIMA: 🔍 Buscar/executar (Ctrl K), layout da tela e Atualizar
+   + paleta de comandos estilo Spotlight
+   ============================================================ */
+function tbBotoes(){const m=layoutModo(),bd={auto:'A',pc:'PC',cel:'📱'}[m];
+  const mac=/Mac|iPhone|iPad/.test(navigator.platform||navigator.userAgent);
+  return`<button type="button" class="tb-busca" data-act="cmdk" title="Buscar ou executar (${mac?'⌘':'Ctrl'} K)">${ico('busca')}<span class="tb-busca-t">Buscar ou executar…</span><kbd>${mac?'⌘':'Ctrl'} K</kbd></button>
+   <button type="button" class="tb-ic" data-act="layoutCiclo" title="Layout da tela: ${m==='auto'?'automático':m==='pc'?'computador':'celular'} (clique para trocar)">${ico('tela')}<i class="tb-bd">${bd}</i></button>
+   <button type="button" class="tb-upd" data-act="forceUpdate" title="Atualizar o app (versão ${APP_VERSAO})">↻<span> Atualizar</span></button>`}
+function tbPinta(){const h=$('.topbar');if(!h)return;let g=$('#tbExtra');if(!g){g=document.createElement('span');g.id='tbExtra';g.style.cssText='display:contents';const ref=$('#themeBtn')||h.lastElementChild;h.insertBefore(g,ref)}
+  const html=tbBotoes();if(g._h!==html){g.innerHTML=html;g._h=html}}
+{const _rn=renderNav;renderNav=function(){_rn();tbPinta()}}
+
+/* ---------- paleta de comandos ---------- */
+let CK={q:'',i:0,itens:[]};
+function ckComandos(){const L=[],add=(ic,t,run,sub='',chave='')=>L.push({ic,t,run,sub,chave:sa(t+' '+sub+' '+chave)});
+  add('➕','Lançar gasto',()=>ACT.quickAdd(),'atalho rápido','novo gasto despesa');
+  add('💵','Nova renda',()=>ACT.addIncome(),'','receita salario entrada');
+  add('🔄','Atualizar o app',()=>atualizarApp(),'versão '+APP_VERSAO,'update recarregar');
+  add('🖥','Layout: computador',()=>ACT.layout('pc'),'menu lateral','desktop pc tela');
+  add('📱','Layout: celular',()=>ACT.layout('cel'),'menu embaixo','mobile tela');
+  add('🔁','Layout: automático',()=>ACT.layout('auto'),'','auto tela');
+  add('📅','Ir para o mês atual',()=>ACT.todayM(),'','hoje');
+  add('◀','Mês anterior',()=>ACT.prevM(),'');add('▶','Próximo mês',()=>ACT.nextM(),'');
+  add('🎨','Trocar o tema',()=>ACT.theme(),'','cor visual aparencia');
+  add('🔒','Bloquear o app',()=>ACT.lkBotao&&ACT.lkBotao(),'','senha padrao bloqueio');
+  add('☁️','Sincronizar agora',()=>ACT.syAgora&&ACT.syAgora(),'GitHub','sync nuvem');
+  add('📤','Fazer backup',()=>ACT.shareBackup&&ACT.shareBackup(),'','exportar json');
+  add('🤔','Posso comprar?',()=>ACT.nav('possocomprar'),'simular compra');
+  NAV.filter(n=>n[0]!=='sep').forEach(([k,l])=>add('›','Ir para: '+l,()=>ACT.nav(k),'tela',k));
+  (typeof MAN!=='undefined'?MAN:[]).forEach(t=>add(t.ic||'📖','Manual: '+t.t,()=>ACT.manAbre(t.id),'como usar','ajuda tutorial'));
+  return L}
+function ckFiltra(q){const ws=sa(q).trim().split(/\s+/).filter(Boolean),C=ckComandos();let R=ws.length?C.filter(c=>ws.every(w=>c.chave.includes(w))):C.slice(0,14);
+  R=R.slice(0,ws.length?12:14);
+  if(sa(q).trim().length>=2&&typeof buscaItens==='function'){buscaItens(q).slice(0,6).forEach(r=>R.push({ic:r.k==='p'?'💳':r.k==='i'?'💵':'🧾',t:r.desc,sub:[r.date?fmtDate(r.date):'',r.cat||'',brl(r.v)].filter(Boolean).join(' · '),run:()=>ACT.buscaAbre(r.k+':'+r.x.id+':'+(r.ym||'')),lanc:true}))}
+  return R}
+function ckPinta(){const o=$('#cmdk');if(!o)return;CK.itens=ckFiltra(CK.q);CK.i=Math.min(CK.i,Math.max(0,CK.itens.length-1));
+  const lst=o.querySelector('.ck-lista');let h='',lanc=false;
+  CK.itens.forEach((c,i)=>{if(c.lanc&&!lanc){lanc=true;h+='<div class="ck-sep">Lançamentos</div>'}h+=`<button type="button" class="ck-it ${i===CK.i?'on':''}" data-ck="${i}"><span class="ck-ic">${c.ic}</span><span class="ck-tx"><b>${esc(c.t)}</b>${c.sub?`<small>${esc(c.sub)}</small>`:''}</span>${i===CK.i?'<kbd>↵</kbd>':''}</button>`});
+  lst.innerHTML=h||'<div class="ck-vazio">Nada encontrado</div>';const on=lst.querySelector('.ck-it.on');if(on)on.scrollIntoView({block:'nearest'})}
+function ckAbre(){let o=$('#cmdk');if(o){ckFecha();return}CK={q:'',i:0,itens:[]};o=document.createElement('div');o.id='cmdk';
+  o.innerHTML=`<div class="ck-box" role="dialog" aria-label="Buscar ou executar"><div class="ck-top">${ico('busca')}<input id="ckIn" type="text" placeholder="Buscar telas, comandos, manual ou lançamentos…" autocomplete="off" spellcheck="false" enterkeyhint="go"><kbd>Esc</kbd></div><div class="ck-lista"></div><div class="ck-pe"><span>↑↓ navegar</span><span>↵ abrir</span><span>Esc fechar</span></div></div>`;
+  document.body.appendChild(o);o.addEventListener('mousedown',e=>{if(e.target===o)ckFecha()});
+  o.addEventListener('click',e=>{const b=e.target.closest('[data-ck]');if(b){CK.i=+b.dataset.ck;ckRoda()}});
+  const inp=o.querySelector('#ckIn');inp.addEventListener('input',()=>{CK.q=inp.value;CK.i=0;ckPinta()});
+  inp.addEventListener('keydown',e=>{if(e.key==='ArrowDown'){e.preventDefault();CK.i=Math.min(CK.itens.length-1,CK.i+1);ckPinta()}else if(e.key==='ArrowUp'){e.preventDefault();CK.i=Math.max(0,CK.i-1);ckPinta()}else if(e.key==='Enter'){e.preventDefault();ckRoda()}else if(e.key==='Escape'){e.preventDefault();ckFecha()}});
+  ckPinta();inp.focus();setTimeout(()=>inp.focus(),30)}
+function ckFecha(){const o=$('#cmdk');if(o)o.remove()}
+function ckRoda(){const c=CK.itens[CK.i];if(!c)return;ckFecha();setTimeout(()=>{try{c.run()}catch(e){console.error(e)}},10)}
+addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&!e.altKey&&e.key.toLowerCase()==='k'){if(document.documentElement.dataset.locked)return;e.preventDefault();closeModal();ckAbre()}});
+Object.assign(ACT,{cmdk:()=>ckAbre(),layoutCiclo:()=>{const m=layoutModo(),prox={auto:'pc',pc:'cel',cel:'auto'}[m];ACT.layout(prox)}});
+
+/* ---------- cliques à prova de atualização: se a tela for redesenhar (ex.: sincronização chegou)
+   bem na hora em que o botão está pressionado, espera soltar — senão o clique "some" ---------- */
+{let baixo=false,pend=false;const _render=render;
+ render=function(){if(baixo){pend=true;return}_render()};
+ addEventListener('pointerdown',e=>{if(e.button===0)baixo=true},{capture:true,passive:true});
+ const solta=()=>{if(!baixo)return;baixo=false;if(pend){pend=false;setTimeout(()=>_render(),0)}};
+ addEventListener('pointerup',solta,{capture:false,passive:true});addEventListener('pointercancel',solta,{passive:true});addEventListener('blur',solta);}
 /* ============================================================
    BLOQUEIO DO APP — senha, padrão desenhado ou impressão digital
    A configuração fica só neste aparelho (não vai no backup).
