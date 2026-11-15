@@ -20,5 +20,5 @@ html = re.sub(r'(css/app\.css|js/app\.js)\?v=[\w.\-]+', lambda m: f'{m.group(1)}
 cache = int(re.search(r"financas-celular-v(\d+)", sw).group(1)) + 1
 sw = re.sub(r"financas-celular-v\d+", f"financas-celular-v{cache}", sw)
 sw = re.sub(r"const APP = '[^']+'", f"const APP = '{nova}'", sw)
-grava('js/app.js', js); grava('index.html', html); grava('sw.js', sw)
+grava('js/app.js', js); grava('index.html', html); grava('sw.js', sw); grava('versao.json', '{"versao": "%s"}\n' % nova)
 print(f"versão {atual} → {nova} · cache financas-celular-v{cache}")

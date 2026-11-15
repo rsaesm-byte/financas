@@ -1,8 +1,8 @@
 /* Service worker — Minhas Finanças (celular)
    Deixa o app abrir sem internet. Os DADOS não passam por aqui: ficam no IndexedDB/localStorage do aparelho.
    Ao publicar uma versão nova do app, troque o número de VERSAO para o celular baixar os arquivos novos. */
-const VERSAO = 'financas-celular-v34';
-const APP = '2026.11.15-6'; // igual ao ?v= do index.html
+const VERSAO = 'financas-celular-v35';
+const APP = '2026.11.15-7'; // igual ao ?v= do index.html
 const ARQUIVOS = [
   './', './index.html', './manifest.json', './css/app.css?v=' + APP, './js/app.js?v=' + APP,
   './icons/icon-192.png?v=7', './icons/icon-512.png?v=7', './icons/icon-maskable-512.png?v=7', './icons/apple-touch-icon.png?v=7',
@@ -17,6 +17,7 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
+  if (req.url.includes('versao.json')) return; // sempre vai à rede (aviso de versão nova)
   // páginas: tenta a rede primeiro (pega atualizações) e cai para o cache se estiver offline
   if (req.mode === 'navigate') {
     e.respondWith(fetch(req, { cache: 'no-store' }).then(r => { const cp = r.clone(); caches.open(VERSAO).then(c => c.put('./index.html', cp)); return r; })

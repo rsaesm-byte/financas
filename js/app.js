@@ -218,11 +218,31 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.15-6';
+const APP_VERSAO='2026.11.15-7';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
   setTimeout(()=>location.replace(location.pathname+'?atualizado='+Date.now()),400)}
+/* aviso de versão nova: compara o versao.json do servidor com APP_VERSAO e mostra uma faixa pedindo para atualizar */
+let _updT=0;
+async function updCheck(force){try{
+  if(!/^https?:$/.test(location.protocol)||navigator.onLine===false)return;
+  if(!force&&Date.now()-_updT<45000)return;_updT=Date.now();
+  const r=await fetch('versao.json?t='+Date.now(),{cache:'no-store'});if(!r.ok)return;
+  const j=await r.json();if(!j||!j.versao)return;
+  if(j.versao===APP_VERSAO){updHide();return}
+  let sn=0;try{sn=+localStorage.getItem('fin_upd_snooze')||0}catch(e){}
+  if(!force&&sn>Date.now())return;
+  updShow(j.versao)}catch(e){}}
+function updShow(v){const b=$('.tb-upd');b&&b.classList.add('has-upd');
+  if($('#upd-bar'))return;
+  const d=document.createElement('div');d.id='upd-bar';d.setAttribute('role','alert');
+  d.innerHTML='<span class="ub-t"><b>🔔 Nova versão disponível</b><small>Atualize para usar as novidades. Seus dados não são apagados.</small></span><button type="button" class="ub-b ub-main" data-act="updNow">Atualizar agora</button><button type="button" class="ub-b" data-act="updLater">Depois</button>';
+  document.body.appendChild(d);
+  try{if('Notification' in window&&Notification.permission==='granted'&&document.hidden&&localStorage.getItem('fin_upd_notif')!==v){localStorage.setItem('fin_upd_notif',v);new Notification('Minhas Finanças',{body:'Nova versão disponível. Abra o app para atualizar.'})}}catch(e){}}
+function updHide(){const b=$('.tb-upd');b&&b.classList.remove('has-upd');const d=$('#upd-bar');d&&d.remove()}
+setTimeout(updCheck,3500);setInterval(updCheck,300000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)updCheck()});addEventListener('online',()=>updCheck(true));
 const standalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
 
 /* indicador na barra superior */
@@ -2231,7 +2251,7 @@ const ACT={
   quickAdd:()=>quickAdd(),
   openLesson:id=>openLesson(id),lessonNext:id=>{const i=LESSONS.findIndex(x=>x.id===id);const L=learnState();const nx=LESSONS.slice(i+1).find(x=>!L.done[x.id])||LESSONS[(i+1)%LESSONS.length];if(view==='learn')render();openLesson(nx.id)},
   toggleCoach:()=>{closeModal();state.settings.coach=state.settings.coach===false;save();render();toast('Coach nos gastos '+(state.settings.coach?'ligado':'desligado'))},
-  editProfile:()=>profileForm(),forceUpdate:()=>{closeModal();atualizarApp()},
+  editProfile:()=>profileForm(),forceUpdate:()=>{closeModal();atualizarApp()},updNow:()=>{updHide();atualizarApp()},updLater:()=>{try{localStorage.setItem('fin_upd_snooze',Date.now()+4*36e5)}catch(e){}updHide();toast('Aviso adiado por 4 horas')},
   invTab:id=>{closeModal();view='invest';ui.invTab=id;render();window.scrollTo(0,0)},
   invStep:id=>{ui.invStep=id;render();setTimeout(()=>{const b=$('#stepBox');b&&b.scrollIntoView({behavior:'smooth',block:'start'})},50)},
   progDone:id=>{const I=inv();I.prog.done[id]=new Date().toISOString();save();const E=progEtapas(),nx=E.find(e=>!e.ok);ui.invStep=nx?nx.id:id;render();toast('Etapa registrada ✓')},
@@ -2839,7 +2859,7 @@ const MAN=[
   d:['O app sempre abre trancado. Enquanto está trancado, nada aparece e os atalhos não funcionam.','É uma trava de privacidade: ela <b>não criptografa</b> os dados guardados no navegador.','<b>Esqueceu?</b> Não há recuperação: o botão “Esqueci” apaga os dados do aparelho. Com a sincronização ligada, basta conectar o token de novo.','O bloqueio vale só naquele aparelho e não protege o arquivo de backup.']},
  {id:'instalar',a:'sistema',ic:'📲',t:'Instalar, atualizar e trocar o ícone',go:['cfg','app','Abrir Configurações › App'],onde:['Botão ↻ Atualizar no topo',manMenu()+' › Configurações › App'],
   o:'O app pode ser instalado na tela inicial e funciona sem internet.',
-  p:['<b>Celular:</b> abra o endereço no navegador › menu ⋮ › <b>Instalar</b> (ou “Adicionar à tela inicial”).','<b>Computador:</b> é só abrir o endereço; no Chrome/Edge há um ícone de instalar na barra de endereço.','<b>Atualizar:</b> '+manMenu()+' › 🔄 Atualizar o app. Seus dados não são apagados.','<b>Trocar o ícone:</b> '+manMenu()+' › Configurações › <b>Aparência</b> › Ícone do app › toque no ícone que quiser (são 10 opções + o original).'],
+  p:['<b>Celular:</b> abra o endereço no navegador › menu ⋮ › <b>Instalar</b> (ou “Adicionar à tela inicial”).','<b>Computador:</b> é só abrir o endereço; no Chrome/Edge há um ícone de instalar na barra de endereço.','<b>Atualizar:</b> quando sai uma versão nova, o app mostra a faixa <b>“Nova versão disponível”</b>: toque em <b>Atualizar agora</b> (ou em <b>Depois</b> para lembrar em 4 horas). Também dá para atualizar à mão em '+manMenu()+' › 🔄 Atualizar o app. Seus dados não são apagados.','<b>Trocar o ícone:</b> '+manMenu()+' › Configurações › <b>Aparência</b> › Ícone do app › toque no ícone que quiser (são 10 opções + o original).'],
   d:['Use sempre pelo ícone instalado: a aba comum do navegador guarda os dados separados.','Novo ícone: no Chrome (Android/computador) ele muda sozinho, em geral em até 1 dia. No Firefox e no iPhone é preciso remover o atalho e adicionar de novo — o app mostra o passo a passo do seu aparelho.','No iPhone, remover o app da Tela de Início apaga os dados dele: confira a sincronização ☁️✓ ou faça backup antes.']},
  {id:'aparencia',a:'sistema',ic:'🎨',t:'Tema, animações e gestos',go:['theme','','Escolher um tema agora'],onde:[manMenu()],
   o:'Deixe o app do seu jeito.',
@@ -3537,7 +3557,7 @@ function tbBotoes(){const m=layoutModo(),bd={auto:'A',pc:'PC',cel:'📱'}[m];
   const mac=/Mac|iPhone|iPad/.test(navigator.platform||navigator.userAgent);
   return`<button type="button" class="tb-busca" data-act="cmdk" title="Buscar ou executar (${mac?'⌘':'Ctrl'} K)">${ico('busca')}<span class="tb-busca-t">Buscar ou executar…</span><kbd>${mac?'⌘':'Ctrl'} K</kbd></button>
    <button type="button" class="tb-ic" data-act="layoutCiclo" title="Layout da tela: ${m==='auto'?'automático':m==='pc'?'computador':'celular'} (clique para trocar)">${ico('tela')}<i class="tb-bd">${bd}</i></button>
-   <button type="button" class="tb-upd" data-act="forceUpdate" title="Atualizar o app (versão ${APP_VERSAO})">↻<span> Atualizar</span></button>`}
+   <button type="button" class="tb-upd${$('#upd-bar')?' has-upd':''}" data-act="forceUpdate" title="Atualizar o app (versão ${APP_VERSAO})">↻<span> Atualizar</span></button>`}
 function tbPinta(){const h=$('.topbar');if(!h)return;let g=$('#tbExtra');if(!g){g=document.createElement('span');g.id='tbExtra';g.style.cssText='display:contents';const ref=$('#themeBtn')||h.lastElementChild;h.insertBefore(g,ref)}
   const html=tbBotoes();if(g._h!==html){g.innerHTML=html;g._h=html}}
 {const _rn=renderNav;renderNav=function(){_rn();tbPinta()}}
