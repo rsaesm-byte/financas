@@ -218,7 +218,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.15-2';
+const APP_VERSAO='2026.11.15-3';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -381,7 +381,7 @@ const NAV=[
  ['sep','Planejamento'],['budget','Renda & Orçamento'],['compare','Planejado × Real'],['expenses','Gastos'],['contas','Contas e saldos'],['bills','Contas fixas'],['possocomprar','Posso comprar?'],['vale','Vale-alimentação'],
  ['sep','Compromissos'],['debts','Dívidas & Financiamentos'],['sairdividas','Sair das dívidas'],['cards','Cartões de crédito'],['goals','Metas & Poupança'],
  ['sep','Coach'],['invest','Investir'],['learn','Aprender'],['profile','Meu perfil'],
- ['sep','Sistema'],['importar','Importar extrato'],['versoes','Voltar no tempo'],['lixeira','Lixeira'],['icone','Ícone do app'],['manual','Manual'],['settings','Configurações']
+ ['sep','Sistema'],['importar','Importar extrato'],['versoes','Voltar no tempo'],['lixeira','Lixeira'],['icone','Ícone do app'],['tela','Layout da tela'],['manual','Manual'],['settings','Configurações']
 ];
 const TITLES=Object.fromEntries(NAV.filter(n=>n[0]!=='sep'));
 function renderNav(){
@@ -394,7 +394,7 @@ function renderNav(){
     `<button class="fab" data-act="quickAdd" aria-label="Lançar gasto"><i>+</i><span style="margin-top:2px">Lançar</span></button>`+
     bt('vale','Vale','vale',view==='vale')+bt('more','Mais','more',inMore);
 }
-const isMobile=()=>matchMedia('(max-width:820px)').matches;
+const isMobile=()=>document.documentElement.classList.contains('mob');
 /* menu "Mais": todas as telas + atalhos do sistema */
 function openMore(){
   const f=$('#modalForm');
@@ -405,7 +405,7 @@ function openMore(){
    ${sec('Visão geral',it('dashboard','Dashboard')+it('review','Revisão do período')+it('report','Relatório do mês')+it('anual','Ano & assinaturas','report')+it('fechar','Fechar o mês','calendar')+it('busca','Buscar & etiquetas'))}
    ${sec('Planejamento',it('contas','Contas e saldos','vale')+it('budget','Renda & Orçamento')+it('compare','Planejado × Real')+it('bills','Contas fixas')+it('possocomprar','Posso comprar?'))}
    ${sec('Compromissos',it('debts','Dívidas')+it('sairdividas','Sair das dívidas')+it('cards','Cartões')+it('goals','Metas & Reservas')+it('dividir','Dividir despesas','profile'))}
-   ${sec('Sistema',it('importar','Importar extrato','importar')+it('versoes','Voltar no tempo','versoes')+it('lixeira','Lixeira','lixeira')+it('icone','Ícone do app','icone')+it('manual','Manual e ajuda','manual')+`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme','Temas','theme','theme')+
+   ${sec('Sistema',it('importar','Importar extrato','importar')+it('versoes','Voltar no tempo','versoes')+it('lixeira','Lixeira','lixeira')+it('icone','Ícone do app','icone')+it('tela','Layout da tela','tela')+it('manual','Manual e ajuda','manual')+`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme','Temas','theme','theme')+
      it('todayM','Ir para o mês atual','calendar','todayM')+(installEvt?it('install','Instalar app','install','installApp'):''))}
   </div></div><footer><button type="button" class="btn" data-act="closeModal">Fechar</button></footer>`;
   f.onsubmit=e=>e.preventDefault();
@@ -2757,6 +2757,10 @@ const MAN=[
   o:'O app olha sua renda, seus gastos reais, as contas fixas e as parcelas, calcula quanto sobra de verdade e monta um plano mês a mês para quitar tudo.',
   p:['Cadastre cada dívida: <b>+ Parcelada</b> (empréstimo, financiamento, acordo) ou <b>+ Saldo em aberto</b> (rotativo do cartão, cheque especial, conta atrasada). Informe os juros ao mês — é o que define a ordem.','Confira <b>Quanto cabe por mês</b>: renda − custo de vida − parcelas = sobra. O app guarda uma folga para imprevistos e um pouco para a reserva mínima.','Se quiser acelerar, informe os <b>cortes que você topa fazer</b> (o app sugere 20% dos desejos).','Escolha <b>Avalanche</b> (maior juros primeiro, paga menos juros) ou <b>Bola de neve</b> (menor dívida primeiro, vitórias rápidas) e toque em <b>Vou seguir este plano</b>.','Todo mês, abra <b>Este mês, pague</b> e toque em <b>Paguei</b> em cada dívida.'],
   d:['Pagou a mais num contrato parcelado? O app antecipa as últimas parcelas com o desconto dos juros — peça esse desconto ao banco.','O plano mostra se está <b>em dia</b> ou <b>atrasado</b>; se a vida mudar, toque em Refazer o plano.','Atualize os saldos em aberto pela fatura/extrato de vez em quando.','Com plano ativo, o Posso comprar? mostra quantos dias uma compra atrasa a sua liberdade.']},
+ {id:'tela',a:'sistema',ic:'🖥',t:'Versão computador ou celular (layout da tela)',go:['nav','tela','Abrir Layout da tela'],onde:[manMenu(),'Layout da tela (também em Configurações)'],
+  o:'O app escolhe sozinho: no celular, menu embaixo; no computador, menu lateral. Se abrir errado, você escolhe.',
+  p:['Abra <b>Layout da tela</b>.','Escolha <b>🔄 Automático</b>, <b>🖥 Computador</b> ou <b>📱 Celular</b>.'],
+  d:['A escolha vale só para aquele aparelho.','No modo automático, um PC com mouse abre a versão computador mesmo com a janela mais estreita; abaixo de 640 px de largura vira celular.','Zoom muito alto no navegador (Ctrl +) deixa a tela “menor”; Ctrl 0 volta ao normal.']},
  {id:'lixeira',a:'sistema',ic:'⏪',t:'Lixeira e voltar no tempo',go:['nav','versoes','Abrir Voltar no tempo'],onde:[manMenu(),'Lixeira / Voltar no tempo'],
   o:'Apagou algo sem querer ou fez uma bagunça? Dá para desfazer.',
   p:['<b>Lixeira</b>: tudo o que você apaga fica lá por 30 dias. Toque em <b>Restaurar</b>.','<b>Voltar no tempo</b>: o app guarda uma cópia por dia. Escolha a data e toque em <b>Voltar</b> — todos os dados voltam a ficar como estavam.','Com a sincronização ligada, também aparecem as <b>versões na nuvem</b> (uma a cada sincronização).'],
@@ -3501,6 +3505,21 @@ VIEWS.icone=()=>iconeCard();Object.assign(IC,{icone:'<rect x="4" y="4" width="16
 Object.assign(ACT,{icone:k=>{try{k==='original'?localStorage.removeItem(ICONE_K):localStorage.setItem(ICONE_K,k)}catch(e){}iconeAplica(k);toast('Ícone escolhido: '+ICONES.find(i=>i[0]===k)[1]);keepScroll()}});
 
 /* ============================================================
+   LAYOUT DA TELA — automático (largura + toque) ou escolhido neste aparelho
+   ============================================================ */
+const LAYOUT_K='finm_layout';
+const layoutModo=()=>{try{const v=localStorage.getItem(LAYOUT_K);return v==='pc'||v==='cel'?v:'auto'}catch(e){return'auto'}};
+function layoutMob(){const m=layoutModo();if(m!=='auto')return m==='cel';const w=innerWidth,toque=matchMedia('(pointer:coarse)').matches;return w<=820&&(toque||w<640)}
+function layoutAplica(){const h=document.documentElement,antes=h.classList.contains('mob'),agora=layoutMob();h.classList.toggle('mob',agora);return antes!==agora}
+function layoutCard(){const m=layoutModo(),op=[['auto','🔄 Automático','Celular no celular, computador no PC'],['pc','🖥 Computador','Menu lateral e telas largas'],['cel','📱 Celular','Menu embaixo, como no celular']];
+  return`<div class="card"><div class="card-head"><div><h3>🖥 Layout da tela</h3><div class="sub">Agora: <b>${isMobile()?'versão celular':'versão computador'}</b>. A escolha vale só para este aparelho.</div></div></div>
+   <div class="grid g3">${op.map(([k,t,d])=>`<button type="button" class="card kpi" data-act="layout" data-id="${k}" style="cursor:pointer;text-align:left;${m===k?'outline:2px solid var(--accent)':''}"><div class="value" style="font-size:16px">${t}${m===k?' ✓':''}</div><div class="hint">${d}</div></button>`).join('')}</div>
+   ${m==='pc'&&innerWidth<700?'<div class="alert warn" style="margin-top:10px">A janela está estreita: a versão computador pode ficar apertada. Aumente a janela ou diminua o zoom (Ctrl −).</div>':''}</div>`}
+{const _vs=VIEWS.settings;VIEWS.settings=()=>layoutCard()+_vs();}
+VIEWS.tela=()=>layoutCard();Object.assign(IC,{tela:'<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'});
+Object.assign(ACT,{layout:k=>{try{k==='auto'?localStorage.removeItem(LAYOUT_K):localStorage.setItem(LAYOUT_K,k)}catch(e){}layoutAplica();if(!isMobile()&&view==='home')view='dashboard';render();toast(isMobile()?'Versão celular':'Versão computador')}});
+
+/* ============================================================
    BLOQUEIO DO APP — senha, padrão desenhado ou impressão digital
    A configuração fica só neste aparelho (não vai no backup).
    É uma tranca de tela: impede que alguém com o celular na mão abra o app.
@@ -3735,7 +3754,7 @@ try{const k=localStorage.getItem('finm_skin');if(SKINS[k]){document.documentElem
 (async()=>{
   if(isMobile())view='home';
   if(location.search.includes('atualizado=')){history.replaceState(null,'',location.pathname);setTimeout(()=>toast('App atualizado ✓ versão '+APP_VERSAO),800)}
-  matchMedia('(max-width:820px)').addEventListener('change',()=>{if(!isMobile()&&view==='home')view='dashboard';render()});
+  {let _lt;addEventListener('resize',()=>{clearTimeout(_lt);_lt=setTimeout(()=>{if(layoutAplica()){if(!isMobile()&&view==='home')view='dashboard';render()}},150)})}
   const temDados=await carregar();revAoAbrir=rev;fileRev=-1;
   pedirPersistencia().then(()=>{if(view==='settings')render()});
   syPinta();syncNow();setTimeout(plRetrato,1500);lixCarrega();setTimeout(()=>snapAuto(),4000);setTimeout(autoRecorrentes,1200);setTimeout(invAtualiza,1500);setInterval(autoRecorrentes,3600e3);setInterval(()=>snapAuto(),3600e3);
