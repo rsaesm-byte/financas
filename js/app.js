@@ -218,7 +218,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.15-1';
+const APP_VERSAO='2026.11.15-2';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -381,7 +381,7 @@ const NAV=[
  ['sep','Planejamento'],['budget','Renda & Orçamento'],['compare','Planejado × Real'],['expenses','Gastos'],['contas','Contas e saldos'],['bills','Contas fixas'],['possocomprar','Posso comprar?'],['vale','Vale-alimentação'],
  ['sep','Compromissos'],['debts','Dívidas & Financiamentos'],['sairdividas','Sair das dívidas'],['cards','Cartões de crédito'],['goals','Metas & Poupança'],
  ['sep','Coach'],['invest','Investir'],['learn','Aprender'],['profile','Meu perfil'],
- ['sep','Sistema'],['importar','Importar extrato'],['versoes','Voltar no tempo'],['lixeira','Lixeira'],['manual','Manual'],['settings','Configurações']
+ ['sep','Sistema'],['importar','Importar extrato'],['versoes','Voltar no tempo'],['lixeira','Lixeira'],['icone','Ícone do app'],['manual','Manual'],['settings','Configurações']
 ];
 const TITLES=Object.fromEntries(NAV.filter(n=>n[0]!=='sep'));
 function renderNav(){
@@ -405,7 +405,7 @@ function openMore(){
    ${sec('Visão geral',it('dashboard','Dashboard')+it('review','Revisão do período')+it('report','Relatório do mês')+it('anual','Ano & assinaturas','report')+it('fechar','Fechar o mês','calendar')+it('busca','Buscar & etiquetas'))}
    ${sec('Planejamento',it('contas','Contas e saldos','vale')+it('budget','Renda & Orçamento')+it('compare','Planejado × Real')+it('bills','Contas fixas')+it('possocomprar','Posso comprar?'))}
    ${sec('Compromissos',it('debts','Dívidas')+it('sairdividas','Sair das dívidas')+it('cards','Cartões')+it('goals','Metas & Reservas')+it('dividir','Dividir despesas','profile'))}
-   ${sec('Sistema',it('importar','Importar extrato','importar')+it('versoes','Voltar no tempo','versoes')+it('lixeira','Lixeira','lixeira')+it('manual','Manual e ajuda','manual')+`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme','Temas','theme','theme')+
+   ${sec('Sistema',it('importar','Importar extrato','importar')+it('versoes','Voltar no tempo','versoes')+it('lixeira','Lixeira','lixeira')+it('icone','Ícone do app','icone')+it('manual','Manual e ajuda','manual')+`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme','Temas','theme','theme')+
      it('todayM','Ir para o mês atual','calendar','todayM')+(installEvt?it('install','Instalar app','install','installApp'):''))}
   </div></div><footer><button type="button" class="btn" data-act="closeModal">Fechar</button></footer>`;
   f.onsubmit=e=>e.preventDefault();
@@ -2825,8 +2825,8 @@ const MAN=[
   d:['O app sempre abre trancado. Enquanto está trancado, nada aparece e os atalhos não funcionam.','É uma trava de privacidade: ela <b>não criptografa</b> os dados guardados no navegador.','<b>Esqueceu?</b> Não há recuperação: o botão “Esqueci” apaga os dados do aparelho. Com a sincronização ligada, basta conectar o token de novo.','O bloqueio vale só naquele aparelho e não protege o arquivo de backup.']},
  {id:'instalar',a:'sistema',ic:'📲',t:'Instalar, atualizar e trocar o ícone',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Atualizar o app'],
   o:'O app pode ser instalado na tela inicial e funciona sem internet.',
-  p:['<b>Celular:</b> abra o endereço no navegador › menu ⋮ › <b>Instalar</b> (ou “Adicionar à tela inicial”).','<b>Computador:</b> é só abrir o endereço; no Chrome/Edge há um ícone de instalar na barra de endereço.','<b>Atualizar:</b> '+manMenu()+' › 🔄 Atualizar o app. Seus dados não são apagados.'],
-  d:['Use sempre pelo ícone instalado: a aba comum do navegador guarda os dados separados.']},
+  p:['<b>Celular:</b> abra o endereço no navegador › menu ⋮ › <b>Instalar</b> (ou “Adicionar à tela inicial”).','<b>Computador:</b> é só abrir o endereço; no Chrome/Edge há um ícone de instalar na barra de endereço.','<b>Atualizar:</b> '+manMenu()+' › 🔄 Atualizar o app. Seus dados não são apagados.','<b>Trocar o ícone:</b> '+manMenu()+' › <b>Ícone do app</b> (também em Configurações) › toque no ícone que quiser (são 10 opções + o original).'],
+  d:['Use sempre pelo ícone instalado: a aba comum do navegador guarda os dados separados.','Novo ícone: no Chrome (Android/computador) ele muda sozinho, em geral em até 1 dia. No Firefox e no iPhone é preciso remover o atalho e adicionar de novo — o app mostra o passo a passo do seu aparelho.','No iPhone, remover o app da Tela de Início apaga os dados dele: confira a sincronização ☁️✓ ou faça backup antes.']},
  {id:'aparencia',a:'sistema',ic:'🎨',t:'Tema, animações e gestos',go:['theme','','Escolher um tema agora'],onde:[manMenu()],
   o:'Deixe o app do seu jeito.',
   p:['<b>Temas</b>: '+manMenu()+' › Temas. São 5 visuais (Oceano, Dólar, Ônix, Pergaminho e Aurora), cada um com cores, fundo e fonte próprios.','<b>Animações 3D</b>: '+manMenu()+' › ✨ Animações 3D (ligar/desligar).','<b>Fechar telas</b>: arraste a folha para baixo, use o botão voltar ou toque fora dela.'],d:[]}
@@ -3477,6 +3477,30 @@ Object.assign(VIEWS,{sairdividas:vSairDividas});
 Object.assign(IC,{sairdividas:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>'});
 
 /* ============================================================
+   ÍCONE DO APP — 10 opções + o original (escolha vale só para este aparelho)
+   ============================================================ */
+const ICONES=[['original','Original','icons/icon-192.png?v=7'],['cifrao','Cifrão dourado'],['cofrinho','Cofrinho'],['carteira','Carteira'],['grafico','Gráfico subindo'],['moedas','Pilha de moedas'],['escudo','Escudo protegido'],['foguete','Foguete'],['planta','Dinheiro que cresce'],['cartao','Cartão de crédito'],['monograma','Monograma R$']];
+const ICONE_K='finm_icone';
+const iconeAtual=()=>{try{const k=localStorage.getItem(ICONE_K);return ICONES.some(i=>i[0]===k)?k:'original'}catch(e){return'original'}};
+const iconeSrc=(k,t='192')=>k==='original'?(t==='apple'?'icons/apple-touch-icon.png?v=7':t==='192'?'icons/icon-192.png?v=7':'icons/icon-512.png?v=7'):`icons/opcoes/${k}-${t}.png`;
+function iconeAplica(k){const set=(sel,h)=>{const l=document.querySelector(sel);if(l)l.href=h};
+  set('link[rel=manifest]',k==='original'?'manifest.json?v=7':`manifests/${k}.json`);set('link[rel=icon]',iconeSrc(k));set('link[rel=apple-touch-icon]',iconeSrc(k,'apple'));
+  document.querySelectorAll('.lk-logo').forEach(i=>i.src=iconeSrc(k))}
+function iconeComo(){const ua=navigator.userAgent,ios=/iPhone|iPad|iPod/.test(ua)||(/Macintosh/.test(ua)&&navigator.maxTouchPoints>1),ff=/Firefox|FxiOS/.test(ua),and=/Android/.test(ua);
+  const salvo=`<b>Antes</b>, confira se a sincronização está ☁️✓ (ou faça um backup em Configurações).`;
+  if(ios)return`<b>iPhone:</b> o ícone só muda reinstalando. ${salvo} Depois: segure o ícone › <b>Remover app</b> › <b>Remover da Tela de Início</b>; abra o endereço no Safari › Compartilhar › <b>Adicionar à Tela de Início</b> › conecte a sincronização de novo. <span class="neg">No iPhone, remover o app apaga os dados dele</span> — por isso a sincronização/backup antes.`;
+  if(and&&ff)return`<b>Firefox (Android):</b> o atalho não muda sozinho. Remova o atalho da tela inicial (segure › Remover) e, no Firefox, abra o app › menu ⋮ › <b>Adicionar à tela inicial</b>. Seus dados continuam no Firefox.`;
+  if(and)return`<b>Chrome (Android):</b> o Chrome troca o ícone instalado sozinho, em geral em até 1 dia (pode aparecer um aviso pedindo para confirmar). Quer na hora? ${salvo} Remova o app da tela inicial e instale de novo pelo menu ⋮ › <b>Instalar app</b>.`;
+  return`<b>Computador:</b> o ícone da aba muda na hora; no app instalado (Chrome/Edge) o ícone é atualizado sozinho em alguns minutos ou ao reabrir. Se não mudar, desinstale (⋮ › Desinstalar) e instale de novo.`}
+function iconeCard(){const at=iconeAtual();
+  return`<div class="card"><div class="card-head"><div><h3>📱 Ícone do app</h3><div class="sub">Escolha o ícone que aparece na tela inicial. Vale só para este aparelho.</div></div></div>
+   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:10px">${ICONES.map(([k,n])=>`<button type="button" data-act="icone" data-id="${k}" style="background:${at===k?'var(--panel2)':'transparent'};border:2px solid ${at===k?'var(--accent)':'transparent'};border-radius:16px;padding:8px 4px;display:grid;justify-items:center;gap:6px;color:var(--text);cursor:pointer;font:inherit"><img src="${iconeSrc(k)}" alt="" width="56" height="56" style="border-radius:14px;display:block" loading="lazy"><span style="font-size:11px;line-height:1.2;text-align:center">${esc(n)}${at===k?' ✓':''}</span></button>`).join('')}</div>
+   <div class="alert" style="margin-top:12px;font-size:13px">${iconeComo()}</div></div>`}
+{const _vs=VIEWS.settings;VIEWS.settings=()=>iconeCard()+_vs();}
+VIEWS.icone=()=>iconeCard();Object.assign(IC,{icone:'<rect x="4" y="4" width="16" height="16" rx="4"/><circle cx="12" cy="12" r="3.5"/>'});
+Object.assign(ACT,{icone:k=>{try{k==='original'?localStorage.removeItem(ICONE_K):localStorage.setItem(ICONE_K,k)}catch(e){}iconeAplica(k);toast('Ícone escolhido: '+ICONES.find(i=>i[0]===k)[1]);keepScroll()}});
+
+/* ============================================================
    BLOQUEIO DO APP — senha, padrão desenhado ou impressão digital
    A configuração fica só neste aparelho (não vai no backup).
    É uma tranca de tela: impede que alguém com o celular na mão abra o app.
@@ -3522,7 +3546,7 @@ function lkDraw(msg,erro){
   else if(S.tipo==='padrao')corpo=`<div class="lk-pad" id="lkPad"></div>`;
   else corpo=`<form id="lkForm" autocomplete="off"><input id="lkSenha" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Senha" enterkeyhint="go"><button class="btn primary" type="submit" style="width:100%;justify-content:center;margin-top:10px">${S.modo==='abrir'?'Entrar':'Continuar'}</button></form>`;
   if(S.abrindo)return;
-  o.innerHTML=`<div class="lk-box ${S.novo?'':'lk-quieto'}">${S.modo==='abrir'?LK_CAD:'<img src="icons/icon-192.png?v=7" alt="" class="lk-logo">'}<h2>${S.modo==='abrir'?'Minhas Finanças bloqueado':T[0]}</h2>
+  o.innerHTML=`<div class="lk-box ${S.novo?'':'lk-quieto'}">${S.modo==='abrir'?LK_CAD:'<img src="${iconeSrc(iconeAtual())}" alt="" class="lk-logo">'}<h2>${S.modo==='abrir'?'Minhas Finanças bloqueado':T[0]}</h2>
     <p class="lk-msg ${erro?'lk-erro':''}" id="lkMsg">${espera?'':msg||T[1]}</p>${corpo}
     <div class="lk-links">${S.modo==='abrir'&&c.bio&&!espera?'<button class="btn primary" data-act="lkBio" style="font-size:15px;padding:13px 18px">👆 Usar impressão digital</button>':''}
     ${S.modo==='abrir'||S.modo==='verifica'?'<button class="lk-link" data-act="lkEsqueci">Esqueci</button>':''}

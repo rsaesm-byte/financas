@@ -13,8 +13,9 @@
 <link rel="icon" type="image/png" href="icons/icon-192.png?v=7">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=7">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<link rel="stylesheet" href="css/app.css?v=2026.11.15-1">
+<link rel="stylesheet" href="css/app.css?v=2026.11.15-2">
 <script>try{if(localStorage.getItem('finm_lock'))document.documentElement.dataset.locked='1'}catch(e){}</script>
+<script>try{var k=localStorage.getItem('finm_icone');if(/^(cifrao|cofrinho|carteira|grafico|moedas|escudo|foguete|planta|cartao|monograma)$/.test(k)){document.querySelector('link[rel=manifest]').href='manifests/'+k+'.json';document.querySelector('link[rel=icon]').href='icons/opcoes/'+k+'-192.png';document.querySelector('link[rel=apple-touch-icon]').href='icons/opcoes/'+k+'-apple.png'}}catch(e){}</script>
 </head>
 <body>
 <div class="app">
@@ -41,6 +42,6 @@
 <div id="toasts"></div>
 <input type="file" id="importFile" accept=".json,application/json" hidden>
 
-<script src="js/app.js?v=2026.11.15-1"></script>
+<script src="js/app.js?v=2026.11.15-2"></script>
 </body>
 </html>
