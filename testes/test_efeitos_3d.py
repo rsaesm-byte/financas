@@ -31,7 +31,7 @@ async def main():
       await pg.evaluate(f"ACT.nav('{v}')"); await pg.wait_for_timeout(1200)
       vis=await pg.evaluate("[...document.querySelectorAll('#view>*')].every(e=>getComputedStyle(e).opacity==='1')")
       print(v,'visivel',vis,'largura',await pg.evaluate("document.documentElement.scrollWidth"))
-    await pg.evaluate("ACT.more()"); await pg.wait_for_timeout(700); await pg.click('[data-act=toggleFx]'); await pg.wait_for_timeout(300)
+    await pg.evaluate("ACT.more()"); await pg.wait_for_timeout(700); await pg.click('.more-item[data-act=toggleFx]'); await pg.wait_for_timeout(300)
     print('desligado',await pg.evaluate("document.documentElement.dataset.fx"))
     print(errs or 'no errors'); await b.close()
 asyncio.run(main()); srv.terminate()

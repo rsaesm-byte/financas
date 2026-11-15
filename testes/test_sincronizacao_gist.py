@@ -25,7 +25,7 @@ async def dev(b,sample):
   await ctx.route('**/chart.umd.min.js',lambda r:r.abort()); await ctx.route('https://api.github.com/**',api)
   pg=await ctx.new_page(); pg.errs=[]; pg.on('pageerror',lambda e:pg.errs.append(str(e)))
   await pg.goto('http://localhost:8782/'); await pg.wait_for_timeout(900)
-  await pg.click('[data-act=wizSample]' if sample else '[data-act=wizBrowser]'); await pg.evaluate("state.settings.fx=false;save();ACT.nav('settings')"); await pg.wait_for_timeout(300)
+  await pg.click('[data-act=wizSample]' if sample else '[data-act=wizBrowser]'); await pg.evaluate("state.settings.fx=false;save();ACT.cfg('dados')"); await pg.wait_for_timeout(300)
   return pg
 async def conn(pg,tok):
   await pg.fill('#syToken',tok); await pg.click('[data-act=syOn]'); await pg.wait_for_timeout(1500)

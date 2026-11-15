@@ -27,7 +27,7 @@ async def main():
     print('cartoes',n,'->',await pg.evaluate("state.cards.length"))
     # bloqueio com digital automática
     cdp=await ctx.new_cdp_session(pg); await cdp.send('WebAuthn.enable'); r=await cdp.send('WebAuthn.addVirtualAuthenticator',{'options':{'protocol':'ctap2','transport':'internal','hasResidentKey':True,'hasUserVerification':True,'isUserVerified':True,'automaticPresenceSimulation':True}})
-    await pg.evaluate("ACT.nav('settings')"); await pg.click('[data-act=lkDefinir][data-id=senha]'); await pg.fill('#lkSenha','1234'); await pg.press('#lkSenha','Enter'); await pg.wait_for_timeout(200); await pg.fill('#lkSenha','1234'); await pg.press('#lkSenha','Enter'); await pg.wait_for_timeout(900)
+    await pg.evaluate("ACT.cfg('seguranca')"); await pg.click('[data-act=lkDefinir][data-id=senha]'); await pg.fill('#lkSenha','1234'); await pg.press('#lkSenha','Enter'); await pg.wait_for_timeout(200); await pg.fill('#lkSenha','1234'); await pg.press('#lkSenha','Enter'); await pg.wait_for_timeout(900)
     await pg.click('[data-act=lkBioToggle]'); await pg.wait_for_timeout(1500)
     await pg.reload(); await pg.wait_for_timeout(2500); print('abriu sozinho com a digital ao iniciar',not await pg.evaluate("!!document.querySelector('#lock')"))
     await pg.evaluate("Object.defineProperty(document,'visibilityState',{value:'hidden',configurable:true});document.dispatchEvent(new Event('visibilitychange'))"); await pg.wait_for_timeout(600)

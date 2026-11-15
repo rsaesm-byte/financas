@@ -218,7 +218,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.15-5';
+const APP_VERSAO='2026.11.15-6';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -381,13 +381,13 @@ const NAV=[
  ['sep','Planejamento'],['budget','Renda & Orçamento'],['compare','Planejado × Real'],['expenses','Gastos'],['contas','Contas e saldos'],['bills','Contas fixas'],['possocomprar','Posso comprar?'],['vale','Vale-alimentação'],
  ['sep','Compromissos'],['debts','Dívidas & Financiamentos'],['sairdividas','Sair das dívidas'],['cards','Cartões de crédito'],['goals','Metas & Poupança'],
  ['sep','Coach'],['invest','Investir'],['learn','Aprender'],['profile','Meu perfil'],
- ['sep','Sistema'],['importar','Importar extrato'],['versoes','Voltar no tempo'],['lixeira','Lixeira'],['icone','Ícone do app'],['tela','Layout da tela'],['manual','Manual'],['settings','Configurações']
+ ['sep','Sistema'],['importar','Importar extrato'],['versoes','Voltar no tempo'],['lixeira','Lixeira'],['manual','Manual'],['settings','Configurações']
 ];
 const TITLES=Object.fromEntries(NAV.filter(n=>n[0]!=='sep'));
 function renderNav(){
   const side='<div class="brand"><div class="logo">R$</div>Minhas Finanças</div>'+
    NAV.map(([k,l])=>k==='sep'?`<div class="nav-sep">${l}</div>`:`<button class="nav-btn ${view===k?'active':''}" data-act="nav" data-id="${k}">${ico(k)}${l}</button>`).join('')+
-   '<div class="side-foot">Salvamento automático no navegador. Faça backup pelo menu Mais › Configurações.</div>';
+   '<div class="side-foot">Salvamento automático no navegador. Backup em Configurações › Sincronizar e backup.</div>';
   // só troca o menu se mudou: recriar os botões no meio de um clique fazia o clique se perder
   const sb=$('#sidebar');if(sb._h!==side){sb.innerHTML=side;sb._h=side}
   const bt=(id,label,icon,on)=>`<button class="${on?'on':''}" data-act="${id==='more'?'more':'nav'}" data-id="${id}">${ico(icon)}${label}</button>`;
@@ -408,7 +408,7 @@ function openMore(){
    ${sec('Visão geral',it('dashboard','Dashboard')+it('review','Revisão do período')+it('report','Relatório do mês')+it('anual','Ano & assinaturas','report')+it('fechar','Fechar o mês','calendar')+it('busca','Buscar & etiquetas'))}
    ${sec('Planejamento',it('contas','Contas e saldos','vale')+it('budget','Renda & Orçamento')+it('compare','Planejado × Real')+it('bills','Contas fixas')+it('possocomprar','Posso comprar?'))}
    ${sec('Compromissos',it('debts','Dívidas')+it('sairdividas','Sair das dívidas')+it('cards','Cartões')+it('goals','Metas & Reservas')+it('dividir','Dividir despesas','profile'))}
-   ${sec('Sistema',it('importar','Importar extrato','importar')+it('versoes','Voltar no tempo','versoes')+it('lixeira','Lixeira','lixeira')+it('icone','Ícone do app','icone')+it('tela','Layout da tela','tela')+it('manual','Manual e ajuda','manual')+`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme','Temas','theme','theme')+
+   ${sec('Sistema',it('importar','Importar extrato','importar')+it('versoes','Voltar no tempo','versoes')+it('lixeira','Lixeira','lixeira')+it('settings','Configurações','settings')+it('manual','Manual e ajuda','manual')+`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme','Temas','theme','theme')+
      it('todayM','Ir para o mês atual','calendar','todayM')+(installEvt?it('install','Instalar app','install','installApp'):''))}
   </div></div><footer><button type="button" class="btn" data-act="closeModal">Fechar</button></footer>`;
   f.onsubmit=e=>e.preventDefault();
@@ -2070,9 +2070,7 @@ function vSaveCardMobile(){
     ${L(persistido===true||standalone(),'2 — Proteção contra limpeza',persistido===true?'O navegador marcou os dados como <b>persistentes</b>: não serão apagados automaticamente para liberar espaço.':standalone()?'Aberto como app instalado — o sistema protege melhor os dados.':'Instale o app na tela inicial (menu do navegador › <b>Adicionar à tela inicial</b> / <b>Instalar app</b>). No iPhone isso evita que o Safari apague os dados após ~7 dias sem uso.')}
     ${L(!backupDue(),'3 — Backup (.json)',(ult?'Último backup: <b>'+ult+'</b>.':'Nenhum backup feito neste celular ainda.')+' Toque em <b>Compartilhar backup</b> e escolha <b>Google Drive</b> (ou WhatsApp/e-mail para você mesmo). O app lembra você na tela Início quando passar 7 dias com alterações sem backup.')}
    </div>
-   <div class="row" style="margin-top:12px"><button class="btn primary" data-act="shareBackup">📤 Compartilhar backup</button><button class="btn" data-act="export">⬇ Baixar .json</button>${installEvt?'<button class="btn" data-act="installApp">📲 Instalar app</button>':''}</div>
-   <div class="row" style="margin-top:10px"><button class="btn" data-act="forceUpdate">🔄 Atualizar o app</button><span class="muted" style="font-size:12px">Versão instalada: <b>${APP_VERSAO}</b>. Seus dados não são apagados.</span></div>
-   <div class="muted" style="font-size:12px;margin-top:10px">O arquivo tem o mesmo formato da versão do computador: dá para importar o backup do celular lá e vice-versa (Configurações › Importar backup).</div></div>`;
+   <div class="muted" style="font-size:12px;margin-top:10px">O arquivo tem o mesmo formato da versão do computador: dá para importar o backup do celular lá e vice-versa (Configurações › Sincronizar e backup › Importar backup).</div></div>`;
 }
 function vSettings(){
   const p=state.settings.pct;
@@ -2745,7 +2743,7 @@ const MAN=[
   o:'Salário que cai todo mês e conta em débito automático não precisam ser digitados de novo.',
   p:['<b>Renda</b>: ao adicionar/editar, marque <b>🔁 Repetir automaticamente todo mês</b>. Nos meses seguintes ela já aparece lançada.','<b>Conta fixa</b>: edite e marque <b>⚙ Débito automático</b>. No dia do vencimento o pagamento é lançado sozinho.','Valor mudou? Edite o lançamento do mês mais recente — os próximos seguem o novo valor.'],
   d:['Para parar, desmarque a opção no lançamento mais recente.','Apagou um lançamento automático? Ele não volta a aparecer naquele mês.','Itens automáticos mostram ⚙ na lista de gastos.']},
- {id:'casal',a:'sistema',ic:'👥',t:'Casal / família: quem lançou',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Configurações › Casal / família'],
+ {id:'casal',a:'sistema',ic:'👥',t:'Casal / família: quem lançou',go:['cfg','pessoas','Abrir Casal / família'],onde:[manMenu(),'Configurações › Casal / família'],
   o:'Duas pessoas no mesmo orçamento, cada uma no próprio celular, vendo quem lançou cada gasto.',
   p:['Uma pessoa gera o token do GitHub e conecta a sincronização.','Passe o token pessoalmente (nunca por WhatsApp/e-mail) e a outra pessoa conecta com o <b>mesmo token</b>.','Em cada celular, abra <b>Configurações › Casal / família</b> e escreva o seu nome.','Os novos lançamentos mostram 👤 nome; em Configurações aparece o total do mês por pessoa.'],
   d:['O nome fica só no aparelho; não é senha.','Na busca, digite o nome para ver tudo o que a pessoa lançou.']},
@@ -2753,7 +2751,7 @@ const MAN=[
   o:'Informe a taxa (ex.: 100% do CDI) e o valor do investimento é estimado todo dia útil.',
   p:['Abra <b>Investir</b> e toque no investimento (ou adicione um).','Em <b>Rendimento automático</b>, escolha % do CDI, Prefixado ou IPCA + taxa e digite a taxa.','Salve. O “Valor atual” passa a crescer sozinho.'],
   d:['É uma estimativa bruta (antes do IR). De vez em quando, copie o valor real do app do banco e salve — a conta recomeça dali.','Selic e IPCA usados ficam no Simulador de Investir; atualize quando mudarem.']},
- {id:'exportar',a:'sistema',ic:'📤',t:'Exportar planilha e PDF',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Configurações › Exportar'],
+ {id:'exportar',a:'sistema',ic:'📤',t:'Exportar planilha e PDF',go:['cfg','exportar','Abrir Exportar'],onde:[manMenu(),'Configurações › Exportar'],
   o:'Leve seus dados para o contador, o Imposto de Renda ou o Excel.',
   p:['Abra <b>Configurações › Exportar</b> e escolha o ano.','<b>Planilha do ano (CSV)</b>: abre no Excel e no Google Planilhas.','<b>Relatório anual</b> ou <b>do mês (PDF)</b>: na tela de impressão, escolha <b>Salvar como PDF</b>.'],
   d:['No celular, a planilha abre a tela de compartilhar: salve no Drive ou mande para você mesmo.']},
@@ -2761,14 +2759,18 @@ const MAN=[
   o:'O app olha sua renda, seus gastos reais, as contas fixas e as parcelas, calcula quanto sobra de verdade e monta um plano mês a mês para quitar tudo.',
   p:['Cadastre cada dívida: <b>+ Parcelada</b> (empréstimo, financiamento, acordo) ou <b>+ Saldo em aberto</b> (rotativo do cartão, cheque especial, conta atrasada). Informe os juros ao mês — é o que define a ordem.','Confira <b>Quanto cabe por mês</b>: renda − custo de vida − parcelas = sobra. O app guarda uma folga para imprevistos e um pouco para a reserva mínima.','Se quiser acelerar, informe os <b>cortes que você topa fazer</b> (o app sugere 20% dos desejos).','Escolha <b>Avalanche</b> (maior juros primeiro, paga menos juros) ou <b>Bola de neve</b> (menor dívida primeiro, vitórias rápidas) e toque em <b>Vou seguir este plano</b>.','Todo mês, abra <b>Este mês, pague</b> e toque em <b>Paguei</b> em cada dívida.'],
   d:['Pagou a mais num contrato parcelado? O app antecipa as últimas parcelas com o desconto dos juros — peça esse desconto ao banco.','O plano mostra se está <b>em dia</b> ou <b>atrasado</b>; se a vida mudar, toque em Refazer o plano.','Atualize os saldos em aberto pela fatura/extrato de vez em quando.','Com plano ativo, o Posso comprar? mostra quantos dias uma compra atrasa a sua liberdade.']},
- {id:'tela',a:'sistema',ic:'🖥',t:'Versão computador ou celular (layout da tela)',go:['nav','tela','Abrir Layout da tela'],onde:[manMenu(),'Layout da tela (também em Configurações)'],
+ {id:'tela',a:'sistema',ic:'🖥',t:'Versão computador ou celular (layout da tela)',go:['cfg','aparencia','Abrir Aparência'],onde:['Botão 🖥 no topo',manMenu()+' › Configurações › Aparência'],
   o:'O app escolhe sozinho: no celular, menu embaixo; no computador, menu lateral. Se abrir errado, você escolhe.',
-  p:['Abra <b>Layout da tela</b>.','Escolha <b>🔄 Automático</b>, <b>🖥 Computador</b> ou <b>📱 Celular</b>.'],
+  p:['Clique no botão 🖥 no topo (cada clique troca) ou abra <b>Configurações › Aparência › Layout da tela</b>.','Escolha <b>🔄 Automático</b>, <b>🖥 Computador</b> ou <b>📱 Celular</b>.'],
   d:['A escolha vale só para aquele aparelho.','No modo automático, um PC com mouse abre a versão computador mesmo com a janela mais estreita; abaixo de 640 px de largura vira celular.','Zoom muito alto no navegador (Ctrl +) deixa a tela “menor”; Ctrl 0 volta ao normal.','No computador, o menu lateral rola sozinho: passe o mouse sobre ele e role a rodinha para ver os itens de baixo (Coach, Sistema, Configurações).']},
  {id:'cmdk',a:'dia',ic:'⌨️',t:'Buscar ou executar (Ctrl K) e botões do topo',go:['cmdk','','Abrir a busca agora'],onde:['Barra de cima › 🔍','Teclado: Ctrl K (⌘ K no Mac)'],
   o:'Como o Spotlight do Mac: digite e vá direto para qualquer tela, comando, tópico do manual ou lançamento.',
   p:['Aperte <b>Ctrl K</b> (ou toque na 🔍 / “Buscar ou executar…” no topo).','Digite parte do que quer: “cartões”, “lançar”, “tema”, “ifood”, “39,90”…','Use ↑ ↓ para escolher e <b>Enter</b> para abrir (ou toque/clique no item).','<b>Esc</b> fecha.'],
   d:['No topo também ficam: o botão de <b>layout</b> (🖥 com a letra A = automático, PC = computador, 📱 = celular — cada clique troca) e o botão <b>↻ Atualizar</b>, que baixa a versão nova sem apagar seus dados.','Lançamentos aparecem a partir de 2 letras digitadas, no fim da lista.']},
+ {id:'config',a:'sistema',ic:'⚙️',t:'Configurações: onde fica cada coisa',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Configurações'],
+  o:'As configurações ficam separadas em abas no topo da tela.',
+  p:['<b>🎨 Aparência</b>: tema, animações 3D, coach, layout (computador/celular) e ícone do app.','<b>🔒 Bloqueio</b>: senha, padrão, digital e quando bloquear sozinho.','<b>☁️ Sincronizar e backup</b>: GitHub, onde os dados ficam, backup .json, voltar no tempo e lixeira.','<b>👥 Casal / família</b>: seu nome para aparecer quem lançou.','<b>💰 Orçamento</b>: porcentagens padrão dos meses novos.','<b>📤 Exportar</b>: planilha do ano, PDF e importar extrato.','<b>⚙️ App</b>: atualizar, instalar, manual, tour, dados de exemplo e apagar tudo.'],
+  d:['O cadeado 🔓 no topo abre direto a aba Bloqueio (ou bloqueia, se já estiver ligado).','A nuvem ☁️ no topo abre direto Sincronizar e backup.','Dica: Ctrl K → digite “bloqueio”, “backup”, “tema”…']},
  {id:'lixeira',a:'sistema',ic:'⏪',t:'Lixeira e voltar no tempo',go:['nav','versoes','Abrir Voltar no tempo'],onde:[manMenu(),'Lixeira / Voltar no tempo'],
   o:'Apagou algo sem querer ou fez uma bagunça? Dá para desfazer.',
   p:['<b>Lixeira</b>: tudo o que você apaga fica lá por 30 dias. Toque em <b>Restaurar</b>.','<b>Voltar no tempo</b>: o app guarda uma cópia por dia. Escolha a data e toque em <b>Voltar</b> — todos os dados voltam a ficar como estavam.','Com a sincronização ligada, também aparecem as <b>versões na nuvem</b> (uma a cada sincronização).'],
@@ -2823,21 +2825,21 @@ const MAN=[
   o:'Um caderno de “quem deve quem”.',
   p:['Toque em <b>+ Despesa</b>: com quem, o que foi, valor total, quem pagou e a sua parte em %.','O app soma e mostra o saldo com cada pessoa.','Quando acertarem, toque em <b>Acertar</b>.'],
   d:['É separado do orçamento: a sua parte do gasto você lança normalmente no +.']},
- {id:'sync',a:'sistema',ic:'☁️',t:'Sincronizar celular e computador',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Configurações','Sincronização'],
+ {id:'sync',a:'sistema',ic:'☁️',t:'Sincronizar celular e computador',go:['cfg','dados','Abrir Sincronizar e backup'],onde:[manMenu(),'Configurações › Sincronizar e backup'],
   o:'Com um token do GitHub, todos os seus aparelhos mostram os mesmos dados, automaticamente.',
-  p:['Em Configurações, toque no link que abre o GitHub (já com <b>gist</b> marcado).','Escolha <b>No expiration</b>, confira que só <b>gist</b> está marcado e gere o token.','Copie o código <code>ghp_…</code>, cole no app e toque em <b>Conectar</b>.','Nos outros aparelhos, abra o mesmo endereço do app e conecte com o <b>mesmo token</b>.'],
+  p:['Em <b>Configurações › Sincronizar e backup</b>, toque no link que abre o GitHub (já com <b>gist</b> marcado).','Escolha <b>No expiration</b>, confira que só <b>gist</b> está marcado e gere o token.','Copie o código <code>ghp_…</code>, cole no app e toque em <b>Conectar</b>.','Nos outros aparelhos, abra o mesmo endereço do app e conecte com o <b>mesmo token</b>.'],
   d:['☁️✓ no topo = em dia. ☁️⚠️ = erro (toque para ver).','O token é como uma senha: não mande por WhatsApp ou e-mail. Se vazar, apague no GitHub e gere outro.','Sincroniza ao abrir, ao voltar ao app, a cada minuto e logo depois de cada alteração.','Casal/família usando o mesmo token: cada um põe o nome em <b>Configurações › Casal / família</b> para aparecer quem lançou.']},
- {id:'backup',a:'sistema',ic:'💾',t:'Onde os dados ficam e como fazer backup',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Configurações'],
+ {id:'backup',a:'sistema',ic:'💾',t:'Onde os dados ficam e como fazer backup',go:['cfg','dados','Abrir Sincronizar e backup'],onde:[manMenu(),'Configurações › Sincronizar e backup'],
   o:'Os dados ficam no seu aparelho, dentro do navegador. O GitHub guarda só o programa.',
   p:['Cada alteração é salva na hora.','<b>Compartilhar backup</b> gera um arquivo .json que você pode mandar para o Google Drive.','<b>Importar backup</b> traz os dados de volta, juntando sem duplicar.'],
   d:['Cada navegador tem a sua “gaveta”: os dados do Firefox não aparecem no Chrome. Use a sincronização ou o backup para levar de um para o outro.','Sem sincronização, faça backup toda semana — o Início lembra você.']},
- {id:'bloqueio',a:'sistema',ic:'🔒',t:'Bloqueio: senha, padrão e digital',go:['lockMenu','','Abrir Bloqueio'],onde:[manMenu(),'Bloqueio'],
+ {id:'bloqueio',a:'sistema',ic:'🔒',t:'Bloqueio: senha, padrão e digital',go:['lockMenu','','Abrir Bloqueio'],onde:['Cadeado 🔓 no topo',manMenu()+' › Configurações › Bloqueio'],
   o:'Tranca o app para quem pegar o seu aparelho.',
   p:['Faça um backup (ou ligue a sincronização) antes.','Escolha <b>Usar senha</b> ou <b>Usar padrão</b> e confirme duas vezes.','Se quiser, ative a <b>👆 Digital</b>: ela é pedida sozinha ao abrir.','Escolha quando bloquear: só manual, ao sair do app, ou após 1, 5 ou 15 minutos fora.','Para bloquear na hora, toque no <b>cadeado 🔒</b> do topo. No computador, o atalho é <kbd>Alt</kbd> + <kbd>L</kbd>.'],
   d:['O app sempre abre trancado. Enquanto está trancado, nada aparece e os atalhos não funcionam.','É uma trava de privacidade: ela <b>não criptografa</b> os dados guardados no navegador.','<b>Esqueceu?</b> Não há recuperação: o botão “Esqueci” apaga os dados do aparelho. Com a sincronização ligada, basta conectar o token de novo.','O bloqueio vale só naquele aparelho e não protege o arquivo de backup.']},
- {id:'instalar',a:'sistema',ic:'📲',t:'Instalar, atualizar e trocar o ícone',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Atualizar o app'],
+ {id:'instalar',a:'sistema',ic:'📲',t:'Instalar, atualizar e trocar o ícone',go:['cfg','app','Abrir Configurações › App'],onde:['Botão ↻ Atualizar no topo',manMenu()+' › Configurações › App'],
   o:'O app pode ser instalado na tela inicial e funciona sem internet.',
-  p:['<b>Celular:</b> abra o endereço no navegador › menu ⋮ › <b>Instalar</b> (ou “Adicionar à tela inicial”).','<b>Computador:</b> é só abrir o endereço; no Chrome/Edge há um ícone de instalar na barra de endereço.','<b>Atualizar:</b> '+manMenu()+' › 🔄 Atualizar o app. Seus dados não são apagados.','<b>Trocar o ícone:</b> '+manMenu()+' › <b>Ícone do app</b> (também em Configurações) › toque no ícone que quiser (são 10 opções + o original).'],
+  p:['<b>Celular:</b> abra o endereço no navegador › menu ⋮ › <b>Instalar</b> (ou “Adicionar à tela inicial”).','<b>Computador:</b> é só abrir o endereço; no Chrome/Edge há um ícone de instalar na barra de endereço.','<b>Atualizar:</b> '+manMenu()+' › 🔄 Atualizar o app. Seus dados não são apagados.','<b>Trocar o ícone:</b> '+manMenu()+' › Configurações › <b>Aparência</b> › Ícone do app › toque no ícone que quiser (são 10 opções + o original).'],
   d:['Use sempre pelo ícone instalado: a aba comum do navegador guarda os dados separados.','Novo ícone: no Chrome (Android/computador) ele muda sozinho, em geral em até 1 dia. No Firefox e no iPhone é preciso remover o atalho e adicionar de novo — o app mostra o passo a passo do seu aparelho.','No iPhone, remover o app da Tela de Início apaga os dados dele: confira a sincronização ☁️✓ ou faça backup antes.']},
  {id:'aparencia',a:'sistema',ic:'🎨',t:'Tema, animações e gestos',go:['theme','','Escolher um tema agora'],onde:[manMenu()],
   o:'Deixe o app do seu jeito.',
@@ -2985,7 +2987,7 @@ function vVersoes(){
   return`<div class="card"><h3>⏪ Voltar no tempo</h3><div class="sub" style="margin:0">Fez uma bagunça? Volte <b>todos</b> os dados para como estavam numa data. Antes de voltar, o app guarda uma cópia de agora — dá para desfazer.</div></div>
   <div class="card"><h3>📱 Cópias deste aparelho</h3><div class="sub">Uma por dia, das últimas duas semanas</div>${V.snaps.length?V.snaps.map((s,i)=>`<div class="mrow" style="cursor:default"><div class="tx"><b>${dataHora(s.quando)}</b><small>${s.nota?esc(s.nota)+' · ':''}${resumoDados(s.dados)}</small></div><button class="btn sm" data-act="verSnap" data-id="${i}">Voltar</button></div>`).join(''):'<div class="empty">Nenhuma cópia ainda — a primeira é feita hoje.</div>'}</div>
   <div class="card"><h3>☁️ Versões na nuvem</h3><div class="sub">Cada sincronização guarda uma versão no seu GitHub</div>
-   ${!SY.cfg?'<div class="muted">Ligue a sincronização (Configurações) para ter o histórico de cada alteração.</div>':V.nuvem===null?'<button class="btn" data-act="verCarrega">Carregar versões</button>':V.nuvem==='carregando'?'<div class="muted">Carregando…</div>':typeof V.nuvem==='string'?`<div class="alert bad">${esc(V.nuvem)}</div>`:V.nuvem.length?V.nuvem.map(v=>`<div class="mrow" style="cursor:default"><div class="tx"><b>${dataHora(Date.parse(v.committed_at))}</b><small>versão ${esc(v.version.slice(0,7))}</small></div><button class="btn sm" data-act="verNuvem" data-id="${esc(v.version)}">Voltar</button></div>`).join(''):'<div class="empty">Nenhuma versão encontrada.</div>'}</div>`;
+   ${!SY.cfg?'<div class="muted">Ligue a sincronização (Configurações › Sincronizar e backup) para ter o histórico de cada alteração.</div>':V.nuvem===null?'<button class="btn" data-act="verCarrega">Carregar versões</button>':V.nuvem==='carregando'?'<div class="muted">Carregando…</div>':typeof V.nuvem==='string'?`<div class="alert bad">${esc(V.nuvem)}</div>`:V.nuvem.length?V.nuvem.map(v=>`<div class="mrow" style="cursor:default"><div class="tx"><b>${dataHora(Date.parse(v.committed_at))}</b><small>versão ${esc(v.version.slice(0,7))}</small></div><button class="btn sm" data-act="verNuvem" data-id="${esc(v.version)}">Voltar</button></div>`).join(''):'<div class="empty">Nenhuma versão encontrada.</div>'}</div>`;
 }
 
 /* ---------- PAGAR FATURA (adiantado ou em parte) ---------- */
@@ -3499,7 +3501,7 @@ function iconeAplica(k){const set=(sel,h)=>{const l=document.querySelector(sel);
   set('link[rel=manifest]',k==='original'?'manifest.json?v=7':`manifests/${k}.json`);set('link[rel=icon]',iconeSrc(k));set('link[rel=apple-touch-icon]',iconeSrc(k,'apple'));
   document.querySelectorAll('.lk-logo').forEach(i=>i.src=iconeSrc(k))}
 function iconeComo(){const ua=navigator.userAgent,ios=/iPhone|iPad|iPod/.test(ua)||(/Macintosh/.test(ua)&&navigator.maxTouchPoints>1),ff=/Firefox|FxiOS/.test(ua),and=/Android/.test(ua);
-  const salvo=`<b>Antes</b>, confira se a sincronização está ☁️✓ (ou faça um backup em Configurações).`;
+  const salvo=`<b>Antes</b>, confira se a sincronização está ☁️✓ (ou faça um backup em Configurações › Sincronizar e backup).`;
   if(ios)return`<b>iPhone:</b> o ícone só muda reinstalando. ${salvo} Depois: segure o ícone › <b>Remover app</b> › <b>Remover da Tela de Início</b>; abra o endereço no Safari › Compartilhar › <b>Adicionar à Tela de Início</b> › conecte a sincronização de novo. <span class="neg">No iPhone, remover o app apaga os dados dele</span> — por isso a sincronização/backup antes.`;
   if(and&&ff)return`<b>Firefox (Android):</b> o atalho não muda sozinho. Remova o atalho da tela inicial (segure › Remover) e, no Firefox, abra o app › menu ⋮ › <b>Adicionar à tela inicial</b>. Seus dados continuam no Firefox.`;
   if(and)return`<b>Chrome (Android):</b> o Chrome troca o ícone instalado sozinho, em geral em até 1 dia (pode aparecer um aviso pedindo para confirmar). Quer na hora? ${salvo} Remova o app da tela inicial e instale de novo pelo menu ⋮ › <b>Instalar app</b>.`;
@@ -3817,6 +3819,60 @@ Object.assign(ACT,{
     const v=$('#view');v.classList.add('fx-flipout');setTimeout(()=>{aplica();v.classList.remove('fx-flipout');v.classList.add('fx-flipin');setTimeout(()=>v.classList.remove('fx-flipin'),420)},210)}
 });
 try{const k=localStorage.getItem('finm_skin');if(SKINS[k]){document.documentElement.dataset.skin=k;document.documentElement.dataset.theme=SKINS[k].base;skinFonte(k)}}catch(e){}
+
+/* ============================================================
+   CONFIGURAÇÕES ORGANIZADAS EM SEÇÕES
+   (antes era uma página única com tudo empilhado)
+   ============================================================ */
+const CFG_SECS=[
+  ['aparencia','🎨','Aparência','Tema, ícone, layout e animações'],
+  ['seguranca','🔒','Bloqueio','Senha, padrão e digital'],
+  ['dados','☁️','Sincronizar e backup','Nuvem, cópias e salvamento'],
+  ['pessoas','👥','Casal / família','Quem lançou cada gasto'],
+  ['orcamento','💰','Orçamento','Porcentagens padrão'],
+  ['exportar','📤','Exportar','Planilha e PDF'],
+  ['app','⚙️','App','Atualizar, instalar, manutenção']];
+const cfgSec=()=>CFG_SECS.some(s=>s[0]===ui.cfg)?ui.cfg:'aparencia';
+const cfgCard=(t,sub,corpo)=>`<div class="card"><div class="card-head"><div><h3>${t}</h3>${sub?`<div class="sub">${sub}</div>`:''}</div></div>${corpo}</div>`;
+const cfgSw=(on,act,t,d)=>`<button type="button" class="cfg-sw" data-act="${act}" aria-pressed="${on}"><span class="cfg-sw-tx"><b>${t}</b><small>${d}</small></span><i class="cfg-tg ${on?'on':''}"></i></button>`;
+function cfgPctCard(){const p=state.settings.pct;
+  return cfgCard('💰 Porcentagens padrão','Usadas quando um mês novo é criado (o mês atual você ajusta em Renda & Orçamento)',
+   `${Object.entries(BUCKETS).map(([k,b])=>`<div class="pct-row" style="grid-template-columns:140px 1fr"><b><span class="dot" style="background:${b.color}"></span> ${b.label}</b><input type="number" min="0" max="100" step="0.5" value="${p[k]}" data-defpct="${k}"></div>`).join('')}
+   <div class="muted">Soma atual: ${num(sum(Object.values(p)),1)}% ${Math.abs(sum(Object.values(p))-100)>.01?'<span class="neg">— o ideal é somar 100%</span>':'✓'}</div>
+   <div class="row" style="margin-top:10px"><button class="btn sm" data-act="nav" data-id="budget">Abrir Renda & Orçamento ›</button></div>`)}
+function cfgBackupCard(){return cfgCard('📦 Backup manual (.json)','Uma cópia de tudo que você pode guardar no Drive, no e-mail ou no computador',
+   `<div class="row" style="flex-wrap:wrap;gap:8px"><button class="btn primary" data-act="${FS_OK?'export':'shareBackup'}">${FS_OK?'⬇ Exportar backup (.json)':'📤 Compartilhar backup'}</button>${FS_OK?'':'<button class="btn" data-act="export">⬇ Baixar .json</button>'}<button class="btn" data-act="import">⬆ Importar backup</button></div>
+   <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:10px"><button class="btn sm" data-act="nav" data-id="versoes">🕘 Voltar no tempo</button><button class="btn sm" data-act="nav" data-id="lixeira">🗑 Lixeira</button></div>
+   <div class="muted" style="font-size:12px;margin-top:8px">O backup tem o mesmo formato no celular e no computador: dá para importar de um no outro.</div>`)}
+function cfgAppCard(){return cfgCard('⚙️ App',`Versão instalada: <b>${APP_VERSAO}</b>`,
+   `<div class="row" style="flex-wrap:wrap;gap:8px"><button class="tb-upd" data-act="forceUpdate">↻ Atualizar o app</button>${installEvt?'<button class="btn" data-act="installApp">📲 Instalar app</button>':''}<button class="btn" data-act="nav" data-id="manual">📖 Manual e ajuda</button><button class="btn" data-act="tour">🧭 Fazer o tour</button></div>
+   <div class="muted" style="font-size:12px;margin-top:8px">Atualizar baixa a versão nova e não apaga seus dados.</div>`)
+  +cfgCard('🧪 Manutenção','Use com cuidado',
+   `<div class="row" style="flex-wrap:wrap;gap:8px"><button class="btn" data-act="sample">Carregar dados de exemplo</button><button class="btn danger" data-act="reset">Apagar tudo</button></div>
+   <div class="muted" style="font-size:12px;margin-top:8px">“Apagar tudo” remove os dados <b>deste aparelho</b>. Faça um backup antes.</div>`)}
+function cfgAparencia(){return`<div class="card"><div class="card-head"><div><h3>🎨 Tema</h3><div class="sub">Escolha o visual do app</div></div></div>${skinCards()}</div>`
+  +cfgCard('✨ Efeitos','',cfgSw(state.settings.fx!==false,'toggleFx','Animações 3D','Cartões que inclinam, transições e moedas ao lançar. Desligue se o app ficar lento.')+cfgSw(state.settings.coach!==false,'toggleCoach','Coach nos gastos','Dica rápida depois de cada lançamento'))
+  +layoutCard()+iconeCard()}
+function vConfig(){const s=cfgSec(),S=CFG_SECS.find(x=>x[0]===s);
+  const tabs=`<div class="cfg-tabs">${CFG_SECS.map(([k,ic,t])=>`<button type="button" class="chip ${k===s?'on':''}" data-act="cfg" data-id="${k}">${ic} ${t}</button>`).join('')}</div>`;
+  const corpo={aparencia:cfgAparencia,seguranca:()=>lkCard(),dados:()=>syCard()+vSaveCard()+cfgBackupCard(),pessoas:()=>quemCard(),orcamento:cfgPctCard,exportar:()=>exportCard()+cfgCard('⬆ Importar extrato do banco','Traz lançamentos de arquivos OFX/CSV','<button class="btn" data-act="nav" data-id="importar">Abrir Importar extrato ›</button>'),app:cfgAppCard}[s]();
+  return tabs+`<div class="cfg-titulo"><h2>${S[1]} ${S[2]}</h2><span class="muted">${S[3]}</span></div>`+corpo}
+/* bloqueio: o mesmo conteúdo, organizado em passos */
+lkCard=function(){const c=lkGet(),auto=c?c.auto||0:0,num_=(n,t)=>`<div class="q-label" style="margin-top:16px">${n}. ${t}</div>`;
+  return`<div class="card"><div class="card-head"><div><h3>🔒 Bloqueio do app</h3><div class="sub">${c?'Protegido com <b>'+(c.tipo==='padrao'?'padrão desenhado':'senha')+'</b>'+(c.bio?' + <b>impressão digital</b>':''):'Desligado — qualquer pessoa com o aparelho desbloqueado abre o app'}</div></div>${c?'<span class="badge ok">Ativo</span>':'<span class="badge warn">Desligado</span>'}</div>
+   ${c?'':`<div class="alert warn" style="margin-bottom:6px">⚠️ Senha ou padrão esquecido <b>não tem recuperação</b>: a saída é apagar os dados do aparelho e importar o backup. <button class="btn sm" data-act="cfg" data-id="dados" style="margin-left:6px">Fazer backup antes</button></div>`}
+   ${num_(1,c?'Como desbloquear':'Escolha como proteger')}
+   <div class="row" style="flex-wrap:wrap;gap:8px"><button class="btn ${c&&c.tipo==='senha'?'primary':''}" data-act="lkDefinir" data-id="senha">🔑 ${c&&c.tipo==='senha'?'Trocar senha':'Usar senha'}</button><button class="btn ${c&&c.tipo==='padrao'?'primary':''}" data-act="lkDefinir" data-id="padrao">⬚ ${c&&c.tipo==='padrao'?'Trocar padrão':'Usar padrão'}</button></div>
+   ${c?`${num_(2,'Impressão digital / Face ID (opcional)')}${cfgSw(!!c.bio,'lkBioToggle','Desbloquear com a digital','Abre direto com o sensor do aparelho; a senha/padrão continua valendo')}
+   ${num_(3,'Quando bloquear sozinho')}<div class="chips">${[[-1,'Só manual'],[0,'Assim que sair do app'],[1,'Após 1 min fora'],[5,'Após 5 min fora'],[15,'Após 15 min fora']].map(([v,l])=>`<button class="chip ${auto===v?'on':''}" data-act="lkAuto" data-id="${v}">${l}</button>`).join('')}</div>
+   ${num_(4,'Ações')}<div class="row" style="flex-wrap:wrap;gap:8px"><button class="btn" data-act="lkAgora">🔒 Bloquear agora</button><button class="btn danger" data-act="lkDesligar">Desligar bloqueio</button></div>`:''}
+   <div class="muted" style="font-size:12px;margin-top:14px">Vale só neste aparelho e protege a tela do app (atalho: cadeado 🔓 no topo${isMobile()?'':' ou Alt+L'}). O arquivo de backup não é protegido pelo bloqueio.</div></div>`};
+VIEWS.settings=vConfig;
+Object.assign(ACT,{
+  cfg:k=>{closeModal();ui.cfg=k;view='settings';render();scrollTo(0,0)},
+  lockMenu:()=>ACT.cfg('seguranca'),
+  toggleFx:(()=>{const f=ACT.toggleFx;return()=>{f();if(view==='settings')render()}})()
+});
 
 (async()=>{
   if(isMobile())view='home';

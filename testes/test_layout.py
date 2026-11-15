@@ -20,7 +20,7 @@ async def main():
     await ctx.route('**/chart.umd.min.js',lambda r:r.abort())
     pg=await ctx.new_page(); errs=[]; pg.on('pageerror',lambda e:errs.append(str(e)))
     await pg.goto('http://localhost:8779/'); await pg.wait_for_timeout(900)
-    await pg.click('[data-act=wizSample]'); await pg.evaluate("state.settings.fx=false;ACT.nav('settings')"); await pg.wait_for_timeout(300)
+    await pg.click('[data-act=wizSample]'); await pg.evaluate("state.settings.fx=false;ACT.cfg('seguranca')"); await pg.wait_for_timeout(300)
     lock="!!document.querySelector('#lock')"
     # senha
     await pg.click('[data-act=lkDefinir][data-id=senha]'); await pg.fill('#lkSenha','abc1'); await pg.press('#lkSenha','Enter'); await pg.wait_for_timeout(200)
@@ -34,7 +34,7 @@ async def main():
     await pg.evaluate("Object.defineProperty(document,'visibilityState',{value:'hidden',configurable:true});document.dispatchEvent(new Event('visibilitychange'));Object.defineProperty(document,'visibilityState',{value:'visible',configurable:true});document.dispatchEvent(new Event('visibilitychange'))")
     print('saiu -> travou',await pg.evaluate(lock)); await pg.fill('#lkSenha','abc1'); await pg.press('#lkSenha','Enter'); await pg.wait_for_timeout(900)
     # trocar para padrão
-    await pg.evaluate("ACT.nav('settings')"); await pg.click('[data-act=lkDefinir][data-id=padrao]'); await pg.fill('#lkSenha','abc1'); await pg.press('#lkSenha','Enter'); await pg.wait_for_timeout(900)
+    await pg.evaluate("ACT.cfg('seguranca')"); await pg.click('[data-act=lkDefinir][data-id=padrao]'); await pg.fill('#lkSenha','abc1'); await pg.press('#lkSenha','Enter'); await pg.wait_for_timeout(900)
     await draw(pg,[0,1,2,5,8]); await draw(pg,[0,1,2,5,8]); await pg.wait_for_timeout(600)
     print('padrao',await pg.evaluate("lkGet().tipo"),'overlay',await pg.evaluate(lock))
     await pg.evaluate("ACT.lkAgora()"); await pg.wait_for_timeout(300); await draw(pg,[0,3,6,7]); print('padrao errado -> travado',await pg.evaluate(lock))
@@ -42,7 +42,7 @@ async def main():
     print('padrao certo -> abriu',not await pg.evaluate(lock))
     # biometria com autenticador virtual
     cdp=await ctx.new_cdp_session(pg); await cdp.send('WebAuthn.enable'); await cdp.send('WebAuthn.addVirtualAuthenticator',{'options':{'protocol':'ctap2','transport':'internal','hasResidentKey':True,'hasUserVerification':True,'isUserVerified':True,'automaticPresenceSimulation':True}})
-    await pg.evaluate("ACT.nav('settings')"); await pg.click('[data-act=lkBioToggle]'); await pg.wait_for_timeout(1500); print('bio ativada',await pg.evaluate("!!lkGet().bio"))
+    await pg.evaluate("ACT.cfg('seguranca')"); await pg.click('[data-act=lkBioToggle]'); await pg.wait_for_timeout(1500); print('bio ativada',await pg.evaluate("!!lkGet().bio"))
     await pg.evaluate("ACT.lkAgora()"); await pg.wait_for_timeout(2000); print('bio destravou',not await pg.evaluate(lock))
     # 5 erros -> pausa ; esqueci
     await pg.evaluate("(()=>{const c=lkGet();c.bio=null;lkSet(c);ACT.lkAgora()})()"); await pg.wait_for_timeout(300)

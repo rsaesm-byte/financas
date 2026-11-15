@@ -18,7 +18,7 @@ async def main():
     await pg.evaluate("document.querySelectorAll('.coach').forEach(x=>x.remove())")
     print('selo celular?', 'celular' in (await pg.inner_text('.brand')).lower(), 'título', await pg.title())
     ok=0
-    for k in ['home','report','budget','expenses','cards','sairdividas','tela','dashboard']:
+    for k in ['home','report','budget','expenses','cards','sairdividas','settings','dashboard']:
       await pg.evaluate('scrollTo(0,0)'); await pg.locator(f'.sidebar [data-id={k}]').scroll_into_view_if_needed(); bx=await pg.locator(f'.sidebar [data-id={k}]').bounding_box()
       await pg.mouse.move(bx['x']+40,bx['y']+bx['height']/2); await pg.mouse.down()
       await pg.evaluate("render()")   # simula a sincronização redesenhando a tela no meio do clique
