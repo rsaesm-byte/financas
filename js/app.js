@@ -218,7 +218,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.14-5';
+const APP_VERSAO='2026.11.14-6';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -379,7 +379,7 @@ const ico=n=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-
 const NAV=[
  ['sep','Visão geral'],['home','Início'],['dashboard','Dashboard'],['review','Revisão do período'],['report','Relatório do mês'],['anual','Ano & assinaturas'],['fechar','Fechar o mês'],['dividir','Dividir despesas'],['busca','Buscar & etiquetas'],
  ['sep','Planejamento'],['budget','Renda & Orçamento'],['compare','Planejado × Real'],['expenses','Gastos'],['contas','Contas e saldos'],['bills','Contas fixas'],['possocomprar','Posso comprar?'],['vale','Vale-alimentação'],
- ['sep','Compromissos'],['debts','Dívidas & Financiamentos'],['cards','Cartões de crédito'],['goals','Metas & Poupança'],
+ ['sep','Compromissos'],['debts','Dívidas & Financiamentos'],['sairdividas','Sair das dívidas'],['cards','Cartões de crédito'],['goals','Metas & Poupança'],
  ['sep','Coach'],['invest','Investir'],['learn','Aprender'],['profile','Meu perfil'],
  ['sep','Sistema'],['importar','Importar extrato'],['versoes','Voltar no tempo'],['lixeira','Lixeira'],['manual','Manual'],['settings','Configurações']
 ];
@@ -404,7 +404,7 @@ function openMore(){
    ${sec('Coach financeiro',it('invest','Investir e sair das dívidas','invest')+it('learn','Aprender')+it('profile','Meu perfil')+`<button type="button" class="more-item ${state.settings.coach!==false?'on':''}" data-act="toggleCoach">🤖<span>Coach nos gastos: ${state.settings.coach!==false?'ligado':'desligado'}</span></button>`)}
    ${sec('Visão geral',it('dashboard','Dashboard')+it('review','Revisão do período')+it('report','Relatório do mês')+it('anual','Ano & assinaturas','report')+it('fechar','Fechar o mês','calendar')+it('busca','Buscar & etiquetas'))}
    ${sec('Planejamento',it('contas','Contas e saldos','vale')+it('budget','Renda & Orçamento')+it('compare','Planejado × Real')+it('bills','Contas fixas')+it('possocomprar','Posso comprar?'))}
-   ${sec('Compromissos',it('debts','Dívidas')+it('cards','Cartões')+it('goals','Metas & Reservas')+it('dividir','Dividir despesas','profile'))}
+   ${sec('Compromissos',it('debts','Dívidas')+it('sairdividas','Sair das dívidas')+it('cards','Cartões')+it('goals','Metas & Reservas')+it('dividir','Dividir despesas','profile'))}
    ${sec('Sistema',it('importar','Importar extrato','importar')+it('versoes','Voltar no tempo','versoes')+it('lixeira','Lixeira','lixeira')+it('manual','Manual e ajuda','manual')+`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme','Temas','theme','theme')+
      it('todayM','Ir para o mês atual','calendar','todayM')+(installEvt?it('install','Instalar app','install','installApp'):''))}
   </div></div><footer><button type="button" class="btn" data-act="closeModal">Fechar</button></footer>`;
@@ -668,7 +668,7 @@ function vDashboard(){
   <div class="grid g2">
    <div class="card"><h3>Renda por fonte</h3><div class="sub">${mLabel(curMonth,true)}</div><div class="chart-box sm"><canvas id="chInc"></canvas></div></div>
    <div class="card"><div class="card-head"><div><h3>Compromissos em aberto</h3><div class="sub">Dívidas + saldo a pagar nos cartões</div></div><b style="font-size:20px" class="neg">${brl(debt)}</b></div>
-    ${state.debts.map(d=>{const p=(+d.parcelasPagas)/(+d.totalParcelas)*100;return`<div style="margin:10px 0"><div class="stat-line"><span>${esc(d.nome)}</span><b>${brl(debtRemaining(d))}</b></div>${bar(p)}</div>`}).join('')}
+    ${state.debts.map(d=>{const p=d.modo==='aberta'?0:(+d.parcelasPagas)/(+d.totalParcelas)*100;return`<div style="margin:10px 0"><div class="stat-line"><span>${esc(d.nome)}</span><b>${brl(debtRemaining(d))}</b></div>${bar(p)}</div>`}).join('')}
     ${state.cards.map(c=>{const u=cardUsed(c.id,curMonth),p=c.limite?u/c.limite*100:0;return`<div style="margin:10px 0"><div class="stat-line"><span>💳 ${esc(c.nome)}</span><b>${brl(u)}</b></div>${bar(p,p>80?'bad':p>50?'warn':'ok')}</div>`}).join('')||''}
     ${!state.debts.length&&!state.cards.length?'<div class="empty">Nenhuma dívida cadastrada 🎉</div>':''}
    </div>
@@ -1117,7 +1117,7 @@ function vReport(){
    ============================================================ */
 function vDebts(){
   const tot=sum(state.debts,debtRemaining),orig=sum(state.debts,d=>d.valorOriginal),monthly=monthlyDebtPayments(curMonth),inc=incomeTotal(curMonth);
-  const juros=sum(state.debts,d=>Math.max(0,d.parcela*d.totalParcelas-(+d.valorOriginal||0)));
+  const juros=sum(state.debts.filter(d=>d.modo!=='aberta'),d=>Math.max(0,d.parcela*d.totalParcelas-(+d.valorOriginal||0)));
   let h=`<div class="grid g4">${kpi('Saldo devedor total',brl(tot),state.debts.length+' contrato(s)',null,'neg')}${kpi('Parcelas por mês',brl(monthly),inc?pctf(monthly/inc*100)+' da renda':'')}${kpi('Valor original contratado',brl(orig),'Soma dos valores emprestados/financiados')}${kpi('Custo total de juros',brl(juros),'Parcelas × prazo − valor original',null,'wrn')}</div>
   <div class="card"><div class="card-head"><div><h3>Contratos</h3><div class="sub">Empréstimos, financiamento do carro, parcelamentos…</div></div><button class="btn primary sm" data-act="addDebt">+ Dívida / Financiamento</button></div>
   ${state.debts.length?`<div class="grid g3">${state.debts.map(d=>{const p=(+d.parcelasPagas)/(+d.totalParcelas)*100,rest=(+d.totalParcelas)-(+d.parcelasPagas);const end=d.inicio?addM(d.inicio,+d.totalParcelas-1):addM(curMonth,rest-1);
@@ -2753,6 +2753,10 @@ const MAN=[
   o:'Leve seus dados para o contador, o Imposto de Renda ou o Excel.',
   p:['Abra <b>Configurações › Exportar</b> e escolha o ano.','<b>Planilha do ano (CSV)</b>: abre no Excel e no Google Planilhas.','<b>Relatório anual</b> ou <b>do mês (PDF)</b>: na tela de impressão, escolha <b>Salvar como PDF</b>.'],
   d:['No celular, a planilha abre a tela de compartilhar: salve no Drive ou mande para você mesmo.']},
+ {id:'sairdividas',a:'futuro',ic:'🎯',t:'Sair das dívidas (plano de quitação)',go:['nav','sairdividas','Abrir Sair das dívidas'],onde:[manMenu(),'Sair das dívidas'],
+  o:'O app olha sua renda, seus gastos reais, as contas fixas e as parcelas, calcula quanto sobra de verdade e monta um plano mês a mês para quitar tudo.',
+  p:['Cadastre cada dívida: <b>+ Parcelada</b> (empréstimo, financiamento, acordo) ou <b>+ Saldo em aberto</b> (rotativo do cartão, cheque especial, conta atrasada). Informe os juros ao mês — é o que define a ordem.','Confira <b>Quanto cabe por mês</b>: renda − custo de vida − parcelas = sobra. O app guarda uma folga para imprevistos e um pouco para a reserva mínima.','Se quiser acelerar, informe os <b>cortes que você topa fazer</b> (o app sugere 20% dos desejos).','Escolha <b>Avalanche</b> (maior juros primeiro, paga menos juros) ou <b>Bola de neve</b> (menor dívida primeiro, vitórias rápidas) e toque em <b>Vou seguir este plano</b>.','Todo mês, abra <b>Este mês, pague</b> e toque em <b>Paguei</b> em cada dívida.'],
+  d:['Pagou a mais num contrato parcelado? O app antecipa as últimas parcelas com o desconto dos juros — peça esse desconto ao banco.','O plano mostra se está <b>em dia</b> ou <b>atrasado</b>; se a vida mudar, toque em Refazer o plano.','Atualize os saldos em aberto pela fatura/extrato de vez em quando.','Com plano ativo, o Posso comprar? mostra quantos dias uma compra atrasa a sua liberdade.']},
  {id:'lixeira',a:'sistema',ic:'⏪',t:'Lixeira e voltar no tempo',go:['nav','versoes','Abrir Voltar no tempo'],onde:[manMenu(),'Lixeira / Voltar no tempo'],
   o:'Apagou algo sem querer ou fez uma bagunça? Dá para desfazer.',
   p:['<b>Lixeira</b>: tudo o que você apaga fica lá por 30 dias. Toque em <b>Restaurar</b>.','<b>Voltar no tempo</b>: o app guarda uma cópia por dia. Escolha a data e toque em <b>Voltar</b> — todos os dados voltam a ficar como estavam.','Com a sincronização ligada, também aparecem as <b>versões na nuvem</b> (uma a cada sincronização).'],
@@ -3290,6 +3294,187 @@ Object.assign(ACT,{
   expPDF:()=>{const a=ui.expAno||todayYM().slice(0,4);if(a!==curMonth.slice(0,4))curMonth=a+(a===todayYM().slice(0,4)?todayYM().slice(4):'-12');view='anual';render();scrollTo(0,0);setTimeout(()=>window.print(),500)},
   expMesPDF:()=>{view='report';render();scrollTo(0,0);setTimeout(()=>window.print(),500)}
 });
+
+/* ============================================================
+   SAIR DAS DÍVIDAS — plano de quitação que cabe no orçamento
+   ============================================================ */
+const PD_DEF={metodo:'avalanche',folga:10,cortes:0,reserva:true};
+const pdCfg=()=>Object.assign({},PD_DEF,state.planoDividas||(ui&&ui.pd)||{});
+const ehAberta=d=>d&&d.modo==='aberta';
+
+/* dívidas que entram no plano (cartão parcelado fica de fora: já está no custo de vida) */
+function pdLista(){return state.debts.filter(d=>debtRemaining(d)>0.5).map(d=>{
+  if(ehAberta(d))return{id:d.id,n:d.nome,saldo:+d.saldo||0,juros:+d.juros||0,parc:+d.minimo||0,aberta:true,atrasada:!!d.atrasada,d};
+  const n=Math.max(0,(+d.totalParcelas)-(+d.parcelasPagas)),i=(+d.juros||0)/100,pv=i?(+d.parcela)*(1-Math.pow(1+i,-n))/i:debtRemaining(d);
+  return{id:d.id,n:d.nome,saldo:Math.round(pv*100)/100,juros:+d.juros||0,parc:+d.parcela||0,aberta:false,atrasada:!!d.atrasada,rest:n,d}})}
+
+/* quanto cabe por mês, de forma realista */
+function pdCapacidade(){
+  const ym=todayYM(),C=pdCfg(),dcat=new Set(state.debts.map(d=>norm(d.cat||'Dívidas e financiamentos')));dcat.add(norm('Dívidas e financiamentos'));
+  const ms=[1,2,3].map(i=>addM(ym,-i)).filter(x=>actualEntries(x).length);
+  const rs=[ym,...ms].map(x=>incomeTotal(x)).filter(v=>v>0),renda=rs.length?sum(rs,v=>v)/rs.length:0;
+  const K={},get=r=>{const k=r.tipo+'|'+norm(r.cat);return K[k]||(K[k]={tipo:r.tipo,cat:r.cat,plan:0,media:0,fixas:0})};
+  comparison(ym).forEach(r=>{if(r.tipo==='savings'||dcat.has(norm(r.cat)))return;get(r).plan+=+r.plan||0});
+  ms.forEach(x=>comparison(x).forEach(r=>{if(r.tipo==='savings'||dcat.has(norm(r.cat)))return;get(r).media+=(+r.real||0)/ms.length}));
+  state.bills.filter(b=>billActive(b,ym)&&!dcat.has(norm(b.cat))&&b.tipo!=='savings').forEach(b=>get(b).fixas+=+b.valor||0);
+  const cats=Object.values(K).map(c=>({...c,v:Math.max(c.plan,c.media,c.fixas)})).filter(c=>c.v>0).sort((a,b)=>b.v-a.v);
+  const custo=sum(cats,c=>c.v),L=pdLista(),minimos=sum(L,d=>d.parc),sobra=renda-custo-minimos;
+  const res=reservaInfo(),precisaRes=C.reserva&&res.needs>0&&res.meses<1;
+  const aporteRes=precisaRes&&sobra>0?Math.min(Math.round(sobra*.15),Math.max(0,Math.ceil(res.needs-res.valor))):0;
+  const folga=sobra>0?Math.round((sobra-aporteRes)*C.folga/100):0;
+  const extra=Math.max(0,sobra-aporteRes-folga)+Math.max(0,+C.cortes||0);
+  return{renda,custo,cats,minimos,sobra,aporteRes,folga,extra,orc:minimos+extra,L,res,ms:ms.length};
+}
+
+/* simulação mês a mês: juros do mês, parcelas/mínimos, e a sobra vai para a dívida da vez */
+function pdSimula(L,extra,metodo,max=360){
+  const ds=L.map(d=>({id:d.id,n:d.n,s:+d.saldo,i:(+d.juros||0)/100,p:+d.parc||0})).filter(d=>d.s>0.5);
+  const ordem=()=>ds.filter(d=>d.s>0.5).sort((a,b)=>metodo==='bola'?a.s-b.s:metodo==='minimo'?0:b.i-a.i||a.s-b.s);
+  let k=0,juros=0,pago=0;const quit=[],linhas=[],serie=[sum(ds,d=>d.s)];
+  while(ds.some(d=>d.s>0.5)&&k<max){const pag={},ym=addM(todayYM(),k);k++;let livre=metodo==='minimo'?0:extra;
+    ds.forEach(d=>{if(d.s<=0.5)return;const j=d.s*d.i;juros+=j;d.s+=j;const pg=Math.min(d.s,d.p);d.s-=pg;pag[d.id]=(pag[d.id]||0)+pg;if(d.s<=0.5&&!quit.find(x=>x.id===d.id))quit.push({id:d.id,n:d.n,ym})});
+    if(metodo!=='minimo')ds.forEach(d=>{if(d.s<=0.5&&d.p){livre+=d.p;d.p=0}});
+    for(const d of ordem()){if(livre<=0.5)break;const pg=Math.min(d.s,livre);d.s-=pg;livre-=pg;pag[d.id]=(pag[d.id]||0)+pg;if(d.s<=0.5&&!quit.find(x=>x.id===d.id))quit.push({id:d.id,n:d.n,ym})}
+    const tot=sum(Object.values(pag),v=>v);pago+=tot;linhas.push({ym,pag,tot,saldo:sum(ds,d=>Math.max(0,d.s))});serie.push(sum(ds,d=>Math.max(0,d.s)))}
+  const nunca=ds.some(d=>d.s>0.5);
+  return{meses:k,juros,pago,quit,linhas,serie,nunca,fim:nunca?null:addM(todayYM(),k-1)};
+}
+const pdPrazo=r=>r.nunca?'não termina':r.meses>=12?Math.floor(r.meses/12)+' ano(s)'+(r.meses%12?' e '+(r.meses%12)+' m':''):r.meses+' mês(es)';
+
+/* gráfico simples (SVG, funciona sem internet) */
+function pdGrafico(serie,serie0){const W=320,H=120,mx=Math.max(...serie,...(serie0||[0]),1),n=Math.max(serie.length,(serie0||[]).length,2);
+  const pts=s=>s.map((v,i)=>`${(i/(n-1)*W).toFixed(1)},${(H-6-v/mx*(H-12)).toFixed(1)}`).join(' ');
+  return`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:130px;display:block" preserveAspectRatio="none">${serie0?`<polyline points="${pts(serie0)}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>`:''}<polyline points="${pts(serie)} ${W},${H-6} 0,${H-6}" fill="var(--accent)" fill-opacity=".12" stroke="none"/><polyline points="${pts(serie)}" fill="none" stroke="var(--accent)" stroke-width="2.5" vector-effect="non-scaling-stroke"/></svg>
+  <div class="row muted" style="font-size:11px;justify-content:space-between"><span>hoje · ${brl(serie[0])}</span>${serie0?'<span>- - - só os mínimos</span>':''}<span>${mLabel(addM(todayYM(),serie.length-2))}</span></div>`}
+
+/* acompanhamento: o saldo de hoje está onde o plano previa? */
+function pdStatus(cap){const P=state.planoDividas;if(!P||!P.serie)return null;const idx=mDiff(P.inicio,todayYM());if(idx<=0)return{ok:true,novo:true};
+  const esperado=P.serie[Math.min(idx,P.serie.length-1)],real=sum(cap.L,d=>d.saldo);return{ok:real<=esperado*1.03+50,esperado,real,dif:real-esperado,idx}}
+
+function vSairDividas(){
+  const C=pdCfg(),cap=pdCapacidade(),L=cap.L,tot=sum(L,d=>d.saldo),P=state.planoDividas;
+  const addBtns=`<div class="row" style="flex-wrap:wrap;gap:8px"><button class="btn sm primary" data-act="addDebt">+ Parcelada</button><button class="btn sm primary" data-act="addDebtAberta">+ Saldo em aberto</button></div>`;
+  if(!L.length)return`<div class="card"><h3>🎯 Sair das dívidas</h3><p class="muted">Cadastre suas dívidas e o app monta um plano de quitação que cabe no seu orçamento.</p>
+   <ul class="muted" style="padding-left:18px;margin:8px 0 14px;line-height:1.6"><li><b>Parcelada</b>: empréstimo, financiamento, consignado, acordo em parcelas.</li><li><b>Saldo em aberto</b>: rotativo do cartão, cheque especial, conta atrasada.</li></ul>${addBtns}</div>`;
+  const sims={minimo:pdSimula(L,0,'minimo'),avalanche:pdSimula(L,cap.extra,'avalanche'),bola:pdSimula(L,cap.extra,'bola')},S=sims[C.metodo]||sims.avalanche;
+  const st=P?pdStatus(cap):null,mes=S.linhas[0]||{pag:{}};
+  const linha=(t,v,cls='',tip='')=>`<div class="stat-line"><span>${t}${tip?` <span class="muted" style="font-size:11px">${tip}</span>`:''}</span><b class="${cls}">${v}</b></div>`;
+  const alertas=[];
+  L.filter(d=>d.atrasada).forEach(d=>alertas.push(['warn',`<b>${esc(d.n)}</b> está atrasada: antes de pagar parcelado, peça proposta de quitação à vista — dívidas atrasadas costumam ter descontos grandes (Serasa Limpa Nome, Desenrola, feirões de renegociação).`]));
+  L.filter(d=>d.juros>=6).forEach(d=>alertas.push(['bad',`<b>${esc(d.n)}</b> cobra ${num(d.juros,1)}% ao mês (mais de ${Math.round((Math.pow(1+d.juros/100,12)-1)*100)}% ao ano). Trocar por um crédito mais barato (consignado, empréstimo pessoal) pode economizar muito — <b>só se você não voltar a usar o crédito caro</b>.`]));
+  L.filter(d=>d.aberta&&d.parc<=d.saldo*d.juros/100+0.01).forEach(d=>alertas.push(['bad',`O pagamento mínimo de <b>${esc(d.n)}</b> (${brl(d.parc)}) não cobre nem os juros do mês (${brl(d.saldo*d.juros/100)}): pagando só isso, a dívida <b>cresce</b>.`]));
+  if(cap.renda&&cap.minimos/cap.renda>.3)alertas.push(['warn',`As parcelas somam ${pctf(cap.minimos/cap.renda*100,0)} da renda (o saudável é até 30%). Renegociar prazo ou portabilidade pode dar fôlego.`]);
+  const prioridade=[...L].sort((a,b)=>C.metodo==='bola'?a.saldo-b.saldo:b.juros-a.juros||a.saldo-b.saldo)[0];
+  return`
+  <div class="grid g3">${kpi('Total em dívidas',brl(tot),L.length+' dívida(s)',null,'neg')}${kpi('Parcelas e mínimos',brl(cap.minimos)+'/mês',cap.renda?pctf(cap.minimos/cap.renda*100,0)+' da renda':'')}${kpi('Livre das dívidas',S.nunca?'—':mLabel(S.fim,true),S.nunca?'aumente o valor mensal':'em '+pdPrazo(S),null,'pos')}</div>
+
+  ${st&&!st.novo?`<div class="alert ${st.ok?'ok':'warn'}">${st.ok?`✅ <b>Plano em dia.</b> Você deve ${brl(st.real)} — o plano previa ${brl(st.esperado)} neste mês.`:`⚠️ <b>Plano atrasado:</b> você deve ${brl(st.dif)} a mais do que o previsto. Registrou os pagamentos? Se a vida mudou, refaça o plano.`}<div class="row" style="margin-top:8px"><button class="btn sm" data-act="pdSalvar">↻ Refazer o plano com os números de hoje</button></div></div>`:''}
+
+  <div class="card"><h3>💰 Quanto cabe por mês</h3><div class="sub">Calculado com a sua renda e os seus gastos reais (o maior entre o planejado, a média dos últimos ${cap.ms||1} mês(es) e as contas fixas — para o plano não depender de cortes que não vão acontecer).</div>
+   ${linha('Renda média',brl(cap.renda),'pos')}
+   <details><summary class="stat-line" style="cursor:pointer;list-style:none"><span>− Custo de vida <span class="muted" style="font-size:11px">(ver categorias ›)</span></span><b>${brl(cap.custo)}</b></summary>${cap.cats.map(c=>linha('&nbsp;&nbsp;'+esc(c.cat),brl(c.v),'',c.tipo==='wants'?'desejo':'')).join('')}</details>
+   ${linha('− Parcelas e mínimos das dívidas',brl(cap.minimos))}
+   ${linha('= Sobra do mês',brl(cap.sobra),cap.sobra<0?'neg':'')}
+   ${cap.aporteRes?linha('− Reserva mínima',brl(cap.aporteRes),'','até ter 1 mês de gastos essenciais'):''}
+   ${cap.folga?linha(`− Folga para imprevistos (${C.folga}%)`,brl(cap.folga)):''}
+   ${+C.cortes?linha('+ Cortes que você topou fazer',brl(+C.cortes),'pos'):''}
+   <div class="stat-line" style="border-top:1px solid var(--border);padding-top:8px;margin-top:4px"><span><b>Extra para atacar as dívidas</b></span><b class="pos" style="font-size:18px">${brl(cap.extra)}/mês</b></div>
+   ${cap.sobra<0?`<div class="alert bad" style="margin-top:10px"><b>O orçamento não fecha:</b> faltam ${brl(-cap.sobra)} por mês só para pagar os mínimos. Caminhos: 1) cortar desejos (abaixo); 2) renegociar para parcelas menores; 3) uma renda extra temporária. Enquanto isso, priorize essenciais e as dívidas com garantia (casa, carro).</div>`:''}
+   <div class="grid g2" style="margin-top:12px">
+    <label style="display:grid;gap:5px;font-size:12px;color:var(--muted);font-weight:600">Cortes que você topa fazer (R$/mês)<input type="text" inputmode="decimal" data-pd="cortes" value="${+C.cortes?String(C.cortes).replace('.',','):''}" placeholder="Ex.: 200"></label>
+    <label style="display:grid;gap:5px;font-size:12px;color:var(--muted);font-weight:600">Folga para imprevistos<select data-pd="folga">${[0,5,10,15,20,30].map(v=>`<option value="${v}" ${+C.folga===v?'selected':''}>${v}% da sobra</option>`).join('')}</select></label></div>
+   <label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px"><input type="checkbox" data-pd="reserva" ${C.reserva?'checked':''}> Guardar um pouco para a reserva mínima enquanto ela não cobre 1 mês</label>
+   ${(()=>{const w=cap.cats.filter(c=>c.tipo==='wants').slice(0,4);return w.length?`<div class="q-label" style="margin-top:12px">Onde dá para cortar (20% de cada desejo)</div>${w.map(c=>linha(esc(c.cat),'−'+brl(Math.round(c.v*.2)))).join('')}<button class="btn sm" data-act="pdCortes" data-id="${Math.round(sum(w,c=>c.v*.2))}" style="margin-top:6px">Usar ${brl(Math.round(sum(w,c=>c.v*.2)))} de cortes</button>`:''})()}
+  </div>
+
+  <div class="card"><h3>🧭 Escolha a estratégia</h3><div class="sub">As duas usam o mesmo valor por mês; muda a ordem. Quando uma dívida acaba, a parcela dela reforça a próxima.</div>
+   <div class="grid g3">${[['minimo','😐 Só os mínimos','sem plano'],['avalanche','🏔 Avalanche','maior juros primeiro'],['bola','⛄ Bola de neve','menor dívida primeiro']].map(([k,t,s])=>{const r=sims[k];return`<div class="card kpi" ${k==='minimo'?'':`data-act="pdMetodo" data-id="${k}" style="cursor:pointer;${C.metodo===k?'outline:2px solid var(--accent)':''}"`}><div class="label">${t}${C.metodo===k&&k!=='minimo'?' ✓':''}</div><div class="value ${k==='minimo'?'':'pos'}" style="font-size:18px">${r.nunca?'não termina':mLabel(r.fim,true)}</div><div class="hint">${s} · juros ${brl(r.juros)}</div></div>`}).join('')}</div>
+   ${!sims.minimo.nunca&&sims.minimo.juros>S.juros+1?`<div class="alert ok">Seguindo o plano você economiza <b>${brl(sims.minimo.juros-S.juros)}</b> em juros e fica livre <b>${sims.minimo.meses-S.meses} mês(es)</b> antes.</div>`:sims.minimo.nunca&&!S.nunca?`<div class="alert ok">Pagando só os mínimos a dívida nunca acaba. Com o plano, acaba em <b>${pdPrazo(S)}</b>.</div>`:''}
+   ${pdGrafico(S.serie,sims.minimo.nunca?null:sims.minimo.serie)}
+   <div class="q-label" style="margin-top:10px">Ordem de quitação</div>${S.quit.map((q,i)=>`<div class="stat-line"><span>${i+1}º ${esc(q.n)}</span><b>${mLabel(q.ym,true)}</b></div>`).join('')||'<div class="muted">—</div>'}
+   <button class="btn primary" data-act="pdSalvar" style="margin-top:12px">${P?'✔ Atualizar meu plano':'Vou seguir este plano'}</button>
+  </div>
+
+  <div class="card"><h3>📅 Este mês, pague</h3><div class="sub">${prioridade?`Todo o extra vai para <b>${esc(prioridade.n)}</b>; nas outras, só a parcela/mínimo.`:''}</div>
+   ${L.map(d=>{const v=mes.pag[d.id]||0;return`<div class="mrow"><div class="ic" style="background:var(--panel2)">${d.aberta?'🔥':'📄'}</div><div class="tx"><b>${esc(d.n)}</b><small>deve ${brl(d.saldo)} · ${d.juros?num(d.juros,2)+'% a.m.':'juros não informados'}${d.atrasada?' · <span class="neg">atrasada</span>':''}${v>d.parc+0.5?' · <b class="pos">+'+brl(v-d.parc)+' extra</b>':''}</small></div><div class="vl">${brl(v)}<div><button class="btn sm" data-act="pdPagar" data-id="${d.id}" data-v="${Math.round(v*100)/100}" style="margin-top:4px">Paguei</button></div></div></div>`}).join('')}
+   <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:8px">${addBtns}<button class="btn sm" data-act="nav" data-id="debts">Ver contratos</button></div>
+   ${L.some(d=>d.aberta&&d.d.saldoEm&&(Date.now()-new Date(d.d.saldoEm))/864e5>35)?'<div class="muted" style="font-size:12px;margin-top:8px">💡 Algum saldo em aberto está desatualizado: confira na fatura/extrato e edite para o plano ficar certo.</div>':''}
+  </div>
+
+  ${S.linhas.length>1?`<div class="card"><details><summary style="cursor:pointer;font-weight:700">📋 Plano mês a mês (${S.linhas.length} meses)</summary><div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Mês</th><th class="num">Pagar</th><th class="num">Fica devendo</th></tr></thead><tbody>${S.linhas.slice(0,120).map(l=>`<tr><td>${mLabel(l.ym,true)}</td><td class="num">${brl(l.tot)}</td><td class="num">${brl(l.saldo)}</td></tr>`).join('')}</tbody></table></div></details></div>`:''}
+
+  ${alertas.length?`<div class="card"><h3>⚠️ Atenção</h3>${alertas.map(a=>`<div class="alert ${a[0]}">${a[1]}</div>`).join('')}</div>`:''}
+  <div class="card"><h3>🛠 Regras para dar certo</h3><ul class="muted" style="padding-left:18px;margin:0;line-height:1.7">
+   <li>Não faça dívida nova enquanto o plano estiver ativo — o <b>Posso comprar?</b> avisa quanto uma compra atrasa o plano.</li>
+   <li>Pague o rotativo do cartão e o cheque especial primeiro: são os juros mais altos do país.</li>
+   <li>Dinheiro extra (13º, férias, restituição, venda de algo)? Jogue na dívida da vez e toque em <b>Paguei</b>.</li>
+   <li>Ao antecipar parcelas de um contrato, peça o <b>desconto dos juros</b> — é seu direito (as últimas parcelas saem mais baratas).</li>
+   <li>Situação grave (dívidas maiores que vários meses de renda)? Procure orientação: Procon, Defensoria ou o programa de superendividamento.</li></ul></div>`;
+}
+
+/* ---------- cadastro de dívida com saldo em aberto ---------- */
+function debtAbertaForm(d){const isNew=!d;d=d||{tipo:'Cartão de crédito (rotativo / atrasado)',cat:'Dívidas e financiamentos'};
+  openForm({title:isNew?'Dívida com saldo em aberto':'Editar dívida',fields:[
+    {name:'nome',label:'Nome',value:d.nome,required:true,placeholder:'Ex.: Rotativo Nubank'},
+    {name:'tipo',label:'Tipo',type:'select',options:DEBT_TYPES,value:d.tipo},
+    {name:'credor',label:'Credor / banco',value:d.credor},
+    {name:'saldo',label:'Quanto deve hoje (R$)',type:'number',step:'0.01',min:0,value:d.saldo,required:true},
+    {name:'juros',label:'Juros (% ao mês) — veja na fatura/extrato',type:'number',step:'0.01',min:0,value:d.juros,placeholder:'Rotativo ~14 · cheque especial ~8'},
+    {name:'minimo',label:'Quanto paga por mês no mínimo (R$)',type:'number',step:'0.01',min:0,value:d.minimo,placeholder:'Pagamento mínimo ou valor do acordo'},
+    {name:'atrasada',label:'Está atrasada / em negociação',type:'checkbox',value:!!d.atrasada},
+    {name:'cat',label:'Categoria no orçamento',value:d.cat,list:categoriesList(),full:true}
+  ],onSave:x=>{x.modo='aberta';x.parcela=+x.minimo||0;x.saldoEm=todayISO();if(isNew)state.debts.push({id:uid(),...x});else Object.assign(d,x);toast('Dívida salva')}})}
+
+/* antecipa parcelas do fim do contrato com o desconto dos juros; devolve quantas saíram */
+function pdAmortiza(d,E){const i=(+d.juros||0)/100;let n=Math.max(0,(+d.totalParcelas)-(+d.parcelasPagas)),q=0;
+  while(n>0){const pv=(+d.parcela)/Math.pow(1+i,n-1);if(E+0.01<pv)break;E-=pv;n--;q++}d.totalParcelas=(+d.totalParcelas)-q;return{q,sobra:E}}
+
+function pdPagarForm(id,v){const d=find(state.debts,id);if(!d)return;const ab=ehAberta(d);
+  openForm({title:'Pagamento — '+d.nome,fields:[
+    {name:'valor',label:'Valor pago (R$)',type:'number',step:'0.01',min:0,value:v||(ab?d.minimo:d.parcela),required:true},
+    {name:'date',label:'Data',type:'date',value:todayISO()},
+    ...(ab?[]:[{name:'soAmortiza',label:'Já registrei a parcela deste mês — é só pagamento extra (antecipação)',type:'checkbox',value:false}]),
+    {name:'lancar',label:'Lançar também como gasto do mês',type:'checkbox',value:true}],
+   onSave:x=>{const val=+x.valor||0;if(!(val>0)){toast('Digite o valor','err');return false}let msg='Pagamento registrado';
+    if(ab){d.saldo=Math.max(0,Math.round(((+d.saldo||0)-val)*100)/100);d.saldoEm=todayISO();msg=d.saldo>0?'Agora deve '+brl(d.saldo):'🎉 '+d.nome+' quitada!'}
+    else{let E=val;if(!x.soAmortiza&&(+d.parcelasPagas)<(+d.totalParcelas)){d.parcelasPagas=(+d.parcelasPagas)+1;E-=+d.parcela}
+      if(E>0.5){const r=pdAmortiza(d,E);msg=r.q?`Parcela paga + ${r.q} parcela(s) do fim antecipada(s)`:'Parcela registrada (o extra não chegou a cobrir uma parcela do fim)'}
+      if((+d.parcelasPagas)>=(+d.totalParcelas))msg='🎉 '+d.nome+' quitada!'}
+    if(x.lancar)state.expenses.push(stampPor({id:uid(),criado:Date.now(),desc:'Dívida — '+d.nome,valor:val,date:x.date,cat:d.cat||'Dívidas e financiamentos',tipo:tipoOfCat(d.cat)||'needs',pay:'Pix'}));
+    toast(msg)}})}
+
+/* ---------- integrações com o que já existe ---------- */
+{const i=DEBT_TYPES.indexOf('Outro');DEBT_TYPES.splice(i<0?DEBT_TYPES.length:i,0,'Cartão de crédito (rotativo / atrasado)','Acordo / renegociação','Conta atrasada')}
+{const _r=debtRemaining;debtRemaining=d=>ehAberta(d)?Math.max(0,+d.saldo||0):_r(d)}
+{const _a=debtActiveIn;debtActiveIn=(d,ym)=>ehAberta(d)?(+d.saldo||0)>0:_a(d,ym)}
+{const _l=dividasLista;dividasLista=()=>{const L=_l();state.debts.filter(ehAberta).forEach(d=>{const x=L.find(y=>y.n===d.nome);if(x){x.saldo=+d.saldo||0;x.parc=+d.minimo||0}});return L.filter(x=>isFinite(x.saldo))}}
+{const _f=debtForm;debtForm=d=>ehAberta(d)?debtAbertaForm(d):_f(d)}
+{const _v=VIEWS.debts;VIEWS.debts=()=>{const ab=state.debts.filter(ehAberta),reg=state.debts.filter(d=>!ehAberta(d));state.debts=reg;let h;try{h=_v()}finally{state.debts=reg.concat(ab)}
+  const top=`<div class="alert ok" data-act="nav" data-id="sairdividas" style="cursor:pointer">🎯 <b>Sair das dívidas:</b> monte um plano de quitação que cabe no seu orçamento ›</div>`;
+  const cards=ab.length?`<div class="card"><div class="card-head"><div><h3>Saldos em aberto</h3><div class="sub">Rotativo, cheque especial, contas atrasadas</div></div></div><div class="grid g3">${ab.map(d=>`<div class="item-card"><div class="row"><span class="t">🔥 ${esc(d.nome)}</span><span class="spacer"></span>${d.atrasada?'<span class="badge bad">atrasada</span>':`<span class="badge info">${esc(d.tipo)}</span>`}</div><div class="muted" style="font-size:12px;margin:3px 0 10px">${esc(d.credor||'')}</div>
+    <div class="stat-line"><span>Deve hoje</span><b class="neg">${brl(d.saldo)}</b></div><div class="stat-line"><span>Juros</span><b>${d.juros?num(d.juros,2)+'% a.m.':'—'}</b></div><div class="stat-line"><span>Mínimo / acordo</span><b>${brl(d.minimo||0)}</b></div><div class="stat-line"><span>Atualizado em</span><b>${fmtDate(d.saldoEm)}</b></div>
+    <div class="row" style="margin-top:10px">${+d.saldo>0?`<button class="btn sm primary" data-act="pdPagar" data-id="${d.id}">Registrar pagamento</button>`:'<span class="badge ok">Quitada ✅</span>'}<span class="spacer"></span><button class="icon-btn" data-act="editDebt" data-id="${d.id}">✎</button><button class="icon-btn" data-act="delDebt" data-id="${d.id}">🗑</button></div></div>`).join('')}</div></div>`:'';
+  return top+h.replace('<button class="btn primary sm" data-act="addDebt">+ Dívida / Financiamento</button>','<div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn primary sm" data-act="addDebt">+ Parcelada</button><button class="btn primary sm" data-act="addDebtAberta">+ Saldo em aberto</button></div>')+cards}}
+/* "Posso comprar?" avisa quanto a compra atrasa o plano */
+{const _pc=pcCalc;pcCalc=P=>{let h=_pc(P);const PL=state.planoDividas,v=+P.valor||0;if(!PL||!v||!pdLista().length||P.cat.startsWith('savings'))return h;
+  const ex=Math.max(1,pdCapacidade().orc),dias=Math.round(v/ex*30);
+  return h.replace('<button class="btn primary" data-act="pcLanca"',`<div class="alert warn" style="margin-top:10px">🎯 Você está num plano para sair das dívidas: esta compra atrasa a sua liberdade em cerca de <b>${dias>=60?Math.round(dias/30)+' meses':dias+' dias'}</b>.</div><button class="btn primary" data-act="pcLanca"`)}}
+
+document.addEventListener('change',e=>{const k=e.target.dataset&&e.target.dataset.pd;if(!k)return;
+  const val=k==='reserva'?e.target.checked:k==='cortes'?Math.max(0,parseNum(e.target.value)||0):+e.target.value;
+  if(state.planoDividas){state.planoDividas[k]=val;save()}else{ui.pd=Object.assign(ui.pd||{},{[k]:val})}keepScroll()});
+Object.assign(ACT,{
+  addDebtAberta:()=>debtAbertaForm(),
+  editDebt:id=>debtForm(find(state.debts,id)),
+  pdPagar:(id,el)=>pdPagarForm(id,el&&el.dataset?+el.dataset.v:0),
+  pdMetodo:m=>{if(state.planoDividas){state.planoDividas.metodo=m;save()}else ui.pd=Object.assign(ui.pd||{},{metodo:m});keepScroll()},
+  pdCortes:v=>{if(state.planoDividas){state.planoDividas.cortes=+v;save()}else ui.pd=Object.assign(ui.pd||{},{cortes:+v});keepScroll()},
+  pdSalvar:()=>{const C=pdCfg(),cap=pdCapacidade(),S=pdSimula(cap.L,cap.extra,C.metodo);
+    state.planoDividas={metodo:C.metodo,folga:C.folga,cortes:C.cortes,reserva:C.reserva,criado:new Date().toISOString(),inicio:todayYM(),serie:S.serie.slice(0,241).map(v=>Math.round(v)),orc:Math.round(cap.orc*100)/100,fim:S.fim};ui.pd=null;save();
+    toast(S.nunca?'Plano salvo — aumente o valor mensal para ter uma data de fim':'Plano salvo: livre das dívidas em '+mLabel(S.fim,true));keepScroll()}
+});
+Object.assign(VIEWS,{sairdividas:vSairDividas});
+Object.assign(IC,{sairdividas:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>'});
 
 /* ============================================================
    BLOQUEIO DO APP — senha, padrão desenhado ou impressão digital
