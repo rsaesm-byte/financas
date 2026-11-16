@@ -218,7 +218,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.15-7';
+const APP_VERSAO='2026.11.16-1';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -283,7 +283,11 @@ function fecharAssistente(){try{localStorage.setItem('finm_wizard','1')}catch(e)
    ============================================================ */
 const $=s=>document.querySelector(s);
 const uid=()=>Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-4);
-const brl=v=>(+v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+/* 👁 valores escondidos (como nos apps de banco): por padrão o app abre com os valores ocultos */
+const OLHO_K='finm_oculto_abrir';
+const olhoPref=()=>{try{return localStorage.getItem(OLHO_K)!=='0'}catch(e){return true}};
+let OCULTO=olhoPref();
+const brl=v=>OCULTO?'R$ •••••':(+v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const num=(v,d=1)=>(+v||0).toLocaleString('pt-BR',{maximumFractionDigits:d,minimumFractionDigits:d});
 const pctf=(v,d=1)=>isFinite(v)?num(v,d)+'%':'—';
 const signBrl=v=>(v>0?'+':v<0?'−':'')+brl(Math.abs(v));
@@ -428,7 +432,7 @@ function openMore(){
    ${sec('Visão geral',it('dashboard','Dashboard')+it('review','Revisão do período')+it('report','Relatório do mês')+it('anual','Ano & assinaturas','report')+it('fechar','Fechar o mês','calendar')+it('busca','Buscar & etiquetas'))}
    ${sec('Planejamento',it('contas','Contas e saldos','vale')+it('budget','Renda & Orçamento')+it('compare','Planejado × Real')+it('bills','Contas fixas')+it('possocomprar','Posso comprar?'))}
    ${sec('Compromissos',it('debts','Dívidas')+it('sairdividas','Sair das dívidas')+it('cards','Cartões')+it('goals','Metas & Reservas')+it('dividir','Dividir despesas','profile'))}
-   ${sec('Sistema',it('importar','Importar extrato','importar')+it('versoes','Voltar no tempo','versoes')+it('lixeira','Lixeira','lixeira')+it('settings','Configurações','settings')+it('manual','Manual e ajuda','manual')+`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme','Temas','theme','theme')+
+   ${sec('Sistema',it('importar','Importar extrato','importar')+it('versoes','Voltar no tempo','versoes')+it('lixeira','Lixeira','lixeira')+it('settings','Configurações','settings')+it('manual','Manual e ajuda','manual')+`<button type="button" class="more-item ${lkGet()?'on':''}" data-act="lockMenu">🔒<span>Bloqueio: ${lkGet()?'ativo':'desligado'}</span></button><button type="button" class="more-item ${state.settings.fx!==false?'on':''}" data-act="toggleFx">✨<span>Animações 3D: ${state.settings.fx!==false?'ligadas':'desligadas'}</span></button><button type="button" class="more-item ${OCULTO?'on':''}" data-act="olho">${OCULTO?'🙈':'👁'}<span>Valores: ${OCULTO?'escondidos':'visíveis'}</span></button><button type="button" class="more-item" data-act="forceUpdate">🔄<span>Atualizar o app<br><small class="muted">versão ${APP_VERSAO}</small></span></button>`+it('settings','Configurações e backup','settings')+it('share','Compartilhar backup','share','shareBackup')+it('theme','Temas','theme','theme')+
      it('todayM','Ir para o mês atual','calendar','todayM')+(installEvt?it('install','Instalar app','install','installApp'):''))}
   </div></div><footer><button type="button" class="btn" data-act="closeModal">Fechar</button></footer>`;
   f.onsubmit=e=>e.preventDefault();
@@ -489,7 +493,7 @@ function mkChart(id,cfg){
   cfg.options.plugins.legend=Object.assign({labels:{usePointStyle:true,boxWidth:8}},cfg.options.plugins.legend||{});
   charts.push(new Chart(el,cfg));
 }
-const moneyAxis={ticks:{callback:v=>'R$ '+(+v).toLocaleString('pt-BR',{notation:'compact'})},grid:{color:()=>cssVar('--border')}};
+const moneyAxis={ticks:{callback:v=>OCULTO?'•••':'R$ '+(+v).toLocaleString('pt-BR',{notation:'compact'})},grid:{color:()=>cssVar('--border')}};
 function destroyCharts(){charts.forEach(c=>c.destroy());charts=[]}
 
 /* ============================================================
@@ -2008,7 +2012,7 @@ function vDinheiroHoje(){
   const contas=C.map(c=>({c,s:contaSaldo(c)})),totC=sum(contas,x=>x.s.v);
   const vales=state.benefits.map(b=>({b,v:benBalance(b,ref)})),cards=state.cards.map(c=>({c,...proxFatura(c)}));
   const totFat=sum(cards,x=>x.v),totAb=sum(cards,x=>x.aberto);
-  let h=`<div class="card money"><div class="card-head"><div><h3>💼 Seu dinheiro hoje</h3></div><div class="row"><button class="btn sm" data-act="nav" data-id="contas">Contas</button><button class="btn sm" data-act="editConta">${C.length?'+ Conta':'Informar saldo'}</button></div></div>`;
+  let h=`<div class="card money"><div class="card-head"><div><h3>💼 Seu dinheiro hoje</h3></div><div class="row"><button class="olho-btn" data-act="olho" title="${OCULTO?'Mostrar valores':'Esconder valores'}" aria-label="${OCULTO?'Mostrar valores':'Esconder valores'}">${olhoSvg()}</button><button class="btn sm" data-act="nav" data-id="contas">Contas</button><button class="btn sm" data-act="editConta">${C.length?'+ Conta':'Informar saldo'}</button></div></div>`;
   if(C.length>1)h+=`<div class="stat-line" style="margin-bottom:4px"><span>Total em ${C.length} contas</span><b class="${totC<0?'neg':'pos'}" style="font-size:17px">${brl(totC)}</b></div>`;
   const mostrar=contas.length>4?[...contas].sort((a,b)=>(b.c.principal?1e12:0)+b.s.v-((a.c.principal?1e12:0)+a.s.v)).slice(0,3):contas;
   h+=C.length?mostrar.map(({c,s})=>`<div class="mrow" data-act="editConta" data-id="${c.id}"><div class="ic" style="background:${c.cor||corBanco(c.banco)}26;color:${c.cor||corBanco(c.banco)};font-size:13px;font-weight:800">${esc((c.banco||c.nome||'?').slice(0,2))}</div><div class="tx"><b>${esc(c.nome)}${c.principal?' ⭐':''}</b><small>${tipoContaLbl(c.tipo)} · ${c.auto?'estimado, ':''}conferido em ${fmtDate((c.data||'').slice(0,10))}${c.auto&&(s.ent||s.sai||s.fat)?` · ${s.ent?'+'+brl(s.ent)+' ':''}${s.sai||s.fat?'−'+brl(s.sai+s.fat):''}`:''}</small></div><div class="vl ${s.v<0?'neg':''}">${brl(s.v)}</div></div>`).join('')
@@ -2786,11 +2790,15 @@ const MAN=[
  {id:'cmdk',a:'dia',ic:'⌨️',t:'Buscar ou executar (Ctrl K) e botões do topo',go:['cmdk','','Abrir a busca agora'],onde:['Barra de cima › 🔍','Teclado: Ctrl K (⌘ K no Mac)'],
   o:'Como o Spotlight do Mac: digite e vá direto para qualquer tela, comando, tópico do manual ou lançamento.',
   p:['Aperte <b>Ctrl K</b> (ou toque na 🔍 / “Buscar ou executar…” no topo).','Digite parte do que quer: “cartões”, “lançar”, “tema”, “ifood”, “39,90”…','Use ↑ ↓ para escolher e <b>Enter</b> para abrir (ou toque/clique no item).','<b>Esc</b> fecha.'],
-  d:['No topo também ficam: o botão de <b>layout</b> (🖥 com a letra A = automático, PC = computador, 📱 = celular — cada clique troca) e o botão <b>↻ Atualizar</b>, que baixa a versão nova sem apagar seus dados.','Lançamentos aparecem a partir de 2 letras digitadas, no fim da lista.']},
+  d:['O <b>👁 olhinho</b> no topo mostra/esconde os valores.','No topo também ficam: o botão de <b>layout</b> (🖥 com a letra A = automático, PC = computador, 📱 = celular — cada clique troca) e o botão <b>↻ Atualizar</b>, que baixa a versão nova sem apagar seus dados (em celulares estreitos ele fica em Mais › Atualizar o app).','Lançamentos aparecem a partir de 2 letras digitadas, no fim da lista.']},
  {id:'config',a:'sistema',ic:'⚙️',t:'Configurações: onde fica cada coisa',go:['nav','settings','Abrir Configurações'],onde:[manMenu(),'Configurações'],
   o:'As configurações ficam separadas em abas no topo da tela.',
-  p:['<b>🎨 Aparência</b>: tema, animações 3D, coach, layout (computador/celular) e ícone do app.','<b>🔒 Bloqueio</b>: senha, padrão, digital e quando bloquear sozinho.','<b>☁️ Sincronizar e backup</b>: GitHub, onde os dados ficam, backup .json, voltar no tempo e lixeira.','<b>👥 Casal / família</b>: seu nome para aparecer quem lançou.','<b>💰 Orçamento</b>: porcentagens padrão dos meses novos.','<b>📤 Exportar</b>: planilha do ano, PDF e importar extrato.','<b>⚙️ App</b>: atualizar, instalar, manual, tour, dados de exemplo e apagar tudo.'],
-  d:['O cadeado 🔓 no topo abre direto a aba Bloqueio (ou bloqueia, se já estiver ligado).','A nuvem ☁️ no topo abre direto Sincronizar e backup.','Dica: Ctrl K → digite “bloqueio”, “backup”, “tema”…']},
+  p:['<b>🎨 Aparência</b>: tema, animações 3D, coach, layout (computador/celular) e ícone do app.','<b>🔒 Privacidade</b>: esconder valores (olhinho 👁), senha, padrão, digital e quando bloquear sozinho.','<b>☁️ Sincronizar e backup</b>: GitHub, onde os dados ficam, backup .json, voltar no tempo e lixeira.','<b>👥 Casal / família</b>: seu nome para aparecer quem lançou.','<b>💰 Orçamento</b>: porcentagens padrão dos meses novos.','<b>📤 Exportar</b>: planilha do ano, PDF e importar extrato.','<b>⚙️ App</b>: atualizar, instalar, manual, tour, dados de exemplo e apagar tudo.'],
+  d:['O cadeado 🔓 no topo abre direto a aba Privacidade (ou bloqueia, se já estiver ligado).','A nuvem ☁️ no topo abre direto Sincronizar e backup.','Dica: Ctrl K → digite “bloqueio”, “backup”, “tema”…']},
+ {id:'olho',a:'dia',ic:'👁',t:'Esconder saldo e valores (olhinho)',go:['olho','','Mostrar/esconder agora'],onde:['👁 no topo da tela','Card “Seu dinheiro hoje” no Início',manMenu()+' › Valores'],
+  o:'Igual aos apps de banco: troca saldos e valores por R$ ••••• para ninguém ver de relance.',
+  p:['O app abre com os valores <b>escondidos</b>.','Toque no <b>👁 olhinho</b> (no topo ou no card “Seu dinheiro hoje”) para mostrar; toque de novo para esconder.','Saiu do app e voltou? Os valores ficam escondidos de novo.'],
+  d:['Para o app abrir sempre com os valores visíveis: '+manMenu()+' › Configurações › Privacidade › desligue “Abrir o app com os valores escondidos”.','Os gráficos continuam aparecendo, mas os eixos com valores ficam ocultos.','Ao imprimir/gerar PDF, os valores aparecem normalmente.','Atalho: Ctrl K → “valores”.']},
  {id:'lixeira',a:'sistema',ic:'⏪',t:'Lixeira e voltar no tempo',go:['nav','versoes','Abrir Voltar no tempo'],onde:[manMenu(),'Lixeira / Voltar no tempo'],
   o:'Apagou algo sem querer ou fez uma bagunça? Dá para desfazer.',
   p:['<b>Lixeira</b>: tudo o que você apaga fica lá por 30 dias. Toque em <b>Restaurar</b>.','<b>Voltar no tempo</b>: o app guarda uma cópia por dia. Escolha a data e toque em <b>Voltar</b> — todos os dados voltam a ficar como estavam.','Com a sincronização ligada, também aparecem as <b>versões na nuvem</b> (uma a cada sincronização).'],
@@ -2853,7 +2861,7 @@ const MAN=[
   o:'Os dados ficam no seu aparelho, dentro do navegador. O GitHub guarda só o programa.',
   p:['Cada alteração é salva na hora.','<b>Compartilhar backup</b> gera um arquivo .json que você pode mandar para o Google Drive.','<b>Importar backup</b> traz os dados de volta, juntando sem duplicar.'],
   d:['Cada navegador tem a sua “gaveta”: os dados do Firefox não aparecem no Chrome. Use a sincronização ou o backup para levar de um para o outro.','Sem sincronização, faça backup toda semana — o Início lembra você.']},
- {id:'bloqueio',a:'sistema',ic:'🔒',t:'Bloqueio: senha, padrão e digital',go:['lockMenu','','Abrir Bloqueio'],onde:['Cadeado 🔓 no topo',manMenu()+' › Configurações › Bloqueio'],
+ {id:'bloqueio',a:'sistema',ic:'🔒',t:'Bloqueio: senha, padrão e digital',go:['lockMenu','','Abrir Bloqueio'],onde:['Cadeado 🔓 no topo',manMenu()+' › Configurações › Privacidade'],
   o:'Tranca o app para quem pegar o seu aparelho.',
   p:['Faça um backup (ou ligue a sincronização) antes.','Escolha <b>Usar senha</b> ou <b>Usar padrão</b> e confirme duas vezes.','Se quiser, ative a <b>👆 Digital</b>: ela é pedida sozinha ao abrir.','Escolha quando bloquear: só manual, ao sair do app, ou após 1, 5 ou 15 minutos fora.','Para bloquear na hora, toque no <b>cadeado 🔒</b> do topo. No computador, o atalho é <kbd>Alt</kbd> + <kbd>L</kbd>.'],
   d:['O app sempre abre trancado. Enquanto está trancado, nada aparece e os atalhos não funcionam.','É uma trava de privacidade: ela <b>não criptografa</b> os dados guardados no navegador.','<b>Esqueceu?</b> Não há recuperação: o botão “Esqueci” apaga os dados do aparelho. Com a sincronização ligada, basta conectar o token de novo.','O bloqueio vale só naquele aparelho e não protege o arquivo de backup.']},
@@ -3555,7 +3563,8 @@ Object.assign(ACT,{layout:k=>{try{k==='auto'?localStorage.removeItem(LAYOUT_K):l
    ============================================================ */
 function tbBotoes(){const m=layoutModo(),bd={auto:'A',pc:'PC',cel:'📱'}[m];
   const mac=/Mac|iPhone|iPad/.test(navigator.platform||navigator.userAgent);
-  return`<button type="button" class="tb-busca" data-act="cmdk" title="Buscar ou executar (${mac?'⌘':'Ctrl'} K)">${ico('busca')}<span class="tb-busca-t">Buscar ou executar…</span><kbd>${mac?'⌘':'Ctrl'} K</kbd></button>
+  return`<button type="button" class="tb-olho" data-act="olho" title="${OCULTO?'Mostrar valores':'Esconder valores'}" aria-label="${OCULTO?'Mostrar valores':'Esconder valores'}">${olhoSvg()}</button>
+   <button type="button" class="tb-busca" data-act="cmdk" title="Buscar ou executar (${mac?'⌘':'Ctrl'} K)">${ico('busca')}<span class="tb-busca-t">Buscar ou executar…</span><kbd>${mac?'⌘':'Ctrl'} K</kbd></button>
    <button type="button" class="tb-ic" data-act="layoutCiclo" title="Layout da tela: ${m==='auto'?'automático':m==='pc'?'computador':'celular'} (clique para trocar)">${ico('tela')}<i class="tb-bd">${bd}</i></button>
    <button type="button" class="tb-upd${$('#upd-bar')?' has-upd':''}" data-act="forceUpdate" title="Atualizar o app (versão ${APP_VERSAO})">↻<span> Atualizar</span></button>`}
 function tbPinta(){const h=$('.topbar');if(!h)return;let g=$('#tbExtra');if(!g){g=document.createElement('span');g.id='tbExtra';g.style.cssText='display:contents';const ref=$('#themeBtn')||h.lastElementChild;h.insertBefore(g,ref)}
@@ -3567,6 +3576,7 @@ let CK={q:'',i:0,itens:[]};
 function ckComandos(){const L=[],add=(ic,t,run,sub='',chave='')=>L.push({ic,t,run,sub,chave:sa(t+' '+sub+' '+chave)});
   add('➕','Lançar gasto',()=>ACT.quickAdd(),'atalho rápido','novo gasto despesa');
   add('💵','Nova renda',()=>ACT.addIncome(),'','receita salario entrada');
+  add('👁','Mostrar / esconder valores',()=>ACT.olho(),'olhinho','saldo privacidade ocultar');
   add('🔄','Atualizar o app',()=>atualizarApp(),'versão '+APP_VERSAO,'update recarregar');
   add('🖥','Layout: computador',()=>ACT.layout('pc'),'menu lateral','desktop pc tela');
   add('📱','Layout: celular',()=>ACT.layout('cel'),'menu embaixo','mobile tela');
@@ -3846,7 +3856,7 @@ try{const k=localStorage.getItem('finm_skin');if(SKINS[k]){document.documentElem
    ============================================================ */
 const CFG_SECS=[
   ['aparencia','🎨','Aparência','Tema, ícone, layout e animações'],
-  ['seguranca','🔒','Bloqueio','Senha, padrão e digital'],
+  ['seguranca','🔒','Privacidade','Esconder valores, senha, padrão e digital'],
   ['dados','☁️','Sincronizar e backup','Nuvem, cópias e salvamento'],
   ['pessoas','👥','Casal / família','Quem lançou cada gasto'],
   ['orcamento','💰','Orçamento','Porcentagens padrão'],
@@ -3875,7 +3885,7 @@ function cfgAparencia(){return`<div class="card"><div class="card-head"><div><h3
   +layoutCard()+iconeCard()}
 function vConfig(){const s=cfgSec(),S=CFG_SECS.find(x=>x[0]===s);
   const tabs=`<div class="cfg-tabs">${CFG_SECS.map(([k,ic,t])=>`<button type="button" class="chip ${k===s?'on':''}" data-act="cfg" data-id="${k}">${ic} ${t}</button>`).join('')}</div>`;
-  const corpo={aparencia:cfgAparencia,seguranca:()=>lkCard(),dados:()=>syCard()+vSaveCard()+cfgBackupCard(),pessoas:()=>quemCard(),orcamento:cfgPctCard,exportar:()=>exportCard()+cfgCard('⬆ Importar extrato do banco','Traz lançamentos de arquivos OFX/CSV','<button class="btn" data-act="nav" data-id="importar">Abrir Importar extrato ›</button>'),app:cfgAppCard}[s]();
+  const corpo={aparencia:cfgAparencia,seguranca:()=>olhoCard()+lkCard(),dados:()=>syCard()+vSaveCard()+cfgBackupCard(),pessoas:()=>quemCard(),orcamento:cfgPctCard,exportar:()=>exportCard()+cfgCard('⬆ Importar extrato do banco','Traz lançamentos de arquivos OFX/CSV','<button class="btn" data-act="nav" data-id="importar">Abrir Importar extrato ›</button>'),app:cfgAppCard}[s]();
   return tabs+`<div class="cfg-titulo"><h2>${S[1]} ${S[2]}</h2><span class="muted">${S[3]}</span></div>`+corpo}
 /* bloqueio: o mesmo conteúdo, organizado em passos */
 lkCard=function(){const c=lkGet(),auto=c?c.auto||0:0,num_=(n,t)=>`<div class="q-label" style="margin-top:16px">${n}. ${t}</div>`;
@@ -3887,13 +3897,22 @@ lkCard=function(){const c=lkGet(),auto=c?c.auto||0:0,num_=(n,t)=>`<div class="q-
    ${num_(3,'Quando bloquear sozinho')}<div class="chips">${[[-1,'Só manual'],[0,'Assim que sair do app'],[1,'Após 1 min fora'],[5,'Após 5 min fora'],[15,'Após 15 min fora']].map(([v,l])=>`<button class="chip ${auto===v?'on':''}" data-act="lkAuto" data-id="${v}">${l}</button>`).join('')}</div>
    ${num_(4,'Ações')}<div class="row" style="flex-wrap:wrap;gap:8px"><button class="btn" data-act="lkAgora">🔒 Bloquear agora</button><button class="btn danger" data-act="lkDesligar">Desligar bloqueio</button></div>`:''}
    <div class="muted" style="font-size:12px;margin-top:14px">Vale só neste aparelho e protege a tela do app (atalho: cadeado 🔓 no topo${isMobile()?'':' ou Alt+L'}). O arquivo de backup não é protegido pelo bloqueio.</div></div>`};
+function olhoSvg(){return`<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>${OCULTO?'<path d="M3 3l18 18"/>':''}</svg>`}
+function olhoCard(){return cfgCard('👁 Esconder valores','Como nos apps de banco: troca saldos e valores por R$ ••••• para quem estiver olhando a sua tela',
+   cfgSw(olhoPref(),'olhoPref','Abrir o app com os valores escondidos','Ao abrir (e ao voltar para o app) os valores ficam ocultos; toque no 👁 para ver')
+   +`<div class="row" style="margin-top:10px;align-items:center;gap:10px"><button class="btn" data-act="olho">${olhoSvg()} ${OCULTO?'Mostrar valores agora':'Esconder valores agora'}</button><span class="muted" style="font-size:12px">O olhinho fica no topo da tela e no card “Seu dinheiro hoje”.</span></div>`)}
 VIEWS.settings=vConfig;
 Object.assign(ACT,{
   cfg:k=>{closeModal();ui.cfg=k;view='settings';render();scrollTo(0,0)},
   lockMenu:()=>ACT.cfg('seguranca'),
+  olho:()=>{OCULTO=!OCULTO;render();tbPinta();toast(OCULTO?'🙈 Valores escondidos':'👁 Valores visíveis')},
+  olhoPref:()=>{const on=!olhoPref();try{localStorage.setItem(OLHO_K,on?'1':'0')}catch(e){}render();toast(on?'O app vai abrir com os valores escondidos':'O app vai abrir com os valores visíveis')},
   toggleFx:(()=>{const f=ACT.toggleFx;return()=>{f();if(view==='settings')render()}})()
 });
 
+/* 👁 ao sair do app, os valores voltam a ficar escondidos; na impressão/PDF eles aparecem */
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&olhoPref()&&!OCULTO){OCULTO=true;setTimeout(()=>{render();tbPinta()},0)}});
+{let antes=false;addEventListener('beforeprint',()=>{if(OCULTO){antes=true;OCULTO=false;render()}});addEventListener('afterprint',()=>{if(antes){antes=false;OCULTO=true;render()}})}
 (async()=>{
   if(isMobile())view='home';
   if(location.search.includes('atualizado=')){history.replaceState(null,'',location.pathname);setTimeout(()=>toast('App atualizado ✓ versão '+APP_VERSAO),800)}

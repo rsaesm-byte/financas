@@ -23,7 +23,7 @@ async def main():
       await pg.click('#lkBtn'); await pg.wait_for_timeout(400)
       hs=await pg.evaluate("[...document.querySelectorAll('#view h3')].map(h=>h.textContent.trim())")
       print(w,'cadeado abre:',await pg.evaluate("[view,ui.cfg]"),hs)
-      if hs!=['🔒 Bloqueio do app']: errs.append('bloqueio mostra outras coisas: '+str(hs))
+      if hs!=['👁 Esconder valores','🔒 Bloqueio do app']: errs.append('bloqueio mostra outras coisas: '+str(hs))
       await pg.screenshot(path=f'cfg-seguranca-{w}.png',full_page=True)
       for s in SECS:
         await pg.click(f'.cfg-tabs [data-id={s}]'); await pg.wait_for_timeout(250)
