@@ -218,7 +218,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.16-1';
+const APP_VERSAO='2026.11.21-1';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -2871,7 +2871,8 @@ const MAN=[
   d:['Use sempre pelo ícone instalado: a aba comum do navegador guarda os dados separados.','Novo ícone: no Chrome (Android/computador) ele muda sozinho, em geral em até 1 dia. No Firefox e no iPhone é preciso remover o atalho e adicionar de novo — o app mostra o passo a passo do seu aparelho.','No iPhone, remover o app da Tela de Início apaga os dados dele: confira a sincronização ☁️✓ ou faça backup antes.']},
  {id:'aparencia',a:'sistema',ic:'🎨',t:'Tema, animações e gestos',go:['theme','','Escolher um tema agora'],onde:[manMenu()],
   o:'Deixe o app do seu jeito.',
-  p:['<b>Temas</b>: '+manMenu()+' › Temas. São 5 visuais (Oceano, Dólar, Ônix, Pergaminho e Aurora), cada um com cores, fundo e fonte próprios.','<b>Animações 3D</b>: '+manMenu()+' › ✨ Animações 3D (ligar/desligar).','<b>Fechar telas</b>: arraste a folha para baixo, use o botão voltar ou toque fora dela.'],d:[]}
+  p:['<b>Temas</b>: botão 🎨 Tema no topo, ou '+manMenu()+' › Configurações › Aparência. São 11 visuais: 5 clássicos (Oceano, Dólar, Ônix, Pergaminho e Aurora) e 6 <b>animados ✨</b>.','<b>Temas animados escuros</b>: Bolsa ao vivo (gráficos em neon), Chuva de ouro (moedas caindo) e Fintech (rede de transações).','<b>Temas animados claros</b>: Cédula (linhas de segurança de nota), Crescimento (barras subindo) e Juros compostos (curvas exponenciais).','<b>Animações 3D</b> e <b>Fundo animado</b>: ligue/desligue em Configurações › Aparência › Efeitos.','<b>Fechar telas</b>: arraste a folha para baixo, use o botão voltar ou toque fora dela.'],
+  d:['Os temas animados usam WebGL (a placa de vídeo do aparelho) em meia resolução e pausam quando o app fica em segundo plano.','Bateria baixa ou celular esquentando? Desligue o “Fundo animado”: o desenho fica parado, com as mesmas cores.','Se o aparelho tiver “reduzir movimento” ligado, o fundo fica parado automaticamente.']}
 ];
 const MAN_FAQ=[
  ['Lancei um gasto e ele não apareceu.','Confira o mês no topo: o gasto aparece no mês da data dele. Compras no cartão aparecem no mês da <b>fatura</b>, não no da compra.'],
@@ -3848,6 +3849,111 @@ Object.assign(ACT,{
     let anima=false;try{anima=fxOn()}catch(e){}if(!anima){aplica();return}
     const v=$('#view');v.classList.add('fx-flipout');setTimeout(()=>{aplica();v.classList.remove('fx-flipout');v.classList.add('fx-flipin');setTimeout(()=>v.classList.remove('fx-flipin'),420)},210)}
 });
+/* ============================================================
+   TEMAS ANIMADOS COM WebGL — fundos com motivos de finanças
+   Um <canvas> fixo atrás do app desenha o fundo com um shader.
+   Leve: meia resolução, ~30 quadros/s, pausa quando o app está em segundo plano.
+   ============================================================ */
+const GL_HEAD=`precision mediump float;uniform vec2 R;uniform float T;
+float h1(float n){return fract(sin(n)*43758.5453);}
+float h2(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+vec2 h22(vec2 p){return fract(sin(vec2(dot(p,vec2(127.1,311.7)),dot(p,vec2(269.5,183.3))))*43758.5453);}
+float n1(float x){float i=floor(x),f=fract(x);f=f*f*(3.-2.*f);return mix(h1(i),h1(i+1.),f);}
+float fbm1(float x){return n1(x)*.55+n1(x*2.1+7.)*.28+n1(x*4.3+3.)*.17;}
+float seg(vec2 p,vec2 a,vec2 b){vec2 pa=p-a,ba=b-a;float t=clamp(dot(pa,ba)/dot(ba,ba),0.,1.);return length(pa-ba*t);}
+`;
+const GL_FX={
+/* Bolsa ao vivo — gráficos de preço em neon rolando sobre uma grade */
+bolsa:`void main(){vec2 uv=gl_FragCoord.xy/R;float a=R.x/R.y,px=1.5/R.y;
+ vec3 c=mix(vec3(.012,.025,.05),vec3(.02,.05,.09),uv.y);
+ vec2 g=vec2(uv.x*a,uv.y)*7.;g=abs(fract(g)-.5);float gr=1.-smoothstep(0.,.03,min(g.x,g.y));c+=vec3(.04,.1,.16)*gr*.5;
+ for(int i=0;i<3;i++){float fi=float(i);vec3 k=i==0?vec3(.15,.95,.55):i==1?vec3(.3,.6,1.):vec3(1.,.35,.45);
+  float x=uv.x*a*1.6+T*(.18+fi*.05)+fi*13.;float y=.22+fi*.24+(fbm1(x)-.5)*.28+sin(x*.35+fi)*.04;
+  float d=abs(uv.y-y);c+=k*(smoothstep(px*2.5,0.,d)*.9+.0035/(d+.004)*.35);
+  if(uv.y<y)c+=k*.05*smoothstep(y-.25,y,uv.y);}
+ c*=1.-.35*length(uv-.5);gl_FragColor=vec4(c,1.);}`,
+/* Chuva de ouro — moedas girando e caindo devagar */
+moedas:`void main(){vec2 uv=gl_FragCoord.xy/R;float a=R.x/R.y;
+ vec3 c=mix(vec3(.03,.02,.01),vec3(.08,.05,.02),uv.y);c+=vec3(.25,.15,.03)*.25*smoothstep(.9,0.,length(uv-vec2(.7,1.)));
+ for(int l=0;l<4;l++){float fl=float(l),s=4.+fl*2.5;vec2 p=vec2(uv.x*a,uv.y)*s;p.y+=T*(.25+fl*.12);p.x+=fl*3.7;
+  vec2 id=floor(p),f=fract(p)-.5;float r=h2(id+fl*17.);if(r<.8)continue;
+  f+=(h22(id)-.5)*.4;float w=abs(cos(T*(.8+r)+r*30.))*.9+.1;vec2 q=vec2(f.x/(w*.3),f.y/.3);float d=length(q);
+  float coin=smoothstep(1.,.92,d),rim=smoothstep(.92,.8,d)-smoothstep(.75,.66,d);
+  vec3 ouro=mix(vec3(.65,.42,.08),vec3(1.,.85,.4),.5+.5*(q.y*.6-q.x*.4)*w);
+  float fade=(.16+fl*.13);c=mix(c,ouro*(.75+rim*.45),coin*fade);}
+ gl_FragColor=vec4(c,1.);}`,
+/* Rede fintech — pontos e conexões como transações */
+rede:`vec2 pt(vec2 id){vec2 r=h22(id);return id+.5+.38*sin(T*.5+r*6.28);}
+void main(){vec2 uv=gl_FragCoord.xy/R;float a=R.x/R.y;vec2 p=vec2(uv.x*a,uv.y)*6.;
+ vec3 c=mix(vec3(.01,.04,.05),vec3(.02,.08,.09),uv.y);vec2 id=floor(p);vec2 c0=pt(id);float m=0.;
+ for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){vec2 pn=pt(id+vec2(float(x),float(y)));float d=length(p-pn);m+=.0007/(d*d+.004);
+  float L=length(c0-pn);if(L>.01&&L<1.35)m+=smoothstep(.035,.0,seg(p,c0,pn))*(1.35-L)*.6;}
+ c+=vec3(.1,.85,.75)*m*.55;c*=1.-.3*length(uv-.5);gl_FragColor=vec4(c,1.);}`,
+
+/* Cédula — linhas de segurança (guilhoché) como numa nota de dinheiro */
+cedula:`void main(){vec2 uv=gl_FragCoord.xy/R;float a=R.x/R.y;vec2 p=vec2(uv.x*a,uv.y);
+ vec3 c=mix(vec3(.93,.96,.92),vec3(.97,.98,.95),uv.y);
+ float v=p.y*10.+sin(p.x*3.+T*.25)*.9+sin(p.x*7.-T*.18)*.25;float l=abs(fract(v)-.5);c=mix(c,vec3(.1,.5,.32),(1.-smoothstep(.0,.06,l))*.13);
+ float v2=p.y*10.-sin(p.x*3.+T*.25+1.6)*.9;float l2=abs(fract(v2)-.5);c=mix(c,vec3(.12,.42,.55),(1.-smoothstep(.0,.06,l2))*.09);
+ vec2 q=p-vec2(a*.82,.72);float r=length(q),an=atan(q.y,q.x);float w=r*34.+sin(an*12.+T*.4)*1.2+sin(an*5.-T*.3)*.6;
+ float ro=(1.-smoothstep(0.,.1,abs(fract(w)-.5)))*smoothstep(.36,.05,r);c=mix(c,vec3(.08,.45,.3),ro*.22);
+ gl_FragColor=vec4(c,1.);}`,
+/* Crescimento — barras subindo e setinhas flutuando para cima */
+crescimento:`void main(){vec2 uv=gl_FragCoord.xy/R;float a=R.x/R.y;
+ vec3 c=mix(vec3(.9,.97,.95),vec3(.97,.99,1.),uv.y);
+ float n=22.;float i=floor(uv.x*n);float bx=fract(uv.x*n);float hgt=.12+.22*(.5+.5*sin(T*.45+i*.55))+i/n*.25;
+ float bar=step(.18,bx)*step(bx,.82)*step(uv.y,hgt);c=mix(c,vec3(.2,.72,.5),bar*.16*(.4+uv.y/hgt*.6));
+ vec2 p=vec2(uv.x*a,uv.y)*8.;p.y-=T*.35;vec2 id=floor(p),f=fract(p)-.5;float r=h2(id);
+ if(r>.7){f+=(h22(id)-.5)*.5;float tri=max(abs(f.x)*1.6+f.y,-f.y-.08);float s=smoothstep(.17,.13,tri);c=mix(c,vec3(.13,.6,.42),s*.22);}
+ gl_FragColor=vec4(c,1.);}`,
+/* Juros compostos — curvas exponenciais suaves */
+juros:`void main(){vec2 uv=gl_FragCoord.xy/R;float a=R.x/R.y,px=1.5/R.y;
+ vec3 c=mix(vec3(.95,.95,1.),vec3(.98,.97,1.),uv.y);
+ for(int i=0;i<6;i++){float fi=float(i);float x=uv.x;float g=1.6+fi*.3+sin(T*.25+fi*1.3)*.5;
+  float y=.04+.06*fi+(.5+.06*sin(T*.2+fi))*(exp(x*g)-1.)/(exp(g)-1.);
+  float d=abs(uv.y-y);vec3 k=mix(vec3(.45,.4,.95),vec3(.2,.7,.85),fi/5.);
+  c=mix(c,k,(1.-smoothstep(px,px*3.5,d))*.35+.08*smoothstep(.08,0.,d));}
+ gl_FragColor=vec4(c,1.);}`
+};
+const GLF={cv:null,gl:null,prog:{},cur:null,raf:0,last:0,t0:performance.now(),ok:null};
+function glOk(){if(GLF.ok!==null)return GLF.ok;try{const c=document.createElement('canvas');GLF.ok=!!(c.getContext('webgl')||c.getContext('experimental-webgl'))}catch(e){GLF.ok=false}return GLF.ok}
+function glProg(gl,cache,fx){if(cache[fx])return cache[fx];const sh=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o));return o};
+  const p=gl.createProgram();gl.attachShader(p,sh(gl.VERTEX_SHADER,'attribute vec2 v;void main(){gl_Position=vec4(v,0.,1.);}'));gl.attachShader(p,sh(gl.FRAGMENT_SHADER,GL_HEAD+GL_FX[fx]));gl.linkProgram(p);
+  const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+  return cache[fx]={p,b,R:gl.getUniformLocation(p,'R'),T:gl.getUniformLocation(p,'T'),v:gl.getAttribLocation(p,'v')}}
+function glDraw(gl,P,w,h,t){gl.viewport(0,0,w,h);gl.useProgram(P.p);gl.bindBuffer(gl.ARRAY_BUFFER,P.b);gl.enableVertexAttribArray(P.v);gl.vertexAttribPointer(P.v,2,gl.FLOAT,false,0,0);gl.uniform2f(P.R,w,h);gl.uniform1f(P.T,t);gl.drawArrays(gl.TRIANGLES,0,3)}
+const glAnimar=()=>state.settings.fundoAnim!==false&&!matchMedia('(prefers-reduced-motion: reduce)').matches;
+function glTam(){const c=GLF.cv,esc=Math.min(devicePixelRatio||1,2)*(isMobile()?.5:.6),w=Math.max(2,Math.round(innerWidth*esc)),h=Math.max(2,Math.round(innerHeight*esc));if(c.width!==w||c.height!==h){c.width=w;c.height=h}}
+function glQuadro(now){GLF.raf=0;if(!GLF.cur||document.hidden)return;const anim=glAnimar();
+  if(anim&&now-GLF.last<32){GLF.raf=requestAnimationFrame(glQuadro);return}GLF.last=now;
+  try{glTam();glDraw(GLF.gl,glProg(GLF.gl,GLF.prog,GLF.cur),GLF.cv.width,GLF.cv.height,anim?(now-GLF.t0)/1000:12)}catch(e){console.warn('fundo WebGL',e);fundoGL(null);return}
+  if(anim)GLF.raf=requestAnimationFrame(glQuadro)}
+function fundoGL(fx){const H=document.documentElement;if(!fx||!GL_FX[fx]||!glOk()){if(GLF.cv)GLF.cv.style.display='none';cancelAnimationFrame(GLF.raf);GLF.raf=0;GLF.cur=null;delete H.dataset.gl;return}
+  if(!GLF.cv){const c=document.createElement('canvas');c.id='fundoGL';c.setAttribute('aria-hidden','true');document.body.prepend(c);GLF.cv=c;GLF.gl=c.getContext('webgl',{antialias:false,alpha:false,powerPreference:'low-power',preserveDrawingBuffer:false});
+    c.addEventListener('webglcontextlost',e=>{e.preventDefault();GLF.prog={}});c.addEventListener('webglcontextrestored',()=>{GLF.prog={};glReinicia()})}
+  GLF.cv.style.display='';H.dataset.gl=fx;if(GLF.cur!==fx){GLF.cur=fx;glReinicia()}else if(!GLF.raf&&glAnimar())glReinicia()}
+function glReinicia(){cancelAnimationFrame(GLF.raf);GLF.last=0;GLF.raf=requestAnimationFrame(glQuadro)}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&GLF.cur)glReinicia()});
+addEventListener('resize',()=>{if(GLF.cur&&!glAnimar())glReinicia()});
+/* miniaturas dos temas animados para o seletor (um quadro parado de cada) */
+const GLMINI={};
+function glMini(fx){if(GLMINI[fx]!==undefined)return GLMINI[fx];GLMINI[fx]='';if(!glOk())return'';
+  try{const c=document.createElement('canvas');c.width=240;c.height=170;const gl=c.getContext('webgl',{preserveDrawingBuffer:true});glDraw(gl,glProg(gl,{},fx),240,170,9.5);GLMINI[fx]=c.toDataURL('image/jpeg',.82);const x=gl.getExtension('WEBGL_lose_context');if(x)x.loseContext()}catch(e){GLMINI[fx]=''}
+  return GLMINI[fx]}
+
+/* novos temas (entram no mesmo seletor de temas) */
+Object.assign(SKINS,{
+ bolsa:{n:'Bolsa ao vivo',d:'Escuro, com gráficos de preço em neon rolando ao fundo.',base:'dark',gl:'bolsa',b:'#03070d',p:'#0a121c',dd:'#1b2a3a',t:'#e6f0f7',m:'#86a0b5',a:'#22d68a',s:'#22d68a',h:'linear-gradient(135deg,#0b3d2c,#0f6b4a 55%,#1f8fd0)',f:"system-ui,sans-serif"},
+ moedas:{n:'Chuva de ouro',d:'Escuro e quente, com moedas douradas girando e caindo.',base:'dark',gl:'moedas',b:'#0a0703',p:'#16100a',dd:'#33261a',t:'#f7efe2',m:'#b8a58c',a:'#e3a92b',s:'#f2c14e',h:'linear-gradient(135deg,#7a4a0c,#c98a12 55%,#f2c14e)',f:"system-ui,sans-serif"},
+ rede:{n:'Fintech',d:'Escuro, com uma rede de pontos e conexões como transações.',base:'dark',gl:'rede',b:'#020a0c',p:'#08171a',dd:'#163338',t:'#e3f6f4',m:'#8bb3b0',a:'#1fd1bd',s:'#5eead4',h:'linear-gradient(135deg,#0b4f4a,#119c8f 55%,#1fd1bd)',f:"system-ui,sans-serif"},
+ cedula:{n:'Cédula',d:'Claro, com linhas de segurança de nota de dinheiro em movimento.',base:'light',gl:'cedula',b:'#eef5ec',p:'#ffffff',dd:'#d8e6d6',t:'#15261c',m:'#5f7466',a:'#1d7a4c',s:'#1d7a4c',h:'linear-gradient(135deg,#124d30,#1d7a4c 60%,#3aa673)',f:"system-ui,sans-serif"},
+ crescimento:{n:'Crescimento',d:'Claro, com barras subindo e setinhas de alta flutuando.',base:'light',gl:'crescimento',b:'#eef8f4',p:'#ffffff',dd:'#d6ebe3',t:'#13282a',m:'#5b7375',a:'#14966a',s:'#14966a',h:'linear-gradient(135deg,#0d6b4c,#14966a 55%,#33c08f)',f:"system-ui,sans-serif"},
+ juros:{n:'Juros compostos',d:'Claro e suave, com curvas exponenciais fluindo.',base:'light',gl:'juros',b:'#f3f2fd',p:'#ffffff',dd:'#e1dff5',t:'#1d1b33',m:'#6b6890',a:'#5b4fd6',s:'#5b4fd6',h:'linear-gradient(135deg,#3b2fb0,#5b4fd6 55%,#2fa9c9)',f:"system-ui,sans-serif"}
+});
+{const _sp=skinPinta;skinPinta=function(id){_sp(id);fundoGL((SKINS[skinAtual()]||{}).gl||null)}}
+{const _sc=skinCards;skinCards=function(){let h=_sc();Object.entries(SKINS).forEach(([id,k])=>{if(!k.gl)return;const img=glMini(k.gl);
+  h=h.replace(`data-id="${id}" style="`,`data-id="${id}" data-anim="1" style="${img?`--mini:url(${img});`:''}`)});return h}}
+
 try{const k=localStorage.getItem('finm_skin');if(SKINS[k]){document.documentElement.dataset.skin=k;document.documentElement.dataset.theme=SKINS[k].base;skinFonte(k)}}catch(e){}
 
 /* ============================================================
@@ -3881,7 +3987,7 @@ function cfgAppCard(){return cfgCard('⚙️ App',`Versão instalada: <b>${APP_V
    `<div class="row" style="flex-wrap:wrap;gap:8px"><button class="btn" data-act="sample">Carregar dados de exemplo</button><button class="btn danger" data-act="reset">Apagar tudo</button></div>
    <div class="muted" style="font-size:12px;margin-top:8px">“Apagar tudo” remove os dados <b>deste aparelho</b>. Faça um backup antes.</div>`)}
 function cfgAparencia(){return`<div class="card"><div class="card-head"><div><h3>🎨 Tema</h3><div class="sub">Escolha o visual do app</div></div></div>${skinCards()}</div>`
-  +cfgCard('✨ Efeitos','',cfgSw(state.settings.fx!==false,'toggleFx','Animações 3D','Cartões que inclinam, transições e moedas ao lançar. Desligue se o app ficar lento.')+cfgSw(state.settings.coach!==false,'toggleCoach','Coach nos gastos','Dica rápida depois de cada lançamento'))
+  +cfgCard('✨ Efeitos','',cfgSw(state.settings.fx!==false,'toggleFx','Animações 3D','Cartões que inclinam, transições e moedas ao lançar. Desligue se o app ficar lento.')+cfgSw(state.settings.fundoAnim!==false,'toggleFundo','Fundo animado (temas ✨)','Movimento no fundo dos temas animados. Desligado, o fundo fica parado (gasta menos bateria).')+cfgSw(state.settings.coach!==false,'toggleCoach','Coach nos gastos','Dica rápida depois de cada lançamento'))
   +layoutCard()+iconeCard()}
 function vConfig(){const s=cfgSec(),S=CFG_SECS.find(x=>x[0]===s);
   const tabs=`<div class="cfg-tabs">${CFG_SECS.map(([k,ic,t])=>`<button type="button" class="chip ${k===s?'on':''}" data-act="cfg" data-id="${k}">${ic} ${t}</button>`).join('')}</div>`;
@@ -3905,6 +4011,7 @@ VIEWS.settings=vConfig;
 Object.assign(ACT,{
   cfg:k=>{closeModal();ui.cfg=k;view='settings';render();scrollTo(0,0)},
   lockMenu:()=>ACT.cfg('seguranca'),
+  toggleFundo:()=>{state.settings.fundoAnim=state.settings.fundoAnim===false;save();if(GLF.cur)glReinicia();render();toast(state.settings.fundoAnim?'Fundo animado ligado':'Fundo parado')},
   olho:()=>{OCULTO=!OCULTO;render();tbPinta();toast(OCULTO?'🙈 Valores escondidos':'👁 Valores visíveis')},
   olhoPref:()=>{const on=!olhoPref();try{localStorage.setItem(OLHO_K,on?'1':'0')}catch(e){}render();toast(on?'O app vai abrir com os valores escondidos':'O app vai abrir com os valores visíveis')},
   toggleFx:(()=>{const f=ACT.toggleFx;return()=>{f();if(view==='settings')render()}})()
