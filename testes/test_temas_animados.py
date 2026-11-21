@@ -7,7 +7,7 @@ CHROME=_os.environ.get('CHROME') or None
 _os.makedirs('capturas',exist_ok=True); _os.chdir('capturas')
 # ------------------------------------------------------
 srv=subprocess.Popen([sys.executable,'-m','http.server','8799','-d',APP],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-TEMAS=['bolsa','moedas','rede','cedula','crescimento','juros']
+TEMAS=['bolsa','moedas','rede','cedula','crescimento','juros','dolares','reais','trocados','investindo','poupanca']
 async def main():
   async with async_playwright() as p:
     b=await p.chromium.launch(executable_path=CHROME,args=['--no-sandbox','--enable-unsafe-swiftshader','--use-angle=swiftshader'])
@@ -33,6 +33,8 @@ async def main():
       await pg.evaluate("ACT.toggleFundo()")
       # seletor com miniaturas
       await pg.evaluate("ACT.theme()"); await pg.wait_for_timeout(500)
+      n=await pg.evaluate("[...document.querySelectorAll('.skin-card[data-anim]')].filter(e=>e.style.getPropertyValue('--mini')).length")
+      if n!=11: errs.append(f'miniaturas {n}')
       print(' miniaturas',await pg.evaluate("[...document.querySelectorAll('.skin-card[data-anim]')].filter(e=>e.style.getPropertyValue('--mini')).length"))
       await pg.screenshot(path=f'gl-seletor-{w}.png'); await pg.evaluate("closeModal()")
       # volta para tema clássico: canvas some

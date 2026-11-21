@@ -218,7 +218,7 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
 addEventListener('appinstalled',()=>{installEvt=null;toast('App instalado ✓');pedirPersistencia()});
 async function instalarApp(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null}
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW',e)));
-const APP_VERSAO='2026.11.21-1';
+const APP_VERSAO='2026.11.21-2';
 /* força baixar a versão nova: apaga o cache do app (NÃO apaga seus dados) e recarrega */
 async function atualizarApp(){toast('Buscando a versão nova…');try{persistirSync();if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
   if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs){try{await r.update()}catch(e){}await r.unregister()}}}catch(e){console.warn(e)}
@@ -2871,7 +2871,7 @@ const MAN=[
   d:['Use sempre pelo ícone instalado: a aba comum do navegador guarda os dados separados.','Novo ícone: no Chrome (Android/computador) ele muda sozinho, em geral em até 1 dia. No Firefox e no iPhone é preciso remover o atalho e adicionar de novo — o app mostra o passo a passo do seu aparelho.','No iPhone, remover o app da Tela de Início apaga os dados dele: confira a sincronização ☁️✓ ou faça backup antes.']},
  {id:'aparencia',a:'sistema',ic:'🎨',t:'Tema, animações e gestos',go:['theme','','Escolher um tema agora'],onde:[manMenu()],
   o:'Deixe o app do seu jeito.',
-  p:['<b>Temas</b>: botão 🎨 Tema no topo, ou '+manMenu()+' › Configurações › Aparência. São 11 visuais: 5 clássicos (Oceano, Dólar, Ônix, Pergaminho e Aurora) e 6 <b>animados ✨</b>.','<b>Temas animados escuros</b>: Bolsa ao vivo (gráficos em neon), Chuva de ouro (moedas caindo) e Fintech (rede de transações).','<b>Temas animados claros</b>: Cédula (linhas de segurança de nota), Crescimento (barras subindo) e Juros compostos (curvas exponenciais).','<b>Animações 3D</b> e <b>Fundo animado</b>: ligue/desligue em Configurações › Aparência › Efeitos.','<b>Fechar telas</b>: arraste a folha para baixo, use o botão voltar ou toque fora dela.'],
+  p:['<b>Temas</b>: botão 🎨 Tema no topo, ou '+manMenu()+' › Configurações › Aparência. São 16 visuais: 5 clássicos (Oceano, Dólar, Ônix, Pergaminho e Aurora) e 11 <b>animados ✨</b>.','<b>Temas animados escuros</b>: Bolsa ao vivo (gráficos em neon), Chuva de ouro (moedas caindo) e Fintech (rede de transações).','<b>Temas animados claros</b>: Cédula (linhas de segurança de nota), Crescimento (barras subindo) e Juros compostos (curvas exponenciais).','<b>Dinheiro caindo</b>: Chuva de dólares (escuro, notas de dólar), Chuva de reais (claro, notas de R$ 2 a R$ 200) e Moedas e trocados (escuro, moedas de 5, 10, 25, 50 centavos e R$ 1).','<b>Investimento e poupança</b>: Investimento crescendo (escuro, curva dos juros compostos subindo com rendimentos flutuando) e Poupança (claro, pilhas de moedas crescendo até a meta).','<b>Animações 3D</b> e <b>Fundo animado</b>: ligue/desligue em Configurações › Aparência › Efeitos.','<b>Fechar telas</b>: arraste a folha para baixo, use o botão voltar ou toque fora dela.'],
   d:['Os temas animados usam WebGL (a placa de vídeo do aparelho) em meia resolução e pausam quando o app fica em segundo plano.','Bateria baixa ou celular esquentando? Desligue o “Fundo animado”: o desenho fica parado, com as mesmas cores.','Se o aparelho tiver “reduzir movimento” ligado, o fundo fica parado automaticamente.']}
 ];
 const MAN_FAQ=[
@@ -3926,7 +3926,7 @@ const glAnimar=()=>state.settings.fundoAnim!==false&&!matchMedia('(prefers-reduc
 function glTam(){const c=GLF.cv,esc=Math.min(devicePixelRatio||1,2)*(isMobile()?.5:.6),w=Math.max(2,Math.round(innerWidth*esc)),h=Math.max(2,Math.round(innerHeight*esc));if(c.width!==w||c.height!==h){c.width=w;c.height=h}}
 function glQuadro(now){GLF.raf=0;if(!GLF.cur||document.hidden)return;const anim=glAnimar();
   if(anim&&now-GLF.last<32){GLF.raf=requestAnimationFrame(glQuadro);return}GLF.last=now;
-  try{glTam();glDraw(GLF.gl,glProg(GLF.gl,GLF.prog,GLF.cur),GLF.cv.width,GLF.cv.height,anim?(now-GLF.t0)/1000:12)}catch(e){console.warn('fundo WebGL',e);fundoGL(null);return}
+  try{glTam();glCena(GLF.gl,GLF.prog,GLF.cur,GLF.cv.width,GLF.cv.height,anim?(now-GLF.t0)/1000:12,GLF)}catch(e){console.warn('fundo WebGL',e);fundoGL(null);return}
   if(anim)GLF.raf=requestAnimationFrame(glQuadro)}
 function fundoGL(fx){const H=document.documentElement;if(!fx||!GL_FX[fx]||!glOk()){if(GLF.cv)GLF.cv.style.display='none';cancelAnimationFrame(GLF.raf);GLF.raf=0;GLF.cur=null;delete H.dataset.gl;return}
   if(!GLF.cv){const c=document.createElement('canvas');c.id='fundoGL';c.setAttribute('aria-hidden','true');document.body.prepend(c);GLF.cv=c;GLF.gl=c.getContext('webgl',{antialias:false,alpha:false,powerPreference:'low-power',preserveDrawingBuffer:false});
@@ -3938,7 +3938,7 @@ addEventListener('resize',()=>{if(GLF.cur&&!glAnimar())glReinicia()});
 /* miniaturas dos temas animados para o seletor (um quadro parado de cada) */
 const GLMINI={};
 function glMini(fx){if(GLMINI[fx]!==undefined)return GLMINI[fx];GLMINI[fx]='';if(!glOk())return'';
-  try{const c=document.createElement('canvas');c.width=240;c.height=170;const gl=c.getContext('webgl',{preserveDrawingBuffer:true});glDraw(gl,glProg(gl,{},fx),240,170,9.5);GLMINI[fx]=c.toDataURL('image/jpeg',.82);const x=gl.getExtension('WEBGL_lose_context');if(x)x.loseContext()}catch(e){GLMINI[fx]=''}
+  try{const c=document.createElement('canvas');c.width=240;c.height=170;const gl=c.getContext('webgl',{preserveDrawingBuffer:true});glCena(gl,{},fx,240,170,9.5,{});GLMINI[fx]=c.toDataURL('image/jpeg',.82);const x=gl.getExtension('WEBGL_lose_context');if(x)x.loseContext()}catch(e){GLMINI[fx]=''}
   return GLMINI[fx]}
 
 /* novos temas (entram no mesmo seletor de temas) */
@@ -3953,6 +3953,108 @@ Object.assign(SKINS,{
 {const _sp=skinPinta;skinPinta=function(id){_sp(id);fundoGL((SKINS[skinAtual()]||{}).gl||null)}}
 {const _sc=skinCards;skinCards=function(){let h=_sc();Object.entries(SKINS).forEach(([id,k])=>{if(!k.gl)return;const img=glMini(k.gl);
   h=h.replace(`data-id="${id}" style="`,`data-id="${id}" data-anim="1" style="${img?`--mini:url(${img});`:''}`)});return h}}
+
+/* ============================================================
+   TEMAS COM DINHEIRO CAINDO (WebGL + sprites)
+   Notas e moedas são desenhadas uma vez num "atlas" (imagem) e o WebGL
+   desenha dezenas delas por quadro, girando, balançando e caindo.
+   As notas são estilizadas (desenho próprio), não cópias de cédulas reais.
+   ============================================================ */
+Object.assign(GL_FX,{
+ dolares:`void main(){vec2 uv=gl_FragCoord.xy/R;vec3 c=mix(vec3(.01,.05,.03),vec3(.03,.11,.06),uv.y);
+  c+=vec3(.05,.2,.1)*.35*smoothstep(.9,0.,length(uv-vec2(.5,1.05)));float s=abs(fract((uv.x+uv.y)*14.)-.5);c+=vec3(.02,.06,.03)*(1.-smoothstep(0.,.04,s))*.5;
+  c*=1.-.35*length(uv-.5);gl_FragColor=vec4(c,1.);}`,
+ reais:`void main(){vec2 uv=gl_FragCoord.xy/R;float a=R.x/R.y;vec3 c=mix(vec3(.97,.95,.99),vec3(.99,.97,.93),uv.y);
+  for(int i=0;i<6;i++){float fi=float(i);vec2 p=vec2(.15+.17*fi+.05*sin(T*.1+fi),.2+.6*fract(.37*fi+T*.012));float d=length((uv-p)*vec2(a,1.));
+   c=mix(c,i<2?vec3(.85,.8,.98):i<4?vec3(1.,.9,.78):vec3(.8,.93,.98),.35*smoothstep(.22,.0,d));}
+  gl_FragColor=vec4(c,1.);}`,
+ trocados:`void main(){vec2 uv=gl_FragCoord.xy/R;vec3 c=mix(vec3(.02,.03,.06),vec3(.06,.08,.13),uv.y);
+  c+=vec3(.25,.22,.12)*.3*smoothstep(1.,0.,length(uv-vec2(.3,1.1)));c+=vec3(.1,.15,.25)*.25*smoothstep(1.,0.,length(uv-vec2(.9,.0)));
+  c*=1.-.3*length(uv-.5);gl_FragColor=vec4(c,1.);}`,
+ /* investimento crescendo: curva de juros compostos sendo desenhada, área preenchida e ponto brilhando na ponta */
+ investindo:`void main(){vec2 uv=gl_FragCoord.xy/R;float a=R.x/R.y,px=1.6/R.y;vec3 c=mix(vec3(.01,.03,.06),vec3(.02,.06,.1),uv.y);
+  vec2 g=abs(fract(vec2(uv.x*a,uv.y)*6.)-.5);c+=vec3(.05,.12,.18)*(1.-smoothstep(0.,.025,min(g.x,g.y)))*.45;
+  float ph=fract(T/16.),fim=min(ph*1.3,1.),fade=1.-smoothstep(.88,1.,ph);float x=(uv.x-.04)/.92;
+  float y=.12+.62*(exp(2.3*x)-1.)/(exp(2.3)-1.)+(fbm1(x*14.+3.)-.5)*.06*x;
+  float vis=step(x,fim)*step(0.,x)*fade;float d=abs(uv.y-y);
+  c+=vec3(.15,.95,.6)*vis*(smoothstep(px*3.,0.,d)+.004/(d+.005)*.25);
+  if(uv.y<y)c+=vec3(.1,.7,.45)*vis*.16*smoothstep(.0,y,uv.y);
+  float hx=.04+.92*fim,hy=.12+.62*(exp(2.3*fim)-1.)/(exp(2.3)-1.)+(fbm1(fim*14.+3.)-.5)*.06*fim;
+  float dh=length((uv-vec2(hx,hy))*vec2(a,1.));c+=vec3(.5,1.,.75)*fade*(.006/(dh+.006))*(.7+.3*sin(T*6.));
+  c*=1.-.3*length(uv-.5);gl_FragColor=vec4(c,1.);}`,
+ /* poupança: pilhas de moedas crescendo */
+ poupanca:`void main(){vec2 uv=gl_FragCoord.xy/R;float a=R.x/R.y;vec3 c=mix(vec3(.93,.98,.95),vec3(.99,1.,.98),uv.y);
+  float n=floor(clamp(a*7.,5.,14.));float i=floor(uv.x*n),lx=fract(uv.x*n)-.5,cw=.3;
+  float f=mod(T*.55+h1(i+3.)*30.,18.),cnt=2.+floor(f),al=smoothstep(18.,16.8,f);float hc=.026,y0=.05,yy=uv.y-y0;
+  if(abs(lx)<cw&&yy>0.&&yy<cnt*hc){float k=fract(yy/hc);vec3 ouro=mix(vec3(.78,.55,.12),vec3(.98,.8,.35),.55+.45*cos(lx/cw*1.5));
+   ouro*=.82+.18*smoothstep(.0,.25,k)*smoothstep(1.,.7,k);c=mix(c,ouro,.55*al);}
+  float e=pow(lx/cw,2.)+pow((yy-cnt*hc)/(hc*.9),2.);if(e<1.)c=mix(c,vec3(1.,.88,.5),.6*al*smoothstep(1.,.8,e));
+  float meta=y0+20.*hc;float dm=abs(uv.y-meta);c=mix(c,vec3(.1,.55,.38),.25*(1.-smoothstep(.0,.003,dm))*step(.5,fract(uv.x*a*18.)));
+  gl_FragColor=vec4(c,1.);}`
+});
+/* ---------- desenho das notas, moedas e etiquetas no atlas ---------- */
+function spNota(x,c,X,Y,W,H,cor,esc,val,sim){x.save();x.translate(X,Y);const r=H*.12;
+  const rr=(a,b,w,h,r)=>{x.beginPath();x.moveTo(a+r,b);x.arcTo(a+w,b,a+w,b+h,r);x.arcTo(a+w,b+h,a,b+h,r);x.arcTo(a,b+h,a,b,r);x.arcTo(a,b,a+w,b,r);x.closePath()};
+  rr(0,0,W,H,r);const g=x.createLinearGradient(0,0,W,H);g.addColorStop(0,cor);g.addColorStop(1,esc);x.fillStyle=g;x.fill();
+  x.strokeStyle='rgba(255,255,255,.55)';x.lineWidth=H*.03;rr(H*.07,H*.07,W-H*.14,H-H*.14,r*.6);x.stroke();
+  x.globalAlpha=.18;x.strokeStyle='#fff';x.lineWidth=1.2;for(let i=0;i<9;i++){x.beginPath();for(let k=0;k<=40;k++){const px=W*.08+k/40*W*.84,py=H*.28+i*H*.055+Math.sin(k*.6+i)*H*.03;k?x.lineTo(px,py):x.moveTo(px,py)}x.stroke()}x.globalAlpha=1;
+  const ex=W*.27,ey=H*.5,er=H*.27;x.beginPath();x.arc(ex,ey,er,0,7);x.fillStyle='rgba(255,255,255,.88)';x.fill();x.lineWidth=H*.025;x.strokeStyle=esc;x.stroke();
+  x.fillStyle=esc;x.font=`900 ${H*.3}px system-ui,Arial`;x.textAlign='center';x.textBaseline='middle';x.fillText(sim,ex,ey+H*.01);
+  x.fillStyle='#fff';x.font=`900 ${H*.36}px system-ui,Arial`;x.textAlign='right';x.shadowColor='rgba(0,0,0,.35)';x.shadowBlur=H*.04;x.fillText(val,W-H*.14,H*.38);
+  x.font=`800 ${H*.13}px system-ui,Arial`;x.fillText(sim==='$'?'DOLLARS':'REAIS',W-H*.14,H*.76);x.restore()}
+function spMoeda(x,X,Y,R,tipo,val,sub){x.save();x.translate(X,Y);
+  const met=(r,c1,c2)=>{const g=x.createRadialGradient(-r*.35,-r*.4,r*.1,0,0,r);g.addColorStop(0,c1);g.addColorStop(1,c2);x.beginPath();x.arc(0,0,r,0,7);x.fillStyle=g;x.fill()};
+  const ouro=['#fff1b0','#c98a12'],prata=['#ffffff','#9aa3ad'],cobre=['#ffd0a8','#a65a2a'];
+  if(tipo==='bi'){met(R,...ouro);met(R*.68,...prata)}else met(R,...(tipo==='prata'?prata:tipo==='cobre'?cobre:ouro));
+  x.lineWidth=R*.06;x.strokeStyle='rgba(0,0,0,.25)';x.beginPath();x.arc(0,0,R*.93,0,7);x.stroke();
+  x.fillStyle='rgba(40,30,10,.78)';x.textAlign='center';x.textBaseline='middle';x.font=`900 ${R*(val.length>2?.62:.8)}px system-ui,Arial`;x.fillText(val,0,-R*.06);
+  x.font=`800 ${R*.24}px system-ui,Arial`;x.fillText(sub,0,R*.5);x.restore()}
+function spTag(x,X,Y,W,H,txt,cor){x.save();x.translate(X,Y);x.beginPath();x.roundRect?x.roundRect(0,0,W,H,H/2):x.rect(0,0,W,H);x.fillStyle='rgba(10,30,20,.55)';x.fill();
+  x.lineWidth=2;x.strokeStyle=cor;x.stroke();x.fillStyle=cor;x.font=`800 ${H*.52}px system-ui,Arial`;x.textAlign='center';x.textBaseline='middle';x.fillText(txt,W/2,H/2+1);x.restore()}
+const SP_KIT={
+ reais:{itens:[['n',2,'#7f9bb3','#4b6378'],['n',5,'#9b7bc0','#6a4c93'],['n',10,'#d06a55','#9a3f2e'],['n',20,'#e2b23c','#a87b12'],['n',50,'#d9873e','#9a561c'],['n',100,'#4b7fc4','#2c568f'],['n',200,'#a99a86','#6f6252']],sim:'R$',n:30,tam:[140,220],vel:[40,85],flip:1},
+ dolares:{itens:[['n',1,'#8fb58a','#4f7a4c'],['n',5,'#86ad83','#4a7247'],['n',20,'#7fa67c','#456c43'],['n',50,'#79a076','#3f663d'],['n',100,'#73996f','#3a6038']],sim:'$',n:26,tam:[120,190],vel:[40,85],flip:1},
+ trocados:{itens:[['m','bi','1','REAL'],['m','prata','50','CENTAVOS'],['m','ouro','25','CENTAVOS'],['m','ouro','10','CENTAVOS'],['m','cobre','5','CENTAVOS'],['m','prata','1','REAL'],['m','ouro','$','DOLLAR'],['m','prata','25¢','QUARTER']],n:36,tam:[40,80],vel:[45,110],flip:1},
+ investindo:{itens:[['t','+0,8%','#5ff2b4'],['t','+1,2%','#5ff2b4'],['t','+2,5%','#5ff2b4'],['t','+R$ 35','#ffd45c'],['t','+R$ 120','#ffd45c'],['t','juros','#7ec8ff'],['t','dividendos','#7ec8ff'],['m','ouro','$','DOLLAR'],['m','bi','1','REAL']],n:18,tam:[50,80],vel:[-34,-18],flip:0},
+ poupanca:{itens:[['m','bi','1','REAL'],['m','prata','50','CENTAVOS'],['m','ouro','25','CENTAVOS'],['m','ouro','10','CENTAVOS']],n:14,tam:[26,44],vel:[70,130],flip:1,some:.3}
+};
+function spAtlas(gl,fx){const K=SP_KIT[fx],cv=document.createElement('canvas');cv.width=1024;cv.height=1024;const x=cv.getContext('2d');const L=[];let cx=4,cy=4,lh=0;
+  K.itens.forEach(it=>{let w,h;if(it[0]==='n'){w=300;h=140}else if(it[0]==='m'){w=h=128}else{h=64;w=Math.max(120,it[1].length*30+30)}
+   if(cx+w>1020){cx=4;cy+=lh+6;lh=0}
+   if(it[0]==='n')spNota(x,null,cx,cy,w,h,it[2],it[3],String(it[1]),K.sim);else if(it[0]==='m')spMoeda(x,cx+w/2,cy+h/2,h/2-3,it[1],it[2],it[3]);else spTag(x,cx+2,cy+2,w-4,h-4,it[1],it[2]);
+   L.push({u0:cx/1024,v0:cy/1024,u1:(cx+w)/1024,v1:(cy+h)/1024,ar:w/h,nota:it[0]==='n'});cx+=w+6;lh=Math.max(lh,h)});
+  const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,true);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,cv);
+  gl.generateMipmap(gl.TEXTURE_2D);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);return{t,L}}
+function spProg(gl,cache){if(cache._sp)return cache._sp;const sh=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o));return o};
+  const p=gl.createProgram();gl.attachShader(p,sh(gl.VERTEX_SHADER,'attribute vec2 v;attribute vec2 u;attribute vec2 k;varying vec2 U;varying vec2 K;void main(){U=u;K=k;gl_Position=vec4(v,0.,1.);}'));
+  gl.attachShader(p,sh(gl.FRAGMENT_SHADER,'precision mediump float;uniform sampler2D S;varying vec2 U;varying vec2 K;void main(){vec4 c=texture2D(S,U);gl_FragColor=vec4(c.rgb*K.x,c.a)*K.y;}'));gl.linkProgram(p);
+  return cache._sp={p,b:gl.createBuffer(),v:gl.getAttribLocation(p,'v'),u:gl.getAttribLocation(p,'u'),k:gl.getAttribLocation(p,'k'),S:gl.getUniformLocation(p,'S')}}
+function spRnd(s){return()=>{s=(s*16807)%2147483647;return(s-1)/2147483646}}
+function spNovo(K,w,h,un,rnd,inicio){const z=rnd(),camada=z<.45?0:z<.8?1:2,esc=[.55,.8,1.05][camada];
+  return{i:Math.floor(rnd()*K.itens.length),x:rnd()*w,y:inicio?rnd()*h*1.1-h*.05:(K.vel[0]<0?h+120*un:-120*un),s:(K.tam[0]+rnd()*(K.tam[1]-K.tam[0]))*esc*un,
+   v:(K.vel[0]+rnd()*(K.vel[1]-K.vel[0]))*(.6+camada*.25)*un,a:K.flip?rnd()*6.28:(rnd()-.5)*.25,va:K.flip?(rnd()-.5)*1.4:(rnd()-.5)*.15,f:rnd()*6.28,vf:K.flip?(1.2+rnd()*2.2):0,sw:rnd()*6.28,al:[.45,.7,.95][camada]}}
+function spDraw(gl,cache,fx,w,h,t,st){const K=SP_KIT[fx];if(!K)return;const A=cache['at:'+fx]||(cache['at:'+fx]=spAtlas(gl,fx)),P=spProg(gl,cache);
+  const un=Math.min(w,h)/700;st.sp=st.sp||{};let S=st.sp[fx];if(!S||S.w!==w||S.h!==h){const rnd=spRnd(1234+fx.length*97);S=st.sp[fx]={w,h,lt:t,rnd,ps:Array.from({length:Math.round(K.n*Math.min(1.6,Math.max(.7,w*h/(700*700))))},()=>spNovo(K,w,h,un,rnd,true))}}
+  const dt=Math.min(.05,Math.max(0,t-S.lt));S.lt=t;const dados=new Float32Array(S.ps.length*6*6);let o=0;
+  S.ps.forEach((p,n)=>{p.y+=p.v*dt;p.a+=p.va*dt*.4;p.f+=p.vf*dt;p.sw+=dt*.9;const sx=p.x+Math.sin(p.sw)*14*un;
+   const r=A.L[p.i],bw=r.nota?p.s:r.ar>1.3?p.s*1.5:p.s*.95,bh=bw/r.ar,fl=K.flip?Math.cos(p.f):1,hw=bw/2*(K.flip&&r.nota?fl:Math.abs(fl)*.85+.15),hh=bh/2*(K.flip&&!r.nota?1:1);
+   if((K.vel[0]>0&&p.y-bh>h+20)||(K.vel[0]<0&&p.y+bh<-20)){S.ps[n]=spNovo(K,w,h,un,S.rnd,false);return}
+   let al=p.al;if(K.some){const lim=h*(1-K.some);if(p.y>lim)al*=Math.max(0,1-(p.y-lim)/(h*K.some))}if(K.vel[0]<0)al*=Math.min(1,p.y/(h*.2));
+   const luz=.72+.28*Math.abs(fl),ca=Math.cos(p.a),sa_=Math.sin(p.a);
+   const c=[[-hw,-hh,r.u0,r.v0],[hw,-hh,r.u1,r.v0],[hw,hh,r.u1,r.v1],[-hw,-hh,r.u0,r.v0],[hw,hh,r.u1,r.v1],[-hw,hh,r.u0,r.v1]];
+   c.forEach(([dx,dy,u,v])=>{const X=sx+dx*ca-dy*sa_,Y=p.y+dx*sa_+dy*ca;dados[o++]=X/w*2-1;dados[o++]=1-Y/h*2;dados[o++]=u;dados[o++]=v;dados[o++]=luz;dados[o++]=al})});
+  gl.useProgram(P.p);gl.bindBuffer(gl.ARRAY_BUFFER,P.b);gl.bufferData(gl.ARRAY_BUFFER,dados,gl.DYNAMIC_DRAW);
+  gl.enableVertexAttribArray(P.v);gl.vertexAttribPointer(P.v,2,gl.FLOAT,false,24,0);gl.enableVertexAttribArray(P.u);gl.vertexAttribPointer(P.u,2,gl.FLOAT,false,24,8);gl.enableVertexAttribArray(P.k);gl.vertexAttribPointer(P.k,2,gl.FLOAT,false,24,16);
+  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,A.t);gl.uniform1i(P.S,0);gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);gl.drawArrays(gl.TRIANGLES,0,o/6);gl.disable(gl.BLEND)}
+function glCena(gl,cache,fx,w,h,t,st){glDraw(gl,glProg(gl,cache,fx),w,h,t);if(SP_KIT[fx])spDraw(gl,cache,fx,w,h,t,st)}
+Object.assign(SKINS,{
+ dolares:{n:'Chuva de dólares',d:'Escuro, cofre verde com notas de dólar caindo e girando.',base:'dark',gl:'dolares',b:'#03100a',p:'#0a1a12',dd:'#1c3326',t:'#eaf6ee',m:'#93b09e',a:'#3ccf7e',s:'#9fe0a8',h:'linear-gradient(135deg,#1f5a36,#2f8a50 55%,#7fbf7a)',f:"system-ui,sans-serif"},
+ reais:{n:'Chuva de reais',d:'Claro, com notas de R$ 2 a R$ 200 coloridas caindo.',base:'light',gl:'reais',b:'#f7f3fb',p:'#ffffff',dd:'#e6dff0',t:'#1f1a2b',m:'#6e6680',a:'#2c6fd6',s:'#2c6fd6',h:'linear-gradient(135deg,#2c568f,#4b7fc4 45%,#9b7bc0)',f:"system-ui,sans-serif"},
+ trocados:{n:'Moedas e trocados',d:'Escuro, com moedas de 5, 10, 25, 50 centavos e R$ 1 caindo.',base:'dark',gl:'trocados',b:'#04060c',p:'#0d1220',dd:'#232c42',t:'#eef1f8',m:'#97a1b8',a:'#e3b341',s:'#f2c14e',h:'linear-gradient(135deg,#5b4a1a,#a8842a 55%,#c9ced8)',f:"system-ui,sans-serif"},
+ investindo:{n:'Investimento crescendo',d:'Escuro, com a curva dos juros compostos subindo e rendimentos flutuando.',base:'dark',gl:'investindo',b:'#02060c',p:'#08121d',dd:'#17283a',t:'#e6f2fb',m:'#8aa3b8',a:'#2fd98f',s:'#5ff2b4',h:'linear-gradient(135deg,#0b4a35,#12805a 55%,#2a9fd6)',f:"system-ui,sans-serif"},
+ poupanca:{n:'Poupança',d:'Claro, com pilhas de moedas crescendo até a meta.',base:'light',gl:'poupanca',b:'#eef8f2',p:'#ffffff',dd:'#d7ebdf',t:'#16281f',m:'#5d7568',a:'#1a8a5a',s:'#c98a12',h:'linear-gradient(135deg,#126b45,#1a8a5a 55%,#c98a12)',f:"system-ui,sans-serif"}
+});
 
 try{const k=localStorage.getItem('finm_skin');if(SKINS[k]){document.documentElement.dataset.skin=k;document.documentElement.dataset.theme=SKINS[k].base;skinFonte(k)}}catch(e){}
 
